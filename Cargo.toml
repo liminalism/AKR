@@ -15,3 +15,22 @@ unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+
+# Two optimised profiles, kept apart because link-time optimisation is the
+# expensive half of a release build and the wrong thing to pay for on every
+# test run. `debug-release` is what a working day is spent in: release codegen,
+# no LTO, line tables kept so a backtrace still names a function. `release-final`
+# is what ships, and only that.
+#
+#   cargo build --profile debug-release    # testing
+#   cargo build --profile release-final    # the artifact
+
+[profile.debug-release]
+inherits = "release"
+lto = false
+debug = 1
+
+[profile.release-final]
+inherits = "release"
+lto = "fat"
+codegen-units = 1

@@ -21,7 +21,7 @@
     Print changes without writing.
 
 .PARAMETER UseDebug
-    Use target/debug binaries instead of target/release.
+    Use target/debug binaries instead of target/release-final.
 
 .PARAMETER NoClaude
     Skip Claude registration.
@@ -68,7 +68,7 @@ One-time setup for the AKR MCP server across:
 Options:
   -RepoDir DIR     AKR repo root (default: script's parent directory)
   -DryRun          Print changes without writing
-  -UseDebug        Use target\debug\akr-mcp.exe instead of release
+  -UseDebug        Use target\debug\akr-mcp.exe instead of target\release-final
   -NoClaude        Skip Claude registration
   -NoCodex         Skip Codex config update
   -NoOpenCode      Skip OpenCode config update
@@ -126,10 +126,10 @@ if ($UseDebug) {
     $SourceAkr = Join-Path $RepoDir "target\debug\akr.exe"
     $SourceAkrMcp = Join-Path $RepoDir "target\debug\akr-mcp.exe"
 } else {
-    $BuildMode = "release"
-    $BuildCmdDisplay = "cargo build --release --package akr-cli --package akr-mcp"
-    $SourceAkr = Join-Path $RepoDir "target\release\akr.exe"
-    $SourceAkrMcp = Join-Path $RepoDir "target\release\akr-mcp.exe"
+    $BuildMode = "release-final"
+    $BuildCmdDisplay = "cargo build --profile release-final --package akr-cli --package akr-mcp"
+    $SourceAkr = Join-Path $RepoDir "target\release-final\akr.exe"
+    $SourceAkrMcp = Join-Path $RepoDir "target\release-final\akr-mcp.exe"
 }
 
 Log "Using repo: $RepoDir"
@@ -147,7 +147,7 @@ if ($NoBuild) {
             if ($UseDebug) {
                 cargo build --package akr-cli --package akr-mcp
             } else {
-                cargo build --release --package akr-cli --package akr-mcp
+                cargo build --profile release-final --package akr-cli --package akr-mcp
             }
             if ($LASTEXITCODE -ne 0) {
                 throw "cargo build failed with exit code $LASTEXITCODE"

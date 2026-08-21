@@ -15,7 +15,7 @@ One-time setup for the AKR MCP server across:
 Options:
   --repo-dir DIR   AKR repo root (default: parent directory of this script)
   --dry-run        Print changes without writing
-  --debug          Use target/debug/akr-mcp instead of release
+  --debug          Use target/debug/akr-mcp instead of target/release-final
   --no-claude      Skip Claude registration
   --no-codex       Skip Codex config update
   --no-opencode    Skip OpenCode config update
@@ -101,10 +101,10 @@ if [[ "$USE_DEBUG" -eq 1 ]]; then
   SOURCE_AKR="$REPO_DIR/target/debug/akr"
   SOURCE_BIN="$REPO_DIR/target/debug/akr-mcp"
 else
-  BUILD_MODE="release"
-  BUILD_CMD=(cargo build --release --package akr-cli --package akr-mcp)
-  SOURCE_AKR="$REPO_DIR/target/release/akr"
-  SOURCE_BIN="$REPO_DIR/target/release/akr-mcp"
+  BUILD_MODE="release-final"
+  BUILD_CMD=(cargo build --profile release-final --package akr-cli --package akr-mcp)
+  SOURCE_AKR="$REPO_DIR/target/release-final/akr"
+  SOURCE_BIN="$REPO_DIR/target/release-final/akr-mcp"
 fi
 
 log "Using repo: $REPO_DIR"
