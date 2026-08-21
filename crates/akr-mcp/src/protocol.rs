@@ -50,6 +50,10 @@ pub const SUPPORTED_PROTOCOLS: &[&str] = &[
 ];
 
 /// `resultType` for a result that is the whole answer rather than a task or a prompt.
+///
+/// One of exactly three values MCP defines — `complete`, `input_required`, `task` — and
+/// the only one a ledger read or write ever produces. See `MCP_RESULT_TYPES` in
+/// `tests/conformance.rs`, which holds the closed set this is checked against.
 const RESULT_TYPE_COMPLETE: &str = "complete";
 
 /// Where a discovery result carries the server's identity.
@@ -387,7 +391,13 @@ fn content(text: Option<&str>, structured: &Value, is_error: bool) -> Value {
                 ("text", Value::string(text)),
             ])]),
         ),
-        ("resultType", Value::string("tool")),
+        // `complete` — the result is the whole answer. The vocabulary is closed
+        // (`complete`, `input_required`, `task`); a value outside it is not an
+        // extension a client ignores, it is a result the client cannot type, and
+        // an SDK that matches on this field rejects the whole response. This said
+        // `"tool"` for every tool AKR has, which is why no rmcp 3.x host could
+        // call one.
+        ("resultType", Value::string(RESULT_TYPE_COMPLETE)),
         ("structuredContent", structured.clone()),
         ("isError", Value::bool(is_error)),
     ])

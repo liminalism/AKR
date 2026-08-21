@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.3"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:8871cf07e9841ec72e5942db28099c8de5da6e0eb7877ce4117bcc724b778b84"
+    source_graph "sha256:cfb8da1c9d3e74a8d42beab0727f53fbdad005ffe93792f596fdca972cb5849d"
 }
 
 source ".akr/project.akr" {
@@ -24,8 +24,8 @@ source ".akr/records/akr/decisions.akr" {
 }
 
 source ".akr/records/akr/evidence.akr" {
-    hash "sha256:390dfafcfd412d566d82234166ca57f3b84963e3c934528201c9d9995927043e"
-    records 38
+    hash "sha256:c5257c1511a392504ea65db461f833965e6a8099a72c3d83795a1fedecb4577e"
+    records 39
 }
 
 source ".akr/records/akr/milestones.akr" {
@@ -463,6 +463,11 @@ seal @akr.evidence.sister-papercut-fixes/1 {
 seal @akr.evidence.snapshot-suite-after-help-and-version-fixes/1 {
     state verified
     hash "sha256:2a1162159acbe937eb9fd101491600588936c38d2a90df543dae32ab8ffd9bd0"
+}
+
+seal @akr.evidence.tool-results-typed-for-mcp-clients/1 {
+    state verified
+    hash "sha256:4d98cc03ba9e8b127f9874e4fc7b98c4bca3f223063aadd81474692811c71782"
 }
 
 seal @akr.evidence.warm-search-stays-git-free-after-changes/1 {
