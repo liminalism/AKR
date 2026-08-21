@@ -38,6 +38,18 @@ record akr.evidence.design-coherence-clean/1 : evidence {
         """
 }
 
+record akr.evidence.discover-shape-accepted-by-rmcp3/1 : evidence {
+    title "A real rmcp 3.1.2 client now connects to akr-mcp on both lifecycles. Before: the Auto (pre-initialize server/discover) path failed 'expect initialized result' because the discovery response was an initialize result under a discovery method name, and the post-initialize peer.discover() path failed 'Unexpected response type' - the error Codex 0.149 reported. After: Auto connects at 2026-07-28 and legacy+discover() connects at 2025-11-25, both listing 23 tools, with supportedVersions ['2026-07-28','2025-11-25','2025-06-18','2025-03-26','2024-11-05']. Adding 2025-11-25 also stops every rmcp 3.x host being silently answered 2024-11-05."
+    state verified
+    result pass
+    method command
+    observed_at git:30572b35946db07a711d0b88d0719483f9f3f6d9
+    command "mcpprobe auto|post /home/dk/.local/bin/akr-mcp (rmcp 3.1.2 client, ClientLifecycleMode::Auto and Initialize+peer.discover())"
+    summary """
+        A real rmcp 3.1.2 client now connects to akr-mcp on both lifecycles. Before: the Auto (pre-initialize server/discover) path failed 'expect initialized result' because the discovery response was an initialize result under a discovery method name, and the post-initialize peer.discover() path failed 'Unexpected response type' - the error Codex 0.149 reported. After: Auto connects at 2026-07-28 and legacy+discover() connects at 2025-11-25, both listing 23 tools, with supportedVersions ['2026-07-28','2025-11-25','2025-06-18','2025-03-26','2024-11-05']. Adding 2025-11-25 also stops every rmcp 3.x host being silently answered 2024-11-05.
+        """
+}
+
 record akr.evidence.fmt-clean/1 : evidence {
     title "cargo fmt --all --check exits 0 across the whole workspace"
     state verified

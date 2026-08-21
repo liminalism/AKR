@@ -32,15 +32,32 @@ pub const PROTOCOL_LEGACY: &str = "2024-11-05";
 pub const PROTOCOL_2025_03: &str = "2025-03-26";
 /// The June 2025 MCP revision, what Grok and current SDKs send.
 pub const PROTOCOL_2025_06: &str = "2025-06-18";
+/// The November 2025 MCP revision, the default the rmcp 3.x clients prefer.
+///
+/// Omitting it did not fail loudly: a client offering `2025-11-25` found nothing to match
+/// and was silently answered `2024-11-05`, so every such host ran the whole session a
+/// generation behind what both ends could speak.
+pub const PROTOCOL_2025_11: &str = "2025-11-25";
 /// The current protocol version this server now negotiates.
 pub const PROTOCOL_CURRENT: &str = "2026-07-28";
 /// Supported protocol versions, in preference order.
 pub const SUPPORTED_PROTOCOLS: &[&str] = &[
     PROTOCOL_CURRENT,
+    PROTOCOL_2025_11,
     PROTOCOL_2025_06,
     PROTOCOL_2025_03,
     PROTOCOL_LEGACY,
 ];
+
+/// `resultType` for a result that is the whole answer rather than a task or a prompt.
+const RESULT_TYPE_COMPLETE: &str = "complete";
+
+/// Where a discovery result carries the server's identity.
+///
+/// `serverInfo` is a top-level field of an `initialize` result and a `_meta` entry of a
+/// discovery one. The difference is not cosmetic: the discovery result is a closed schema,
+/// and a client that cannot deserialise it has no way back to the legacy handshake.
+const SERVER_INFO_META_KEY: &str = "io.modelcontextprotocol/serverInfo";
 
 /// The server's own version, matching the tool version the CLI reports.
 pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -157,75 +174,79 @@ impl Server {
         })
     }
 
-    fn initialize(&self, params: &Value) -> Value {
-        let protocol_version = select_protocol(params);
+    /// The identity every handshake publishes.
+    fn server_info(&self) -> Value {
         Value::object(vec![
-            ("protocolVersion", Value::string(protocol_version)),
+            ("name", Value::string("akr-mcp")),
+            ("version", Value::string(SERVER_VERSION)),
+            // Published so a client can see a stale server before it trips over
+            // one: the friction this answers was diagnosed twice as a ledger bug.
             (
-                "capabilities",
-                Value::object(vec![("tools", Value::Object(Vec::new()))]),
-            ),
-            (
-                "serverInfo",
-                Value::object(vec![
-                    ("name", Value::string("akr-mcp")),
-                    ("version", Value::string(SERVER_VERSION)),
-                    // Published so a client can see a stale server before it trips over
-                    // one: the friction this answers was diagnosed twice as a ledger bug.
-                    (
-                        "vocabularyVersion",
-                        Value::string(crate::skew::SERVER_VOCABULARY),
-                    ),
-                ]),
-            ),
-            (
-                "instructions",
-                Value::string(format!(
-                    "AKR knowledge ledger at {}. Call knowledge.context before touching \
-                     code, and knowledge.validate before handing work back.",
-                    self.root.display()
-                )),
+                "vocabularyVersion",
+                Value::string(crate::skew::SERVER_VOCABULARY),
             ),
         ])
     }
 
-    fn server_discover(&self, params: &Value) -> Value {
+    /// The guidance every handshake carries.
+    fn instructions(&self) -> Value {
+        Value::string(format!(
+            "AKR knowledge ledger at {}. Call knowledge.context before touching \
+             code, and knowledge.validate before handing work back.",
+            self.root.display()
+        ))
+    }
+
+    /// The capability set both handshakes advertise.
+    fn capabilities() -> Value {
+        Value::object(vec![("tools", Value::Object(Vec::new()))])
+    }
+
+    fn initialize(&self, params: &Value) -> Value {
         let protocol_version = select_protocol(params);
         Value::object(vec![
             ("protocolVersion", Value::string(protocol_version)),
+            ("capabilities", Self::capabilities()),
+            ("serverInfo", self.server_info()),
+            ("instructions", self.instructions()),
+        ])
+    }
+
+    /// The `server/discover` result, in the shape a discovery client actually deserialises.
+    ///
+    /// A client that speaks discovery sends this *before* `initialize`, and retreats to the
+    /// legacy handshake on one signal only: a `-32601`. Answering successfully in the wrong
+    /// shape is therefore worse than not implementing the method at all — the client reads a
+    /// malformed success as a broken peer rather than an old one, and gives up rather than
+    /// falling back. That is not hypothetical: an earlier version of this function returned
+    /// an `initialize` result under a discovery method name, and every rmcp 3.x host — Codex
+    /// among them — refused the connection outright.
+    ///
+    /// Every field below except `instructions` and `_meta` is required by that schema.
+    ///
+    /// The request carries no version to select against: a discovery client sends its
+    /// preferences as request metadata and chooses from `supportedVersions` itself.
+    fn server_discover(&self, _params: &Value) -> Value {
+        Value::object(vec![
+            ("resultType", Value::string(RESULT_TYPE_COMPLETE)),
             (
-                "serverInfo",
-                Value::object(vec![
-                    ("name", Value::string("akr-mcp")),
-                    ("version", Value::string(SERVER_VERSION)),
-                    // Published so a client can see a stale server before it trips over
-                    // one: the friction this answers was diagnosed twice as a ledger bug.
-                    (
-                        "vocabularyVersion",
-                        Value::string(crate::skew::SERVER_VOCABULARY),
-                    ),
-                ]),
-            ),
-            (
-                "capabilities",
-                Value::object(vec![("tools", Value::Object(Vec::new()))]),
-            ),
-            (
-                "instructions",
-                Value::string(format!(
-                    "AKR knowledge ledger at {}. Call knowledge.context before touching \
-                     code, and knowledge.validate before handing work back.",
-                    self.root.display()
-                )),
-            ),
-            (
-                "supportedProtocols",
+                "supportedVersions",
                 Value::array(
                     SUPPORTED_PROTOCOLS
                         .iter()
-                        .map(|version| Value::string(version.to_string()))
+                        .map(|version| Value::string(*version))
                         .collect(),
                 ),
+            ),
+            ("capabilities", Self::capabilities()),
+            ("instructions", self.instructions()),
+            // Not cacheable. A ledger server is cheap to ask again, and a capability set
+            // held past its truth is exactly the skew this server exists to surface.
+            ("ttlMs", Value::integer(0)),
+            ("cacheScope", Value::string("private")),
+            (
+                "_meta",
+                Value::object(vec![(SERVER_INFO_META_KEY, self.server_info())]),
             ),
         ])
     }

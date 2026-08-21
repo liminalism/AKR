@@ -764,7 +764,8 @@ fn both_supported_protocol_versions_are_accepted() {
          {\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2026-07-28\"}}\n\
          {\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"server/discover\",\"params\":{\"protocolVersion\":\"2026-07-28\"}}\n\
          {\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\"}}\n\
-         {\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\"}}\n",
+         {\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\"}}\n\
+         {\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\"}}\n",
     );
 
     let legacy = responses[0]
@@ -781,27 +782,49 @@ fn both_supported_protocol_versions_are_accepted() {
         .expect("current initialize result");
     assert_eq!(current, "2026-07-28");
 
-    let discover = responses[2]
-        .get("result")
-        .and_then(|value| match value {
-            Value::Object(fields) => Some(fields),
-            _ => None,
-        })
-        .expect("discover result");
+    // A discovery client reaches this method *before* `initialize`, and falls back to the
+    // legacy handshake only on a `-32601`. A success in the wrong shape therefore ends the
+    // connection instead of downgrading it, so the fields below are asserted by name.
+    let discover = responses[2].get("result").expect("discover result");
+    assert_eq!(
+        discover.get("resultType").and_then(Value::as_str),
+        Some("complete"),
+        "{discover:?}",
+    );
+    let supported: Vec<&str> = discover
+        .get("supportedVersions")
+        .and_then(Value::as_array)
+        .expect("discover supportedVersions")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    for version in ["2026-07-28", "2025-11-25", "2025-06-18", "2024-11-05"] {
+        assert!(
+            supported.contains(&version),
+            "{version} missing: {supported:?}"
+        );
+    }
+    assert_eq!(
+        discover.get("ttlMs").and_then(Value::as_integer),
+        Some(0),
+        "{discover:?}",
+    );
+    assert_eq!(
+        discover.get("cacheScope").and_then(Value::as_str),
+        Some("private"),
+        "{discover:?}",
+    );
+    // The identity travels in `_meta`, not at the top level, and `protocolVersion` is not
+    // part of a discovery result at all.
+    assert!(discover.get("protocolVersion").is_none(), "{discover:?}");
+    assert!(discover.get("serverInfo").is_none(), "{discover:?}");
     assert_eq!(
         discover
-            .iter()
-            .find(|(name, _)| name == "protocolVersion")
-            .and_then(|(_, value)| value.as_str())
-            .expect("discover protocol"),
-        "2026-07-28"
-    );
-    assert!(
-        discover
-            .iter()
-            .find(|(name, _)| name == "supportedProtocols")
-            .and_then(|(_, value)| value.as_array())
-            .is_some(),
+            .get("_meta")
+            .and_then(|meta| meta.get("io.modelcontextprotocol/serverInfo"))
+            .and_then(|info| info.get("name"))
+            .and_then(Value::as_str),
+        Some("akr-mcp"),
         "{discover:?}",
     );
 
@@ -818,5 +841,14 @@ fn both_supported_protocol_versions_are_accepted() {
             .and_then(|result| result.get("protocolVersion"))
             .and_then(Value::as_str),
         Some("2025-03-26")
+    );
+    // Absent from the supported list, this was silently answered `2024-11-05`, which every
+    // rmcp 3.x client offers first — so the whole session ran a generation behind.
+    assert_eq!(
+        responses[5]
+            .get("result")
+            .and_then(|result| result.get("protocolVersion"))
+            .and_then(Value::as_str),
+        Some("2025-11-25")
     );
 }

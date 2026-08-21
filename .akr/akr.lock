@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.3"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:bbde24b153ab1441614e3bcf8011150f000a5287a47dcc3998606fd51bb4f953"
+    source_graph "sha256:8871cf07e9841ec72e5942db28099c8de5da6e0eb7877ce4117bcc724b778b84"
 }
 
 source ".akr/project.akr" {
@@ -24,8 +24,8 @@ source ".akr/records/akr/decisions.akr" {
 }
 
 source ".akr/records/akr/evidence.akr" {
-    hash "sha256:ad1032f02c7cb540dee66a030b6265cdc755889e31b92e12f8693d1d875a92a6"
-    records 37
+    hash "sha256:390dfafcfd412d566d82234166ca57f3b84963e3c934528201c9d9995927043e"
+    records 38
 }
 
 source ".akr/records/akr/milestones.akr" {
@@ -303,6 +303,11 @@ seal @akr.evidence.collated-papercut-fixes/1 {
 seal @akr.evidence.design-coherence-clean/1 {
     state verified
     hash "sha256:9b020e2fe0cc294df53a076891df6a5506a6e019608d70d41a964a4b558e361a"
+}
+
+seal @akr.evidence.discover-shape-accepted-by-rmcp3/1 {
+    state verified
+    hash "sha256:95de30a114ed576aa5aa094e6b1f70db63af217b0f3fcfb09d85179ab5d3a1b7"
 }
 
 seal @akr.evidence.fmt-clean/1 {
