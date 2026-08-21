@@ -440,6 +440,15 @@ reader, the argument parser, the glob matcher — and git is the subprocess. SQL
 one entry that could not go the same way, because the cost is not a SQL engine but an FTS5
 tokeniser and a BM25 ranker beside it, and owning those buys nothing the design wants.
 
+**Verification tooling is exempt, and lives outside the workspace.** The rule above binds
+`crates/`. `tools/mcp-conformance/` is excluded from `[workspace] members`, keeps its own
+lock file, and depends on several major versions of a real MCP client library at once —
+the exact opposite of owning it outright, and correct here, because the thing it verifies
+*is* compatibility with code this project does not own and cannot predict. A conformance
+harness that reimplemented the client would only ever confirm its own reading of the
+protocol, which is the failure it exists to catch. Nothing in `crates/` may depend on it,
+no shipped binary links it, and `cargo test` never builds it.
+
 `bundled` compiles SQLite from vendored C rather than linking the machine's, which costs a
 C toolchain at build time and buys a build that behaves the same everywhere and an FTS5
 that is present by construction. The `fts5` cargo feature is therefore about what stage E

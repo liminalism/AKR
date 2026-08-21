@@ -1,0 +1,77 @@
+# The MCP server had no CI gate at all until this file: akr-gui.yml's path filters cover
+# akr-cli, akr-core and akr-gui, so a change confined to crates/akr-mcp ran nothing. Three
+# wire-protocol defects shipped in that gap. scripts/verify-distribution.sh already warns
+# what that costs — "a check nobody runs is a convention, not a rule" — so the conformance
+# tool is wired in here rather than left for someone to remember.
+name: AKR MCP
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/akr-mcp.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      # akr-mcp is an adapter over both of these, so a change there can break the wire
+      # contract without touching akr-mcp itself.
+      - "crates/akr-core/**"
+      - "crates/akr-cli/**"
+      - "crates/akr-mcp/**"
+      - "tools/mcp-conformance/**"
+      - "scripts/verify-mcp-conformance.sh"
+      - "docs/08-mcp.md"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/akr-mcp.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      # akr-mcp is an adapter over both of these, so a change there can break the wire
+      # contract without touching akr-mcp itself.
+      - "crates/akr-core/**"
+      - "crates/akr-cli/**"
+      - "crates/akr-mcp/**"
+      - "tools/mcp-conformance/**"
+      - "scripts/verify-mcp-conformance.sh"
+      - "docs/08-mcp.md"
+
+permissions:
+  contents: read
+
+jobs:
+  wire-conformance:
+    name: envelope and client conformance
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: akr-mcp
+          # The conformance tool is excluded from the workspace and keeps its own
+          # lockfile, so it needs its own cache entry; otherwise every run rebuilds
+          # three major versions of rmcp from scratch.
+          workspaces: |
+            . -> target
+            tools/mcp-conformance -> target
+
+      # Workspace scope deliberately. The incident this guards against was the whole tree
+      # being unformatted for three days; gating only akr-mcp-touching changes would leave
+      # every other pull request free to leave it red again.
+      - name: Formatting
+        run: cargo fmt --all --check
+      - name: Formatting (conformance tool)
+        run: cargo fmt --manifest-path tools/mcp-conformance/Cargo.toml --check
+      - name: Lints
+        run: cargo clippy -p akr-mcp --all-targets --locked
+
+      # Layer one: the envelope against tables we wrote, with no dependencies at all.
+      - name: Envelope conformance
+        run: cargo test -p akr-mcp --all-targets --locked
+
+      # Layer two: the envelope against clients we did not write. This is the only layer
+      # that can notice a client generation becoming stricter than the one before it.
+      - name: Client conformance
+        run: scripts/verify-mcp-conformance.sh --repo-dir "$GITHUB_WORKSPACE"

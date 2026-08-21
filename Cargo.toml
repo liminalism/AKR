@@ -1,6 +1,12 @@
 [workspace]
 resolver = "3"
 members = ["crates/akr-core", "crates/akr-cli", "crates/akr-mcp", "crates/akr-gui"]
+# Deliberately outside the workspace. `tools/mcp-conformance` depends on several major
+# versions of a real MCP client library at once, which is the exact opposite of the
+# discipline the shipped crates keep — and correctly so, because what it verifies is
+# compatibility with dependencies this project does not own. Excluding it keeps that
+# graph out of `cargo test`, and keeps `akr-mcp` at zero dependencies of any kind.
+exclude = ["tools/mcp-conformance"]
 
 [workspace.package]
 version = "0.3.3"

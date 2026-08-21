@@ -261,6 +261,55 @@ record akr.decision.mcp-budgeted-and-instrumented/3 : decision {
     ]
 }
 
+record akr.decision.mcp-envelope-verified-against-real-clients/1 : decision {
+    title "The MCP envelope is verified against real client generations, not against our own reading"
+    state proposed
+    scope [
+        path "crates/akr-mcp/src/protocol.rs",
+        path "crates/akr-mcp/tests/conformance.rs",
+        path "docs/08-mcp.md",
+        path "scripts/verify-mcp-conformance.sh",
+        path "tools/mcp-conformance/**"
+    ]
+    decision """
+        The MCP wire envelope is verified in two layers, and neither subsumes the other.
+        `crates/akr-mcp/tests/conformance.rs` checks every response against closed sets written
+        out by hand, with no dependency of any kind; `tools/mcp-conformance/` drives the server
+        with three major versions of the rmcp client library at once, from outside the
+        workspace, run by `scripts/verify-mcp-conformance.sh` and by CI. The first layer is the
+        only one that catches an omission -- a supported protocol version quietly missing is not
+        a malformed response and no client will ever report it. The second is the only one that
+        catches a client generation becoming stricter than the one before it, which is how every
+        defect here has actually been found. A published JSON Schema is not a third option that
+        replaces either: the 2026-07-28 schema types `resultType` as an unconstrained string, so
+        it admits the exact value that broke every tool call.
+        """
+    context """
+        Three defects shipped through the same gap: `supportedProtocols` on a discovery result,
+        a discovery result shaped like an initialize result, and `resultType: "tool"` on every
+        tool this server has. None produced a JSON-RPC error. Each was a successful response a
+        strict client could not deserialise, which is worse than a refusal, because a client
+        retreats from an error and can only give up on a malformed success.
+
+        They were invisible for a fortnight for a reason worth recording: nothing in this server
+        regressed. Claude Code made 586 successful tool calls between 4 and 17 August, and Codex
+        0.147 called eight knowledge tools on 13 August, against a server already emitting
+        `resultType: "tool"` -- rmcp 1.7 has no concept of the field and serde dropped it. Codex
+        0.149 bundles rmcp 3.1.2, which types results by it, and every tool call stopped working
+        on 21 August with the server unchanged. The threat is client strictness drifting under a
+        server that never moved, and rmcp alone has published 62 versions across four major
+        lines.
+        """
+    consequences """
+        `tools/mcp-conformance` is excluded from the workspace and keeps its own lock file, so
+        `cargo test` is unchanged and `akr-mcp` keeps its zero dependencies, dev-dependencies
+        included. The cost is a second Cargo project and about 150 crates that CI builds and no
+        shipped binary links. Older client generations are kept in the matrix deliberately as
+        the control: a defect that fails on 3.x and passes on 1.x has reproduced the real event
+        rather than merely failing.
+        """
+}
+
 record akr.decision.papercut-subject-and-collation/1 : decision {
     title "A papercut says what it was about"
     state superseded

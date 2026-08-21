@@ -37,6 +37,65 @@ rather than guessing where the message was meant to end. Official MCP clients se
 `Content-Length` headers instead; the server accepts that framing too and answers in
 kind, so a host that cannot parse NDJSON is not left attached with an empty tool list.
 
+## 1a. Envelope and negotiation
+
+Normative for the shape of every response, as §2–§4 are normative for what is inside one.
+The distinction matters because the two fail differently: a wrong payload is a wrong
+answer, and a wrong envelope is *no* answer — the client cannot deserialise the response
+at all, drops the connection, and the host attaches with an empty tool list while the
+server reports nothing wrong. Every MCP defect this project has shipped has been of the
+second kind.
+
+**`resultType`.** Every `tools/call` result and the `server/discover` result carries
+`resultType`. Its vocabulary is closed — `complete`, `input_required`, `task` — and a
+ledger read or write only ever produces `complete`. The field is how a client decides
+which result type to parse, so a value outside the set is not an extension a client
+ignores: it leaves the client with no branch to take and the entire response is refused.
+A result from a server speaking an earlier revision omits the field, and a client must
+read that absence as `complete`.
+
+**Protocol versions.** The server offers exactly these, newest first:
+
+| Version | Note |
+|---|---|
+| `2026-07-28` | current |
+| `2025-11-25` | |
+| `2025-06-18` | |
+| `2025-03-26` | |
+| `2024-11-05` | legacy |
+
+`initialize` naming any of them is answered with **that** version, never a fallback. This
+rule is load-bearing and its violation is silent: a version the server does not offer is
+not refused, it is answered with the oldest one, and the session runs a generation behind
+what both ends could have spoken without anyone being told. A version dropped by a future
+MCP revision is removed here in the same change that removes it from the code.
+
+**`server/discover`.** A client that speaks the discovery handshake sends this *before*
+`initialize`, and retreats to the legacy handshake on one signal only: a `-32601`. The
+result is a discovery result and carries `resultType`, `supportedVersions`, `capabilities`,
+`ttlMs` and `cacheScope`, optionally `instructions` and `_meta`. `protocolVersion` and a
+top-level `serverInfo` belong to an `initialize` result and must not appear; the server
+identity travels in `_meta` under `io.modelcontextprotocol/serverInfo`. Answering this
+method with an `initialize` result is worse than not implementing it, because a malformed
+success gives the client nothing to fall back from.
+
+**The tool-result envelope.** A `tools/call` result carries `content`, `structuredContent`,
+`isError`, `resultType` and `_meta`, and nothing else. A refusal is a *successful*
+JSON-RPC response with `isError: true` (§5) and travels through the same constructor as an
+answer, so an envelope that is correct only on the happy path breaks the first time a tool
+says no.
+
+**How this section is enforced.** Two ways, deliberately, because neither subsumes the
+other. `crates/akr-mcp/tests/conformance.rs` checks the envelope against closed sets
+written out by hand, with no dependency on this server's code and none on any client — it
+is the only layer that can catch an *omission*, such as a supported version quietly
+missing. `tools/mcp-conformance/`, run by `scripts/verify-mcp-conformance.sh`, drives the
+server with several major versions of a real MCP client library at once — it is the only
+layer that can catch a client generation becoming stricter than the one before it, which
+is how every defect here was actually found. The published JSON Schema catches neither
+reliably: it types `resultType` as an unconstrained string, so the closed set above lives
+in prose and in these two checks, not in a schema anyone can validate against.
+
 ## 2. Tool catalogue
 
 | Tool | Kind | CLI equivalent | Idempotent |

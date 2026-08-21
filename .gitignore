@@ -11,6 +11,11 @@
 /target/
 **/*.rs.bk
 
+# `tools/mcp-conformance` is a Cargo project outside the workspace, so the anchored rule
+# above never reaches its build directory. Without this line the first local run of
+# scripts/verify-mcp-conformance.sh offers eighty crates of build output for commit.
+tools/mcp-conformance/target/
+
 # Editor / OS noise
 .DS_Store
 *.swp

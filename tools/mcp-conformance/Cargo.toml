@@ -1,0 +1,30 @@
+[package]
+name = "mcp-conformance"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Deliberately outside the workspace (see the `exclude` key in ../../Cargo.toml). This is
+# the one place in the repository that is *supposed* to depend on code we do not own: the
+# thing under test is whether akr-mcp's wire responses survive real MCP client libraries,
+# so the client libraries have to be real, and there have to be several of them.
+#
+# Renamed dependencies let three semver-incompatible majors coexist in one binary. None
+# declares a `links` key and all three want `tokio ^1`, so cargo unifies the runtime and
+# builds all three side by side.
+# Why these three lines, and not others. 1.x has no concept of `resultType` or
+# `server/discover` at all, which makes it the control: a defect that fails on 3.x and
+# passes here has reproduced the real event rather than merely failed. 2.x is the
+# generation MCP's own conformance audit was run against for 2025-11-25 — the version whose
+# omission was the silent defect — so dropping it would leave that version untested by any
+# client that takes it seriously. 3.x is the 2026-07-28 generation that introduced both
+# `resultType` and discovery, and is what Codex ships. 0.x is deliberately out: 36 releases
+# to reach 0.17 means no single pin represents a generation, and it covers no protocol
+# version 1.x does not.
+[dependencies]
+rmcp1 = { package = "rmcp", version = "1.8", default-features = false, features = ["client", "transport-child-process"] }
+rmcp2 = { package = "rmcp", version = "2.2", default-features = false, features = ["client", "transport-child-process"] }
+rmcp3 = { package = "rmcp", version = "3.1", default-features = false, features = ["client", "transport-child-process"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "io-util", "time"] }
+serde_json = "1"
+boon = "0.6"

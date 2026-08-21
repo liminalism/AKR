@@ -1,6 +1,18 @@
 akr 0.1
 project akr
 
+record akr.evidence.client-matrix-accepts-every-response/1 : evidence {
+    title "Three rmcp major versions (1.8.0, 2.2.0, 3.1.4) drive akr-mcp from outside the workspace and all accept every response: protocol negotiation echoes each requested version, server/discover offers all five published versions on 3.x, 23 tools list, and all 24 tool calls deserialise. Reintroducing each historical defect fails it on exactly the generation that rejected it in the field -- resultType 'tool' fails 3.x with 'Unexpected response type' while 1.x and 2.x pass, reproducing Codex 0.147 on 13 August versus 0.149 on the 21st. Reported alongside: 23 of 23 declared outputSchemas constrain nothing, so validating payloads against them cannot currently fail."
+    state verified
+    result pass
+    method command
+    observed_at git:35f479497290fc2463d3b41c8746be07c573e616
+    command "scripts/verify-mcp-conformance.sh"
+    summary """
+        Three rmcp major versions (1.8.0, 2.2.0, 3.1.4) drive akr-mcp from outside the workspace and all accept every response: protocol negotiation echoes each requested version, server/discover offers all five published versions on 3.x, 23 tools list, and all 24 tool calls deserialise. Reintroducing each historical defect fails it on exactly the generation that rejected it in the field -- resultType 'tool' fails 3.x with 'Unexpected response type' while 1.x and 2.x pass, reproducing Codex 0.147 on 13 August versus 0.149 on the 21st. Reported alongside: 23 of 23 declared outputSchemas constrain nothing, so validating payloads against them cannot currently fail.
+        """
+}
+
 record akr.evidence.collated-papercut-cli-mcp/1 : evidence {
     title "CLI tests cover named get slots, start namespaces, change status alias, YAML --from slot-list remedy, and T012 enum rejection before AKR-I002."
     state verified
