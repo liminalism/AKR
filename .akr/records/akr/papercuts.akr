@@ -355,6 +355,113 @@ record akr.papercut.collated-10-papercuts-from-evidence-intake/2 : papercut {
     created_at 2026-08-09
 }
 
+record akr.papercut.collated-10-papercuts-from-evidence-intake-2/1 : papercut {
+    title "Collated 10 papercuts from Evidence-intake-project, Kitchen-Concept, Lege-ecosystem, SaveYourSkin and 1 more"
+    state superseded
+    statement """
+        Collated 10 papercuts from /mnt/Samsung980_1TB/Rust-projects on 2026-08-23 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
+
+        ## Evidence-intake-project @evidence-intake-project.papercut.proposing-records-with-line-based-citations [about akr]
+        Proposing records with line-based citations into a registered source: every citation whose end_line fell on a blank line was accepted by knowledge.propose but then failed validation with AKR-S022 (byte range covers one line fewer). Eight revises to fix. Propose should either reject or normalise the range at write time.
+
+        ## Evidence-intake-project @evidence-intake-project.papercut.while-proposing-a-decision-through-knowledge [about akr]
+        While proposing a decision through knowledge.propose I used the common `statement` slot; decisions instead require a `decision` slot, which is easy to miss without calling knowledge.explain first.
+
+        ## Kitchen-Concept @kitchen.papercut.knowledge-propose-documents-scope-as-array [about akr]
+        knowledge.propose documents scope as Array<unknown> but does not describe accepted scope forms; a natural {path: ...} object failed with AKR-C004 and required a schema lookup/retry.
+
+        ## Kitchen-Concept @kitchen.papercut.knowledge-propose-exposes-scope-only-as-array [about akr]
+        knowledge.propose exposes `scope` only as Array<unknown>; passing documented-looking `{path: ...}` objects failed with AKR-C004 and did not identify the accepted MCP representation. The schema should enumerate valid scope forms.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.creating-the-publication-work-record-first [about akr]
+        Creating the publication work record first failed because work requires an intent slot and rejects topic; the schema requirements were only disclosed after the write attempt.
+
+        ## SaveYourSkin @saveyourskin.papercut.finishing-the-stair-descent-task-the-global [about akr]
+        Finishing the stair-descent task, the global instructions ask for `akr scratch prune` / `akr scratch list`, but the installed akr CLI (~/.local/bin/akr) rejects `scratch` as an unknown command, so scratch hygiene had to be done by hand (the session's own outputs were kept under .agent/scratch/stair-tread-descent/). Either the CLI is behind the instructions or the command has another name.
+
+        ## SaveYourSkin @saveyourskin.papercut.knowledge-search-and-knowledge-start-return [about akr]
+        knowledge.search and knowledge.start return zero results for any multi-word query (e.g. "profession resident courtier", "NPC AI agency intent") on this ledger while single words ("profession", "mind", "verb") return many; the FTS index appears to AND all terms, so natural-language task queries silently miss. Orientation worked only after splitting into single-word searches.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.after-akr-scratch-keep-quality-rate-curve [about akr]
+        After `akr scratch keep quality-rate-curve-closure-20260823` and `akr build`, `akr scratch list` showed the entry as kept, but knowledge.evidence_add twice rejected a file inside it with AKR-C004 as disposable. MCP scratch-keep detection appears out of sync with the CLI metadata.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.knowledge-propose-exposes-scope-as-array [about akr]
+        knowledge.propose exposes scope as Array<unknown>; passing intuitive {path: ...} objects fails only with 'unknown scope form'. The accepted MCP shape is {form: 'path', glob: ...}, which should be expressed in the tool schema or error.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.knowledge-propose-exposes-topic-for-every [about akr]
+        knowledge.propose exposes `topic` for every record kind, but a work proposal containing it fails only after full validation with AKR-T034 because topic is normative-only. The tool schema or preflight should state/reject this earlier.
+        """
+    observed_at git:1414d0107e6bde1dfb7b05911e0be53a15b1b33d
+    about "akr"
+    collated [
+        "evidence-intake-project.papercut.proposing-records-with-line-based-citations",
+        "evidence-intake-project.papercut.while-proposing-a-decision-through-knowledge",
+        "kitchen.papercut.knowledge-propose-documents-scope-as-array",
+        "kitchen.papercut.knowledge-propose-exposes-scope-only-as-array",
+        "lege-ecosystem.papercut.creating-the-publication-work-record-first",
+        "saveyourskin.papercut.finishing-the-stair-descent-task-the-global",
+        "saveyourskin.papercut.knowledge-search-and-knowledge-start-return",
+        "jpegxl-rs.papercut.after-akr-scratch-keep-quality-rate-curve",
+        "jpegxl-rs.papercut.knowledge-propose-exposes-scope-as-array",
+        "jpegxl-rs.papercut.knowledge-propose-exposes-topic-for-every"
+    ]
+    created_at 2026-08-23
+}
+
+record akr.papercut.collated-10-papercuts-from-evidence-intake-2/2 : papercut {
+    title "Collated 10 papercuts from Evidence-intake-project, Kitchen-Concept, Lege-ecosystem, SaveYourSkin and 1 more"
+    state withdrawn
+    statement """
+        Collated 10 papercuts from /mnt/Samsung980_1TB/Rust-projects on 2026-08-23 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
+
+        ## Evidence-intake-project @evidence-intake-project.papercut.proposing-records-with-line-based-citations [about akr]
+        Proposing records with line-based citations into a registered source: every citation whose end_line fell on a blank line was accepted by knowledge.propose but then failed validation with AKR-S022 (byte range covers one line fewer). Eight revises to fix. Propose should either reject or normalise the range at write time.
+
+        ## Evidence-intake-project @evidence-intake-project.papercut.while-proposing-a-decision-through-knowledge [about akr]
+        While proposing a decision through knowledge.propose I used the common `statement` slot; decisions instead require a `decision` slot, which is easy to miss without calling knowledge.explain first.
+
+        ## Kitchen-Concept @kitchen.papercut.knowledge-propose-documents-scope-as-array [about akr]
+        knowledge.propose documents scope as Array<unknown> but does not describe accepted scope forms; a natural {path: ...} object failed with AKR-C004 and required a schema lookup/retry.
+
+        ## Kitchen-Concept @kitchen.papercut.knowledge-propose-exposes-scope-only-as-array [about akr]
+        knowledge.propose exposes `scope` only as Array<unknown>; passing documented-looking `{path: ...}` objects failed with AKR-C004 and did not identify the accepted MCP representation. The schema should enumerate valid scope forms.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.creating-the-publication-work-record-first [about akr]
+        Creating the publication work record first failed because work requires an intent slot and rejects topic; the schema requirements were only disclosed after the write attempt.
+
+        ## SaveYourSkin @saveyourskin.papercut.finishing-the-stair-descent-task-the-global [about akr]
+        Finishing the stair-descent task, the global instructions ask for `akr scratch prune` / `akr scratch list`, but the installed akr CLI (~/.local/bin/akr) rejects `scratch` as an unknown command, so scratch hygiene had to be done by hand (the session's own outputs were kept under .agent/scratch/stair-tread-descent/). Either the CLI is behind the instructions or the command has another name.
+
+        ## SaveYourSkin @saveyourskin.papercut.knowledge-search-and-knowledge-start-return [about akr]
+        knowledge.search and knowledge.start return zero results for any multi-word query (e.g. "profession resident courtier", "NPC AI agency intent") on this ledger while single words ("profession", "mind", "verb") return many; the FTS index appears to AND all terms, so natural-language task queries silently miss. Orientation worked only after splitting into single-word searches.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.after-akr-scratch-keep-quality-rate-curve [about akr]
+        After `akr scratch keep quality-rate-curve-closure-20260823` and `akr build`, `akr scratch list` showed the entry as kept, but knowledge.evidence_add twice rejected a file inside it with AKR-C004 as disposable. MCP scratch-keep detection appears out of sync with the CLI metadata.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.knowledge-propose-exposes-scope-as-array [about akr]
+        knowledge.propose exposes scope as Array<unknown>; passing intuitive {path: ...} objects fails only with 'unknown scope form'. The accepted MCP shape is {form: 'path', glob: ...}, which should be expressed in the tool schema or error.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.knowledge-propose-exposes-topic-for-every [about akr]
+        knowledge.propose exposes `topic` for every record kind, but a work proposal containing it fails only after full validation with AKR-T034 because topic is normative-only. The tool schema or preflight should state/reject this earlier.
+        """
+    observed_at git:1414d0107e6bde1dfb7b05911e0be53a15b1b33d
+    about "akr"
+    collated [
+        "evidence-intake-project.papercut.proposing-records-with-line-based-citations",
+        "evidence-intake-project.papercut.while-proposing-a-decision-through-knowledge",
+        "kitchen.papercut.knowledge-propose-documents-scope-as-array",
+        "kitchen.papercut.knowledge-propose-exposes-scope-only-as-array",
+        "lege-ecosystem.papercut.creating-the-publication-work-record-first",
+        "saveyourskin.papercut.finishing-the-stair-descent-task-the-global",
+        "saveyourskin.papercut.knowledge-search-and-knowledge-start-return",
+        "jpegxl-rs.papercut.after-akr-scratch-keep-quality-rate-curve",
+        "jpegxl-rs.papercut.knowledge-propose-exposes-scope-as-array",
+        "jpegxl-rs.papercut.knowledge-propose-exposes-topic-for-every"
+    ]
+    supersedes [ @akr.papercut.collated-10-papercuts-from-evidence-intake-2/1 ]
+    created_at 2026-08-23
+}
+
 record akr.papercut.collated-16-papercuts-from-kitchen-concept-lege/1 : papercut {
     title "Collated 16 papercuts from Kitchen-Concept, Lege-ecosystem, SaveYourSkin, jpegXL-rs and 1 more"
     state verified
@@ -564,6 +671,210 @@ record akr.papercut.collated-18-papercuts-from-kitchen-concept-lege/1 : papercut
         "raw-autotune.papercut.knowledge-search-and-knowledge-start-via-the"
     ]
     created_at 2026-08-07
+}
+
+record akr.papercut.collated-19-papercuts-from-evidence-intake/1 : papercut {
+    title "Collated 19 papercuts from Evidence-intake-project, Lege-ecosystem, SaveYourSkin, jpegXL-rs and 1 more"
+    state superseded
+    statement """
+        Collated 19 papercuts from \\?\D:\Rust-projects on 2026-08-22 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
+
+        ## Evidence-intake-project @evidence-intake-project.papercut.after-knowledge-source-add-succeeded-the [about akr]
+        After `knowledge.source_add` succeeded, the immediately following `knowledge.source_search` failed because the source index had not been built, but the add response did not provide the usual `akr build` next step. Having source_add report that required build would prevent an avoidable failed lookup.
+
+        ## Evidence-intake-project @evidence-intake-project.papercut.knowledge-validate-returned-an-unexpected [about akr]
+        knowledge.validate returned an unexpected response type at handoff, so validation had to fall back to the equivalent CLI check.
+
+        ## Evidence-intake-project @evidence-intake-project.papercut.resolving-a-question-from-a-new-observation [about akr]
+        Resolving a question from a new observation required revising the observation's `resolves` relation to an unpinned head before revising the question; pinning `/1` made the question's new `/2` head invalidate the resolver during the same transition. The error help did not explain this circular head-update sequence.
+
+        ## Evidence-intake-project @evidence-intake-project.papercut.while-recording-a-measured-contradiction-to-the [about akr]
+        While recording a measured contradiction to the proposed keyframe decision, knowledge.propose rejected the live contradicts relation because V-023 requires an `acknowledged true` marker, but the observation schema/tool contract does not expose where that marker belongs. I omitted the relation and revised the proposed decision directly.
+
+        ## Evidence-intake-project @evidence-intake-project.papercut.while-starting-architecture-planning-knowledge [about akr]
+        While starting architecture planning, knowledge.start failed with an unexpected response type, requiring the CLI fallback.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.evidence-records-routinely-cite-agent-scratch [about akr]
+        Evidence records routinely cite `.agent/scratch` paths as their `artifact`, but scratch is documented as prunable and nothing stops a cited path being deleted: 38 records across 5 .akr files reference `.agent/scratch/...`. Most are already dangling — when `.agent/scratch/ocr-benchmark` was inspected on 2026-08-22 it held only score.py, b3.*, target/ and three recipe output dirs, while eight separate evidence records cite sibling paths under it (tensorrt-smoke-*, lazy-corrected-*, out-winocr-12mp-200-sharded, release-auto-winocr-*, release-tensorrt-*, turboocr-*.txt) that had already been pruned. Those verified claims silently lost their backing. The fix belongs in `knowledge.evidence_add`: it should refuse an `artifact` path under the scratch root outright, at write time, and tell the author to move the artefact somewhere durable first. Refusing at the point of writing is what makes the guarantee hold — a warning emitted later by `akr build` or `validate` arrives after the record is already in the ledger, and by then the usual outcome is a dangling reference nobody re-reads. A durable-path precondition is cheap to check and turns an unenforced convention into an invariant.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.knowledge-explain-decision-listed-optional [about akr]
+        knowledge.explain decision listed optional relations but did not state V-021's requirement that an active decision cite a requirement, policy, constraint, or evidence; the first D1 decision proposal was rejected only after submission.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.knowledge-papercut-rejected-an-otherwise [about akr]
+        knowledge.papercut rejected an otherwise complete report because the multi-namespace workspace requires namespace to be repeated explicitly; the first call could not infer it from the active goal.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.the-project-handoff-says-to-run-akr-validate [about akr]
+        The project handoff says to run `akr validate`, but this installed CLI has no validate subcommand; `akr build` refreshed the lock and generated views, then the MCP knowledge.validate tool is required for validation.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.the-project-protocol-says-to-run-knowledge [about akr]
+        The project protocol says to run knowledge.validate before handoff, but the AKR CLI exposes no validate command; for shell-only cross-workspace use the equivalent appears to be akr check, which is not stated in the protocol.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.while-proposing-work-from-a-new-internal-plan [about akr]
+        While proposing work from a new internal plan, knowledge.propose rejected path+line attribution without a registered document id; then knowledge.papercut itself required a namespace that start had already established. Both requirements were only exposed after failed calls.
+
+        ## SaveYourSkin @saveyourskin.papercut.akr-mcp-knowledge-context-remained-unusable [about akr]
+        AKR MCP knowledge.context remained unusable after the MCP/session restart, returning 'Unexpected response type'; the akr CLI remains functional and was used to update the ledger.
+
+        ## SaveYourSkin @saveyourskin.papercut.akr-mcp-knowledge-start-and-knowledge-context [about akr]
+        AKR MCP knowledge.start and knowledge.context both returned Unexpected response type, so the session had to fall back to the CLI for context and ledger updates.
+
+        ## SaveYourSkin @saveyourskin.papercut.knowledge-context-returned-unexpected-response [about akr]
+        knowledge.context returned Unexpected response type during the head regression task, requiring the slower CLI context fallback.
+
+        ## SaveYourSkin @saveyourskin.papercut.knowledge-start-and-knowledge-validate-both [about akr-mcp]
+        knowledge.start and knowledge.validate both returned Unexpected response type after the MCP restart, while the equivalent akr CLI commands succeeded; the MCP response adapter appears to reject a valid server payload.
+
+        ## SaveYourSkin @saveyourskin.papercut.knowledge-start-for-the-persistent-missing-head [about akr]
+        knowledge.start for the persistent missing-head production defect failed at the MCP boundary with `Unexpected response type`, returning no context bundle.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.a-completed-work-revision-retained-two-evidence [about akr]
+        A completed work revision retained two evidence references observed before that revision; the earlier follow-up refreshed only the other two checks, so `akr build` later surfaced R022. A completion/update path that reports every stale acceptance reference together would make partial refreshes harder to miss.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.finalizing-a-cited-source-with-context-block [about akr]
+        Finalizing a cited source with --context block produced AKR-S022 on every retained citation because captured byte ranges were reported as covering one or two lines beyond their stored end_line; cited-only sources cannot be re-finalized with exact context. The safe fallback was to restore the uncommitted finalization, leave the exact-cited source full, and metadata-finalize only uncited sources.
+
+        ## openarc @openarc.papercut.while-proposing-an-observation-the-tool-schema [about akr]
+        While proposing an observation, the tool schema exposed method only as a generic enum and rejected the intuitive value `measurement`; the error revealed the allowed observation-specific values. The callable schema should enumerate those values.
+        """
+    observed_at git:1414d0107e6bde1dfb7b05911e0be53a15b1b33d
+    about "akr"
+    collated [
+        "evidence-intake-project.papercut.after-knowledge-source-add-succeeded-the",
+        "evidence-intake-project.papercut.knowledge-validate-returned-an-unexpected",
+        "evidence-intake-project.papercut.resolving-a-question-from-a-new-observation",
+        "evidence-intake-project.papercut.while-recording-a-measured-contradiction-to-the",
+        "evidence-intake-project.papercut.while-starting-architecture-planning-knowledge",
+        "lege-ecosystem.papercut.evidence-records-routinely-cite-agent-scratch",
+        "lege-ecosystem.papercut.knowledge-explain-decision-listed-optional",
+        "lege-ecosystem.papercut.knowledge-papercut-rejected-an-otherwise",
+        "lege-ecosystem.papercut.the-project-handoff-says-to-run-akr-validate",
+        "lege-ecosystem.papercut.the-project-protocol-says-to-run-knowledge",
+        "lege-ecosystem.papercut.while-proposing-work-from-a-new-internal-plan",
+        "saveyourskin.papercut.akr-mcp-knowledge-context-remained-unusable",
+        "saveyourskin.papercut.akr-mcp-knowledge-start-and-knowledge-context",
+        "saveyourskin.papercut.knowledge-context-returned-unexpected-response",
+        "saveyourskin.papercut.knowledge-start-and-knowledge-validate-both",
+        "saveyourskin.papercut.knowledge-start-for-the-persistent-missing-head",
+        "jpegxl-rs.papercut.a-completed-work-revision-retained-two-evidence",
+        "jpegxl-rs.papercut.finalizing-a-cited-source-with-context-block",
+        "openarc.papercut.while-proposing-an-observation-the-tool-schema"
+    ]
+    author "GitHub Uploader"
+    created_at 2026-08-22
+}
+
+record akr.papercut.collated-19-papercuts-from-evidence-intake/2 : papercut {
+    title "Collated 19 papercuts from Evidence-intake-project, Lege-ecosystem, SaveYourSkin, jpegXL-rs and 1 more"
+    state withdrawn
+    statement """
+        Collated 19 papercuts from \\?\D:\Rust-projects on 2026-08-22 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
+
+        ## Evidence-intake-project @evidence-intake-project.papercut.after-knowledge-source-add-succeeded-the [about akr]
+        After `knowledge.source_add` succeeded, the immediately following `knowledge.source_search` failed because the source index had not been built, but the add response did not provide the usual `akr build` next step. Having source_add report that required build would prevent an avoidable failed lookup.
+
+        ## Evidence-intake-project @evidence-intake-project.papercut.knowledge-validate-returned-an-unexpected [about akr]
+        knowledge.validate returned an unexpected response type at handoff, so validation had to fall back to the equivalent CLI check.
+
+        ## Evidence-intake-project @evidence-intake-project.papercut.resolving-a-question-from-a-new-observation [about akr]
+        Resolving a question from a new observation required revising the observation's `resolves` relation to an unpinned head before revising the question; pinning `/1` made the question's new `/2` head invalidate the resolver during the same transition. The error help did not explain this circular head-update sequence.
+
+        ## Evidence-intake-project @evidence-intake-project.papercut.while-recording-a-measured-contradiction-to-the [about akr]
+        While recording a measured contradiction to the proposed keyframe decision, knowledge.propose rejected the live contradicts relation because V-023 requires an `acknowledged true` marker, but the observation schema/tool contract does not expose where that marker belongs. I omitted the relation and revised the proposed decision directly.
+
+        ## Evidence-intake-project @evidence-intake-project.papercut.while-starting-architecture-planning-knowledge [about akr]
+        While starting architecture planning, knowledge.start failed with an unexpected response type, requiring the CLI fallback.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.evidence-records-routinely-cite-agent-scratch [about akr]
+        Evidence records routinely cite `.agent/scratch` paths as their `artifact`, but scratch is documented as prunable and nothing stops a cited path being deleted: 38 records across 5 .akr files reference `.agent/scratch/...`. Most are already dangling — when `.agent/scratch/ocr-benchmark` was inspected on 2026-08-22 it held only score.py, b3.*, target/ and three recipe output dirs, while eight separate evidence records cite sibling paths under it (tensorrt-smoke-*, lazy-corrected-*, out-winocr-12mp-200-sharded, release-auto-winocr-*, release-tensorrt-*, turboocr-*.txt) that had already been pruned. Those verified claims silently lost their backing. The fix belongs in `knowledge.evidence_add`: it should refuse an `artifact` path under the scratch root outright, at write time, and tell the author to move the artefact somewhere durable first. Refusing at the point of writing is what makes the guarantee hold — a warning emitted later by `akr build` or `validate` arrives after the record is already in the ledger, and by then the usual outcome is a dangling reference nobody re-reads. A durable-path precondition is cheap to check and turns an unenforced convention into an invariant.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.knowledge-explain-decision-listed-optional [about akr]
+        knowledge.explain decision listed optional relations but did not state V-021's requirement that an active decision cite a requirement, policy, constraint, or evidence; the first D1 decision proposal was rejected only after submission.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.knowledge-papercut-rejected-an-otherwise [about akr]
+        knowledge.papercut rejected an otherwise complete report because the multi-namespace workspace requires namespace to be repeated explicitly; the first call could not infer it from the active goal.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.the-project-handoff-says-to-run-akr-validate [about akr]
+        The project handoff says to run `akr validate`, but this installed CLI has no validate subcommand; `akr build` refreshed the lock and generated views, then the MCP knowledge.validate tool is required for validation.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.the-project-protocol-says-to-run-knowledge [about akr]
+        The project protocol says to run knowledge.validate before handoff, but the AKR CLI exposes no validate command; for shell-only cross-workspace use the equivalent appears to be akr check, which is not stated in the protocol.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.while-proposing-work-from-a-new-internal-plan [about akr]
+        While proposing work from a new internal plan, knowledge.propose rejected path+line attribution without a registered document id; then knowledge.papercut itself required a namespace that start had already established. Both requirements were only exposed after failed calls.
+
+        ## SaveYourSkin @saveyourskin.papercut.akr-mcp-knowledge-context-remained-unusable [about akr]
+        AKR MCP knowledge.context remained unusable after the MCP/session restart, returning 'Unexpected response type'; the akr CLI remains functional and was used to update the ledger.
+
+        ## SaveYourSkin @saveyourskin.papercut.akr-mcp-knowledge-start-and-knowledge-context [about akr]
+        AKR MCP knowledge.start and knowledge.context both returned Unexpected response type, so the session had to fall back to the CLI for context and ledger updates.
+
+        ## SaveYourSkin @saveyourskin.papercut.knowledge-context-returned-unexpected-response [about akr]
+        knowledge.context returned Unexpected response type during the head regression task, requiring the slower CLI context fallback.
+
+        ## SaveYourSkin @saveyourskin.papercut.knowledge-start-and-knowledge-validate-both [about akr-mcp]
+        knowledge.start and knowledge.validate both returned Unexpected response type after the MCP restart, while the equivalent akr CLI commands succeeded; the MCP response adapter appears to reject a valid server payload.
+
+        ## SaveYourSkin @saveyourskin.papercut.knowledge-start-for-the-persistent-missing-head [about akr]
+        knowledge.start for the persistent missing-head production defect failed at the MCP boundary with `Unexpected response type`, returning no context bundle.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.a-completed-work-revision-retained-two-evidence [about akr]
+        A completed work revision retained two evidence references observed before that revision; the earlier follow-up refreshed only the other two checks, so `akr build` later surfaced R022. A completion/update path that reports every stale acceptance reference together would make partial refreshes harder to miss.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.finalizing-a-cited-source-with-context-block [about akr]
+        Finalizing a cited source with --context block produced AKR-S022 on every retained citation because captured byte ranges were reported as covering one or two lines beyond their stored end_line; cited-only sources cannot be re-finalized with exact context. The safe fallback was to restore the uncommitted finalization, leave the exact-cited source full, and metadata-finalize only uncited sources.
+
+        ## openarc @openarc.papercut.while-proposing-an-observation-the-tool-schema [about akr]
+        While proposing an observation, the tool schema exposed method only as a generic enum and rejected the intuitive value `measurement`; the error revealed the allowed observation-specific values. The callable schema should enumerate those values.
+
+        RESOLVED. All nineteen are answered; the sixteen distinct frictions behind them are below, each naming what fixed it.
+
+        Five of them — knowledge.start, knowledge.context and knowledge.validate all returning `Unexpected response type`, four from SaveYourSkin and one from Evidence-intake-project, every one logged on 2026-08-21 — were already fixed on the day they were logged, by 35f4794 "Type tool results with a resultType MCP defines". Every tool result this server returned carried `resultType: "tool"`, a value outside the closed set a client branches on, so the response was rejected whatever tool produced it. `crates/akr-mcp/tests/conformance.rs` holds the closed sets and calls every tool in the catalogue, so the pattern cannot recur silently.
+
+        Two were real defects with wrong output, not friction:
+
+        - Finalizing a cited source with `--context block` reported `AKR-S022` on every retained citation, for line ranges one or two past the ones the records stored. The full-document citation check trimmed trailing newlines before counting lines; the retained-fragment branch did not, and a block-widened fragment nearly always ends on one or two of them. Both now go through one `last_line_of` in `crates/akr-core/src/source/mod.rs`, and `finalizing_a_cited_source_leaves_its_citations_checking` fails on the old arithmetic.
+        - `knowledge.revise` silently dropped `topic` from the next revision — the same shape as the `sources` merge defect fixed earlier, found while adding `acknowledged` to the same merge. A normative record renamed through MCP lost its exclusivity handle (D-004b) without the caller mentioning it.
+
+        The rest were surfaces that refused a call and left the way through to be discovered from the error:
+
+        - `acknowledged` is now a field on knowledge.propose and knowledge.revise. It is a common slot, so it appeared in neither `slots` nor `relations`, and there was no way through MCP to satisfy V-023 for a contradiction worth keeping — the author dropped the relation instead, which is the contradiction going unrecorded that the rule exists to prevent.
+        - `akr validate` runs `akr check`. The protocol every agent reads says "run knowledge.validate before handing work back"; from a shell that was not a command at all, and two sessions in one sister project spent the difference finding out that `check` was the same thing.
+        - `akr papercut` needs no `--namespace` in a workspace that declares several. The default is where papercuts already go, by count; a workspace that has logged none falls back to the namespace carrying the most records, then to the alphabetically first. So the first papercut picks a place and every one after it follows. Declaration order was not available to decide it — `Project::namespaces` is a set in the model.
+        - `akr source search` and `akr source get --chunk` refresh the chunk index before reading it, as `akr search` has always done for the record index. A document is searchable the moment it is registered rather than after the next build.
+        - `akr evidence add --artifact` refuses a path under `.agent/scratch` (`AKR-C004`). The Lege-ecosystem audit that found 38 records citing scratch paths, most already dangling, asked for the refusal at write time rather than a later warning, and it is right: a warning arrives after the record is in the ledger, which is when nobody goes back and moves the file.
+        - `akr explain <kind>` prints the members of a closed slot rather than the word `enum`, so `method: manual|command|instrumented|observation` answers the guess `measurement` before it is made; `knowledge.propose`'s `slots` description carries the same four closed slots. `explain decision` states V-021's requirement that an active decision cite something, and any kind accepting `contradicts` states V-023's `acknowledged true`.
+        - `AKR-L021` now names the case that produced it: a reference pinned to the revision it was written against, invalidated by the very revision that answers it. The help gives the unpinned `@key` that follows the head, which was not obvious from "point at the live head" at a moment when there is no live head yet.
+        - The `sources` schema says that a citation given by line also needs `document`, which was previously only in the refusal.
+        - A write that revises a record staying `completed` returns `notes` listing every acceptance check and the commit its evidence was observed at. V-020 measures all of them against the commit this revision lands in, so refreshing three of four leaves the fourth to surface as `AKR-R022` on a later build. The pipeline cannot settle it — that commit does not exist yet — but it can say what is in play while somebody is looking.
+
+        Not fixed, and logged separately rather than folded in: `EnvError` maps every `AKR-C0nn` usage refusal to exit 3 rather than the exit 2 the registry documents. It predates this batch and is the same for every sibling refusal, so changing it belongs with the exit-code surface, not here.
+        """
+    observed_at git:1414d0107e6bde1dfb7b05911e0be53a15b1b33d
+    about "akr"
+    collated [
+        "evidence-intake-project.papercut.after-knowledge-source-add-succeeded-the",
+        "evidence-intake-project.papercut.knowledge-validate-returned-an-unexpected",
+        "evidence-intake-project.papercut.resolving-a-question-from-a-new-observation",
+        "evidence-intake-project.papercut.while-recording-a-measured-contradiction-to-the",
+        "evidence-intake-project.papercut.while-starting-architecture-planning-knowledge",
+        "lege-ecosystem.papercut.evidence-records-routinely-cite-agent-scratch",
+        "lege-ecosystem.papercut.knowledge-explain-decision-listed-optional",
+        "lege-ecosystem.papercut.knowledge-papercut-rejected-an-otherwise",
+        "lege-ecosystem.papercut.the-project-handoff-says-to-run-akr-validate",
+        "lege-ecosystem.papercut.the-project-protocol-says-to-run-knowledge",
+        "lege-ecosystem.papercut.while-proposing-work-from-a-new-internal-plan",
+        "saveyourskin.papercut.akr-mcp-knowledge-context-remained-unusable",
+        "saveyourskin.papercut.akr-mcp-knowledge-start-and-knowledge-context",
+        "saveyourskin.papercut.knowledge-context-returned-unexpected-response",
+        "saveyourskin.papercut.knowledge-start-and-knowledge-validate-both",
+        "saveyourskin.papercut.knowledge-start-for-the-persistent-missing-head",
+        "jpegxl-rs.papercut.a-completed-work-revision-retained-two-evidence",
+        "jpegxl-rs.papercut.finalizing-a-cited-source-with-context-block",
+        "openarc.papercut.while-proposing-an-observation-the-tool-schema"
+    ]
+    supersedes [ @akr.papercut.collated-19-papercuts-from-evidence-intake/1 ]
+    author "GitHub Uploader"
+    created_at 2026-08-22
 }
 
 record akr.papercut.collated-2-papercuts-from-evidence-intake/1 : papercut {
@@ -832,6 +1143,17 @@ record akr.papercut.crates-akr-cli-tests-commands-rs-is-the-only/2 : papercut {
     supersedes [ @akr.papercut.crates-akr-cli-tests-commands-rs-is-the-only/1 ]
     author "claude-opus-5"
     created_at 2026-08-18
+}
+
+record akr.papercut.every-akr-c0nn-usage-refusal-raised-through/1 : papercut {
+    title "Every AKR-C0nn usage refusal raised through EnvError exits 3…"
+    state verified
+    statement """
+        Every AKR-C0nn usage refusal raised through EnvError exits 3 (environment) rather than the exit 2 the diagnostic registry documents for that class — akr evidence add --result nope and --artifact under scratch both do it, so a caller branching on exit status reads a usage error as a broken checkout. The mapping lives in session::EnvError and predates the collated batch.
+        """
+    observed_at git:1414d0107e6bde1dfb7b05911e0be53a15b1b33d
+    author "claude"
+    created_at 2026-08-22
 }
 
 record akr.papercut.evidence-recorded-after-tests-but-before/1 : papercut {
@@ -1333,6 +1655,29 @@ record akr.papercut.while-running-the-workspace-suite-on-windows/2 : papercut {
     supersedes [ @akr.papercut.while-running-the-workspace-suite-on-windows/1 ]
     author "codex"
     created_at 2026-08-14
+}
+
+record akr.papercut.while-withdrawing-a-collated-master-through/1 : papercut {
+    title "While withdrawing a collated master through knowledge.revise, the tool…"
+    state superseded
+    statement """
+        While withdrawing a collated master through knowledge.revise, the tool carried its `collated` string[] slot forward but record::slot_line rendered that slot as a scalar and rejected its own merged payload with `slot collated expects a string`. A collated papercut cannot be revised over MCP until generic string-array slots serialize consistently.
+        """
+    observed_at git:1414d0107e6bde1dfb7b05911e0be53a15b1b33d
+    author "codex"
+    created_at 2026-08-23
+}
+
+record akr.papercut.while-withdrawing-a-collated-master-through/2 : papercut {
+    title "While withdrawing a collated master through knowledge.revise, the tool…"
+    state withdrawn
+    statement """
+        While withdrawing a collated master through knowledge.revise, the tool carried its `collated` string[] slot forward but record::slot_line rendered that slot as a scalar and rejected its own merged payload with `slot collated expects a string`. A collated papercut cannot be revised over MCP until generic string-array slots serialize consistently.
+        """
+    observed_at git:1414d0107e6bde1dfb7b05911e0be53a15b1b33d
+    supersedes [ @akr.papercut.while-withdrawing-a-collated-master-through/1 ]
+    author "codex"
+    created_at 2026-08-23
 }
 
 record akr.papercut.writing-several-evidence-and-lifecycle-records/1 : papercut {

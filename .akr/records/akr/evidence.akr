@@ -13,6 +13,18 @@ record akr.evidence.client-matrix-accepts-every-response/1 : evidence {
         """
 }
 
+record akr.evidence.collated-master-revise-suite/1 : evidence {
+    title "Collated master revisions preserve their dedup array"
+    state verified
+    result pass
+    method command
+    observed_at git:1414d0107e6bde1dfb7b05911e0be53a15b1b33d
+    command "cargo test --workspace --all-targets"
+    summary """
+        The full workspace suite passed with knowledge.revise carrying the collated string array when withdrawing a master papercut; the new regression fails on the former scalar-rendering path.
+        """
+}
+
 record akr.evidence.collated-papercut-cli-mcp/1 : evidence {
     title "CLI tests cover named get slots, start namespaces, change status alias, YAML --from slot-list remedy, and T012 enum rejection before AKR-I002."
     state verified
@@ -34,6 +46,18 @@ record akr.evidence.collated-papercut-fixes/1 : evidence {
     command "cargo test --workspace"
     summary """
         The full workspace suite passed after subject-scoped collation, paged MCP validation diagnostics, clearer authoring schemas, and corrected CLI help.
+        """
+}
+
+record akr.evidence.collated-papercut-reconciliation-2026-08-23/1 : evidence {
+    title "The 2026-08-23 collated papercut reconciliation suite passed"
+    state verified
+    result pass
+    method command
+    observed_at git:1414d0107e6bde1dfb7b05911e0be53a15b1b33d
+    command "cargo test --workspace --all-targets"
+    summary """
+        The full workspace suite passed after reconciling all currently collated AKR papercuts, including blank-line citation normalization, typed authoring schemas, OR-ranked natural-language search, kept-scratch evidence, and terminal collation dedup.
         """
 }
 
@@ -456,6 +480,18 @@ record akr.evidence.tool-results-typed-for-mcp-clients/1 : evidence {
     command "cargo test -p akr-mcp --test conformance; mcpprobe post|auto /home/dk/.local/bin/akr-mcp with PROBE_TOOL=knowledge.start"
     summary """
         Every tool result carried resultType 'tool', a value outside MCP's closed set (complete, input_required, task), so rmcp 3.x clients rejected the response itself and Codex 0.149 could call no knowledge tool at all. Now 'complete'. tests/conformance.rs asserts the envelope of all 23 tools plus the handshakes against written-out closed sets; reintroducing the bug fails 2 of its 4 tests. A real rmcp 3.1.2 client now completes knowledge.start on both lifecycles.
+        """
+}
+
+record akr.evidence.v025-durable-artifact-suite/1 : evidence {
+    title "706 workspace tests passed with V-025 in the catalogue, covering all four evidence write routes"
+    state verified
+    result pass
+    method command
+    observed_at git:1414d0107e6bde1dfb7b05911e0be53a15b1b33d
+    command "cargo test"
+    summary """
+        706 tests passed across 57 binaries with no failures. New coverage: v025_fails_on_an_artifact_under_the_scratch_directory and v025_passes_on_a_durable_artifact_and_ignores_other_kinds in akr-core; the v025-evidence-scratch-artifact err fixture; evidence_refuses_an_artifact_under_the_scratch_directory in akr-cli, now exercising evidence add, evidence add-many --from and propose --kind evidence --from; and an_artifact_under_scratch_is_refused_on_every_evidence_route in akr-mcp, covering knowledge.evidence_add and knowledge.propose. tools/check-design.py passes with only the pre-existing AKR-X013 warning.
         """
 }
 

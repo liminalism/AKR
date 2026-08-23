@@ -237,25 +237,90 @@ record akr.work.mcp-budget-and-instrumentation/1 : work {
 
 record akr.work.mcp-handshake-and-collated-papercuts/1 : work {
     title "Make AKR MCP handshake with current clients and fix collated papercuts"
-    state proposed
+    state superseded
     intent """
-        Reproduce and eliminate sister-project AKR MCP failed-to-connect reports: Grok and similar clients negotiate protocol 2025-06-18 and/or Content-Length framing, after which akr-mcp currently answers 2024-11-05 over NDJSON-only and the host attaches with zero tools. Also absorb the 2026-08-14 collated papercuts that are still live: named get slots, start namespaces, start default budget, change status alias, empty-repo commit message, --from slot-list example, write-time enum validation, and SQLite busy-timeout for concurrent MCP sessions.
+        Maintain current MCP client compatibility and absorb every AKR papercut surfaced by subject-scoped collation. The 2026-08-23 pass includes blank-line citation normalization, exact per-kind and scope authoring schemas, normative-only topic preflight, OR-ranked natural-language search, kept-scratch evidence recognition, terminal collation dedup, and the already implemented scratch command and installed-client handshake protections.
         """
     target 2026-08-16
     acceptance {
         check collated-cli-mcp-papercuts {
             statement """
-                The 2026-08-14 collated AKR papercuts for get slot names, start namespaces, start default budget, change status, empty-repo observed_at, --from help, and invalid enum methods have tests.
+                The earlier collated AKR papercuts for get slot names, start namespaces and budget, change status, empty-repo observed_at, --from help, enum methods, and MCP transport have regression coverage.
                 """
             method command
+            command "cargo test --workspace --all-targets"
+        }
+        check current-collated-papercuts {
+            statement """
+                All AKR and akr-mcp papercuts returned by the 2026-08-23 collate pass are either covered by regression tests or dispositioned as an installed-version rollout concern; a second dry run reports nothing new.
+                """
+            method command
+            command "cargo test --workspace --all-targets"
         }
         check handshake-speaks-current-clients {
             statement """
-                initialize echoes 2025-06-18 and 2025-03-26 when requested, and the stdio server answers both NDJSON and Content-Length framed requests with a non-empty tools/list.
+                Initialize echoes current supported protocol versions and the stdio server answers both NDJSON and Content-Length framed requests with a non-empty tools/list.
                 """
             method command
+            command "cargo test -p akr-mcp"
         }
     }
+    derived_from [
+        @akr.papercut.collated-10-papercuts-from-evidence-intake-2/1,
+        @akr.papercut.collated-18-papercuts-from-evidence-intake/1
+    ]
+    implements [
+        @akr.decision.durable-evidence-artifact,
+        @akr.decision.executable-authoring-contracts,
+        @akr.decision.papercut-subject-and-collation,
+        @akr.decision.query-words-dirty-tree-ancestry
+    ]
+}
+
+record akr.work.mcp-handshake-and-collated-papercuts/2 : work {
+    title "Make AKR MCP handshake with current clients and fix collated papercuts"
+    state completed
+    intent """
+        Maintain current MCP client compatibility and absorb every AKR papercut surfaced by subject-scoped collation. The 2026-08-23 pass includes blank-line citation normalization, exact per-kind and scope authoring schemas, normative-only topic preflight, OR-ranked natural-language search, kept-scratch evidence recognition, terminal collation dedup, and the already implemented scratch command and installed-client handshake protections.
+        """
+    target 2026-08-16
+    acceptance {
+        check collated-cli-mcp-papercuts {
+            statement """
+                The earlier collated AKR papercuts for get slot names, start namespaces and budget, change status, empty-repo observed_at, --from help, enum methods, and MCP transport have regression coverage.
+                """
+            method command
+            command "cargo test --workspace --all-targets"
+            verified_by [ @akr.evidence.collated-papercut-reconciliation-2026-08-23/1 ]
+        }
+        check current-collated-papercuts {
+            statement """
+                All AKR and akr-mcp papercuts returned by the 2026-08-23 collate pass are either covered by regression tests or dispositioned as an installed-version rollout concern; a second dry run reports nothing new.
+                """
+            method command
+            command "cargo test --workspace --all-targets"
+            verified_by [ @akr.evidence.collated-papercut-reconciliation-2026-08-23/1 ]
+        }
+        check handshake-speaks-current-clients {
+            statement """
+                Initialize echoes current supported protocol versions and the stdio server answers both NDJSON and Content-Length framed requests with a non-empty tools/list.
+                """
+            method command
+            command "cargo test -p akr-mcp"
+            verified_by [ @akr.evidence.collated-papercut-reconciliation-2026-08-23/1 ]
+        }
+    }
+    derived_from [
+        @akr.papercut.collated-10-papercuts-from-evidence-intake-2/1,
+        @akr.papercut.collated-18-papercuts-from-evidence-intake/1
+    ]
+    implements [
+        @akr.decision.durable-evidence-artifact,
+        @akr.decision.executable-authoring-contracts,
+        @akr.decision.papercut-subject-and-collation,
+        @akr.decision.query-words-dirty-tree-ancestry
+    ]
+    supersedes [ @akr.work.mcp-handshake-and-collated-papercuts/1 ]
 }
 
 record akr.work.mcp-help-and-format-cleanup/1 : work {

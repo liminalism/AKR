@@ -80,9 +80,50 @@ record akr.decision.dirty-source-graph-has-no-commit-provenance/1 : decision {
         """
 }
 
+record akr.decision.durable-evidence-artifact/1 : decision {
+    title "A cited artefact must outlive the citation, and that is a rule rather than a flag check"
+    state superseded
+    scope [ all ]
+    decision """
+        An evidence record's artifact slot may not name a path under .agent/scratch. This is V-025, raising AKR-T023 at type-check over the model, not a guard on akr evidence add --artifact. Being a rule makes it true on all four routes that write an evidence record -- akr evidence add, akr evidence add-many --from, akr propose --kind evidence --from, and knowledge.propose over MCP -- and on any route added later. It is still a refusal at write time, because every write validates the resulting ledger before writing anything. The earlier AKR-C004 flag check is removed rather than kept alongside it: two implementations of one invariant is how they drift, and akr evidence add --artifact under scratch now exits 1 with a ledger diagnostic rather than 2 with a usage error, which is the more honest classification -- the record is wrong, not the command line. The comparison is textual and normalises separators, a leading ./ and an absolute path passing through a scratch directory, and it reads the artifact slot only, so a papercut quoting a scratch path in its statement is describing the problem rather than committing it. Recorded as D-037.
+        """
+    context """
+        Scratch is the one directory the protocol documents as disposable, and akr scratch prune empties it on an ordinary handoff. An artefact cited from there is a verified claim whose backing a later session removes without knowing it was cited, and nothing notices, because a path is not a reference the ledger resolves. The audit behind the scratch-lifecycle work found 38 records across five files citing scratch paths, most already dangling. The first fix put the refusal in front of one flag; a review of the change found that three of the four write routes never reach that flag.
+        """
+    consequences """
+        A ledger that already cites scratch artefacts fails akr check until those records are revised, including on the next unrelated write, because the write pipeline validates the whole resulting ledger. That is the intended forcing function and the same standing every other V-rule has, but it is a real migration cost for the workspaces the original audit was about; akr scratch keep <entry> is the escape hatch for an artefact that should stay where it is. This does not re-open the scratch-lifecycle ruling that scratch is never a ledger diagnostic: that is about the directory's contents, how much is sitting there and how old, which akr check reports as a build fact. V-025 is about a record, and the record is wrong whether or not the file behind it still exists.
+        """
+    derived_from [ @akr.papercut.collated-19-papercuts-from-evidence-intake/2 ]
+    supported_by [ @akr.evidence.v025-durable-artifact-suite/1 ]
+}
+
+record akr.decision.durable-evidence-artifact/2 : decision {
+    title "A cited artefact must outlive the citation, and that is a rule rather than a flag check"
+    state active
+    scope [ all ]
+    decision """
+        An evidence record's artifact slot may not name a path under an unkept .agent/scratch entry. This is V-025, raising AKR-T023 at type-check over the model, not a guard on akr evidence add --artifact. The keep index is attached as a workspace fact on both read and write pipelines, so an entry protected by akr scratch keep is persistent and valid on all four evidence write routes; an unkept entry is refused before anything is written. The comparison is textual and normalises separators, a leading ./ and an absolute path passing through a scratch directory, and it reads the artifact slot only. Recorded as D-037 and clarified after field verification of the documented keep escape hatch.
+        """
+    context """
+        Scratch is the one directory the protocol documents as disposable, and akr scratch prune empties it on an ordinary handoff. An artefact cited from there is a verified claim whose backing a later session removes without knowing it was cited, and nothing notices, because a path is not a reference the ledger resolves. The audit behind the scratch-lifecycle work found 38 records across five files citing scratch paths, most already dangling. The first fix put the refusal in front of one flag; a review of the change found that three of the four write routes never reach that flag.
+        """
+    consequences """
+        A ledger that already cites scratch artefacts fails akr check until those records are revised, including on the next unrelated write, because the write pipeline validates the whole resulting ledger. That is the intended forcing function and the same standing every other V-rule has, but it is a real migration cost for the workspaces the original audit was about; akr scratch keep <entry> is the escape hatch for an artefact that should stay where it is. This does not re-open the scratch-lifecycle ruling that scratch is never a ledger diagnostic: that is about the directory's contents, how much is sitting there and how old, which akr check reports as a build fact. V-025 is about a record, and the record is wrong whether or not the file behind it still exists.
+        """
+    derived_from [
+        @akr.papercut.collated-10-papercuts-from-evidence-intake-2/1,
+        @akr.papercut.collated-19-papercuts-from-evidence-intake/2
+    ]
+    supersedes [ @akr.decision.durable-evidence-artifact/1 ]
+    supported_by [
+        @akr.evidence.collated-papercut-reconciliation-2026-08-23/1,
+        @akr.evidence.v025-durable-artifact-suite/1
+    ]
+}
+
 record akr.decision.executable-authoring-contracts/1 : decision {
     title "Authoring and transport contracts are executable"
-    state active
+    state superseded
     scope [
         path "crates/akr-cli/**",
         path "crates/akr-core/src/freshness/**",
@@ -111,6 +152,80 @@ record akr.decision.executable-authoring-contracts/1 : decision {
         """
     derived_from [ @akr.papercut.collated-18-papercuts-from-evidence-intake/1 ]
     supported_by [
+        @akr.evidence.mcp-sister-transport-reproduction/1,
+        @akr.evidence.papercut-reconciliation-suite/1
+    ]
+}
+
+record akr.decision.executable-authoring-contracts/2 : decision {
+    title "Authoring and transport contracts are executable"
+    state superseded
+    scope [
+        path "crates/akr-cli/**",
+        path "crates/akr-core/src/freshness/**",
+        path "crates/akr-core/src/validate/**",
+        path "crates/akr-mcp/**",
+        path "docs/**",
+        path "scripts/setup-akr-mcp.*",
+        path "spec/**"
+    ]
+    decision """
+        AKR authoring surfaces must expose typed per-kind slots, legal relations, canonical reference forms, and an executable recovery step before or with a rejected write. The MCP schema derives each kind's exact required and optional slots from the vocabulary, exposes scope as compact strings or a closed oneOf of typed forms, and rejects topic on non-normative kinds before ledger validation. Line-only source citations normalize trailing blank end lines to the same byte and line convention AKR-S022 validates. Scope globs matching no tracked path remain non-fatal authoring warnings. Successful MCP writes name the required build step. MCP reliability is verified through a long-lived installed subprocess running mixed successful and rejected calls, while setup verifies the installed binary and tells clients to reconnect after replacement.
+        """
+    context """
+        Repeated papercuts were caused less by missing capability than by contracts that became
+        visible only after a failed call, plus transport reports not covered by in-memory tests.
+        """
+    consequences """
+        Help, schemas, diagnostics, and write responses duplicate a small amount of generated
+        vocabulary for discoverability. Transport coverage costs additional test time but
+        exercises the connector boundary users actually run.
+        """
+    derived_from [
+        @akr.papercut.collated-10-papercuts-from-evidence-intake-2/1,
+        @akr.papercut.collated-18-papercuts-from-evidence-intake/1
+    ]
+    supersedes [ @akr.decision.executable-authoring-contracts/1 ]
+    supported_by [
+        @akr.evidence.collated-papercut-reconciliation-2026-08-23/1,
+        @akr.evidence.mcp-sister-transport-reproduction/1,
+        @akr.evidence.papercut-reconciliation-suite/1
+    ]
+}
+
+record akr.decision.executable-authoring-contracts/3 : decision {
+    title "Authoring and transport contracts are executable"
+    state active
+    scope [
+        path "crates/akr-cli/**",
+        path "crates/akr-core/src/freshness/**",
+        path "crates/akr-core/src/validate/**",
+        path "crates/akr-mcp/**",
+        path "docs/**",
+        path "scripts/setup-akr-mcp.*",
+        path "spec/**"
+    ]
+    decision """
+        AKR authoring surfaces must expose typed per-kind slots, legal relations, canonical reference forms, and an executable recovery step before or with a rejected write. The MCP schema derives each kind's exact required and optional slots from the vocabulary, exposes scope as compact strings or a closed oneOf of typed forms, and rejects topic on non-normative kinds before ledger validation. Line-only source citations normalize trailing blank end lines to the same byte and line convention AKR-S022 validates. Generic slot serialization follows the vocabulary value type on both propose and revise, including carrying a collated papercut's string-array dedup set. Scope globs matching no tracked path remain non-fatal authoring warnings. Successful MCP writes name the required build step. MCP reliability is verified through a long-lived installed subprocess running mixed successful and rejected calls, while setup verifies the installed binary and tells clients to reconnect after replacement.
+        """
+    context """
+        Repeated papercuts were caused less by missing capability than by contracts that became
+        visible only after a failed call, plus transport reports not covered by in-memory tests.
+        """
+    consequences """
+        Help, schemas, diagnostics, and write responses duplicate a small amount of generated
+        vocabulary for discoverability. Transport coverage costs additional test time but
+        exercises the connector boundary users actually run.
+        """
+    derived_from [
+        @akr.papercut.collated-10-papercuts-from-evidence-intake-2/1,
+        @akr.papercut.collated-18-papercuts-from-evidence-intake/1,
+        @akr.papercut.while-withdrawing-a-collated-master-through/1
+    ]
+    supersedes [ @akr.decision.executable-authoring-contracts/2 ]
+    supported_by [
+        @akr.evidence.collated-master-revise-suite/1,
+        @akr.evidence.collated-papercut-reconciliation-2026-08-23/1,
         @akr.evidence.mcp-sister-transport-reproduction/1,
         @akr.evidence.papercut-reconciliation-suite/1
     ]
@@ -330,7 +445,7 @@ record akr.decision.papercut-subject-and-collation/1 : decision {
 
 record akr.decision.papercut-subject-and-collation/2 : decision {
     title "A papercut says what it was about"
-    state active
+    state superseded
     scope [
         path "crates/akr-cli/src/write.rs",
         path "crates/akr-core/src/papercut/**",
@@ -340,6 +455,25 @@ record akr.decision.papercut-subject-and-collation/2 : decision {
         A papercut has an optional `about` slot naming what the friction was with when that is not its owning project. By default `akr papercut collate` gathers only sister papercuts whose `about` matches the namespace receiving the master record; `--about <subject>` selects another subject, and `--all` explicitly takes every subject. The command counts filtered records rather than dropping them silently, carries every selected statement in full, and names only contributing projects in the master title. PAPERCUTS.md renders a collation as one summary line and gives subject-bearing papercuts their own heading. Recorded as D-033.
         """
     supported_by [ @akr.evidence.collated-papercut-fixes ]
+}
+
+record akr.decision.papercut-subject-and-collation/3 : decision {
+    title "A papercut says what it was about"
+    state active
+    scope [
+        path "crates/akr-cli/src/write.rs",
+        path "crates/akr-core/src/papercut/**",
+        path "crates/akr-core/src/render/papercuts.rs"
+    ]
+    decision """
+        A papercut has an optional about slot naming what the friction was with when that is not its owning project. By default akr papercut collate gathers only sister papercuts whose about matches the namespace receiving the master record; --about selects other subjects and --all explicitly takes every subject. The command counts filtered records, carries every selected statement in full, and names only contributing projects. Every historical collated slot contributes to the dedup set even after its master becomes terminal: resolving or withdrawing a master never makes the absorbed source reports new again. PAPERCUTS.md renders a collation as one summary line and gives subject-bearing papercuts their own heading. Recorded as D-033 and revised after terminal masters replayed resolved reports.
+        """
+    derived_from [ @akr.papercut.collated-10-papercuts-from-evidence-intake-2/1 ]
+    supersedes [ @akr.decision.papercut-subject-and-collation/2 ]
+    supported_by [
+        @akr.evidence.collated-papercut-fixes,
+        @akr.evidence.collated-papercut-reconciliation-2026-08-23/1
+    ]
 }
 
 record akr.decision.post-commit-validation/1 : decision {
@@ -377,7 +511,7 @@ record akr.decision.post-commit-validation/1 : decision {
 
 record akr.decision.query-words-dirty-tree-ancestry/1 : decision {
     title "A query is words; a dirty tree is a fact"
-    state active
+    state superseded
     scope [
         path "crates/akr-cli/src/session.rs",
         path "crates/akr-core/src/git/**",
@@ -391,6 +525,25 @@ record akr.decision.query-words-dirty-tree-ancestry/1 : decision {
         D-035.
         """
     supported_by [ @akr.evidence.sister-papercut-fixes ]
+}
+
+record akr.decision.query-words-dirty-tree-ancestry/2 : decision {
+    title "A query is words; a dirty tree is a fact"
+    state active
+    scope [
+        path "crates/akr-cli/src/session.rs",
+        path "crates/akr-core/src/git/**",
+        path "crates/akr-core/src/store/search.rs"
+    ]
+    decision """
+        akr search escapes ordinary query terms and joins them with OR by default, with BM25 ranking records that match more terms first; raw FTS5 remains behind --fts and is never exposed over MCP. This makes multi-word natural-language orientation recall useful records even when no single record repeats every task word. AKR-G004 is exempt from strict promotion under D-024. ancestry_over uses one cat-file --batch-check and one rev-list --topo-order instead of a comparison sort whose comparator forked git. Recorded as D-035 and revised after field reports of silent multi-word misses.
+        """
+    derived_from [ @akr.papercut.collated-10-papercuts-from-evidence-intake-2/1 ]
+    supersedes [ @akr.decision.query-words-dirty-tree-ancestry/1 ]
+    supported_by [
+        @akr.evidence.collated-papercut-reconciliation-2026-08-23/1,
+        @akr.evidence.sister-papercut-fixes
+    ]
 }
 
 record akr.decision.revision-and-replacement-contract/1 : decision {
