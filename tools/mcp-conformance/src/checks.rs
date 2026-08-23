@@ -203,7 +203,6 @@ fn is_vacuous(schema: &Value) -> bool {
     };
     map.keys()
         .all(|k| k == "type" || k == "$schema" || k == "description")
-        && map.get("properties").is_none()
 }
 
 /// Validates one instance against one schema.

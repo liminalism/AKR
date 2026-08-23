@@ -1,4 +1,4 @@
-//! Exit criterion 2: every rule `V-001`..`V-024` has at least one passing and one
+//! Exit criterion 2: every rule `V-001`..`V-025` has at least one passing and one
 //! failing case, built entirely from model builders with no text format in sight.
 
 use akr_core::diagnostics::{Code, Diagnostic, codes as c};
@@ -1094,6 +1094,74 @@ fn v024_passes_when_hashes_agree_and_is_silent_without_a_lock() {
     // A project that has never been built has nothing to compare against.
     let no_lock = sealed(None, None, false);
     assert_clean(&validate::v024_seals_match(&no_lock));
+}
+
+// ---------------------------------------------------------------------------------
+// V-025
+// ---------------------------------------------------------------------------------
+
+fn artifact(path: &str) -> Ledger {
+    ledger(vec![
+        rec("fx.evidence.benchmark", 1, Kind::Evidence)
+            .state(State::Verified)
+            .content(ContentSlot::Artifact, ContentValue::Text(path.to_owned()))
+            .build(),
+    ])
+}
+
+#[test]
+fn v025_fails_on_an_artifact_under_the_scratch_directory() {
+    // Every spelling of the same disposable place: bare, dot-relative, absolute, and
+    // Windows-separated. A path is not a reference the ledger resolves, so the check is
+    // textual and has to recognise all of them.
+    for path in [
+        ".agent/scratch/ocr-benchmark/out.txt",
+        "./.agent/scratch/run/score.json",
+        "/home/dev/project/.agent/scratch/run/score.json",
+        r"C:\work\project\.agent\scratch\run\score.json",
+        ".agent/scratch",
+    ] {
+        let l = artifact(path);
+        let found = validate::v025_evidence_artifact_durable(&l);
+        assert!(!found.is_empty(), "{path} was accepted");
+        assert_raises(&found, c::T023);
+    }
+}
+
+#[test]
+fn v025_passes_on_a_durable_artifact_and_ignores_other_kinds() {
+    for path in [
+        "docs/benchmarks/2026-08-22.txt",
+        ".agent/handoff/notes.md",
+        "scratch/out.txt",
+        "sources/.agent/scratchpad/out.txt",
+    ] {
+        assert_clean(&validate::v025_evidence_artifact_durable(&artifact(path)));
+    }
+
+    // The rule reads the `artifact` slot, not prose. A papercut describing the problem
+    // names scratch paths in its statement and must not trip over itself.
+    let prose = ledger(vec![
+        rec("fx.papercut.scratch-citations", 1, Kind::Papercut)
+            .prose(
+                ContentSlot::Statement,
+                "38 evidence records cite .agent/scratch/ocr-benchmark paths.",
+            )
+            .build(),
+    ]);
+    assert_clean(&validate::v025_evidence_artifact_durable(&prose));
+}
+
+#[test]
+fn v025_passes_for_an_explicitly_kept_scratch_entry() {
+    let mut kept = artifact(".agent/scratch/ocr-benchmark/out.txt");
+    kept.facts.scratch_kept.insert("ocr-benchmark".to_owned());
+    assert_clean(&validate::v025_evidence_artifact_durable(&kept));
+
+    // Keeping a neighbour does not make the entire scratch tree durable.
+    let mut other = artifact(".agent/scratch/other-run/out.txt");
+    other.facts.scratch_kept.insert("ocr-benchmark".to_owned());
+    assert_raises(&validate::v025_evidence_artifact_durable(&other), c::T023);
 }
 
 // ---------------------------------------------------------------------------------

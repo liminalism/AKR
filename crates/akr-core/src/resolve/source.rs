@@ -149,8 +149,9 @@ pub fn load_workspace(root: &Path, akr_dir: &Path) -> io::Result<Workspace> {
         });
     }
 
-    let (ledger, lower_diagnostics) = lower_all(&parsed_files);
+    let (mut ledger, lower_diagnostics) = lower_all(&parsed_files);
     diagnostics.extend(lower_diagnostics);
+    ledger.facts.scratch_kept = crate::scratch::kept_entries(root);
 
     Ok(Workspace {
         ledger,

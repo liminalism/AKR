@@ -160,6 +160,12 @@ pub struct LedgerFacts {
     pub last_change: BTreeMap<RevisionId, Commit>,
     /// Commit ancestry (V-020, D-016).
     pub ancestry: Ancestry,
+    /// Top-level scratch entries protected by `.agent/scratch/KEEP` (V-025).
+    ///
+    /// This is an input fact rather than ledger knowledge: the keep index is ordinary
+    /// workspace state, but V-025 needs to distinguish a disposable scratch artefact
+    /// from one the author explicitly made persistent.
+    pub scratch_kept: BTreeSet<String>,
 }
 
 /// A child-to-parent index over `part_of`, used by the D-010 ref-term overlap test.

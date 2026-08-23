@@ -17,7 +17,7 @@
 //! needed, and here is why" — lives in the scratch directory itself, as a plain `KEEP`
 //! index a person can read and edit without any tool at all.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -116,6 +116,43 @@ pub fn dir(workspace_root: &Path) -> PathBuf {
 #[must_use]
 pub fn keep_path(workspace_root: &Path) -> PathBuf {
     dir(workspace_root).join(KEEP_FILE)
+}
+
+/// Top-level scratch entries named by the keep index.
+///
+/// The result deliberately includes a stale marker. V-025 decides whether a cited path
+/// is disposable, not whether the artifact currently exists; a marker still means that
+/// `akr scratch prune` must not remove that entry if it reappears.
+#[must_use]
+pub fn kept_entries(workspace_root: &Path) -> BTreeSet<String> {
+    read_keep(&keep_path(workspace_root)).into_keys().collect()
+}
+
+/// The entry a cited path names inside the scratch directory, if it names one at all.
+///
+/// A record cites an artefact by path, and a path is not a reference the ledger resolves —
+/// nothing notices when the file behind it is pruned. So the check has to be textual, and
+/// it has to be generous about how the same location gets written: `\` for `/` on Windows,
+/// a leading `./`, and an absolute path that happens to pass through a scratch directory
+/// all name the same disposable place.
+///
+/// Returns the first path segment beneath [`SCRATCH_DIR`], which is the unit
+/// `akr scratch keep` names, so a caller can say what to keep rather than only what is
+/// wrong. A cited path that is exactly the scratch root, with nothing beneath it, returns
+/// an empty string: it is still under scratch, and there is no entry to name.
+#[must_use]
+pub fn cited_entry(path: &str) -> Option<String> {
+    let normalised = path.replace('\\', "/");
+    let trimmed = normalised.trim_end_matches('/');
+    let bare = trimmed.trim_start_matches("./");
+    if bare == SCRATCH_DIR || trimmed.ends_with(&format!("/{SCRATCH_DIR}")) {
+        return Some(String::new());
+    }
+    let rest = trimmed
+        .rsplit_once(&format!("/{SCRATCH_DIR}/"))
+        .map(|(_, rest)| rest)
+        .or_else(|| bare.strip_prefix(&format!("{SCRATCH_DIR}/")))?;
+    Some(rest.split('/').next().unwrap_or(rest).to_owned())
 }
 
 /// Scans the scratch directory, measuring each top-level entry against `now`.

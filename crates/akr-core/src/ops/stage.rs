@@ -110,8 +110,11 @@ impl Staged {
                 pairs.push((path.to_string_lossy().into_owned(), file));
             }
         }
-        let (ledger, diagnostics) = lower::lower_all(&pairs);
+        let (mut ledger, diagnostics) = lower::lower_all(&pairs);
         self.diagnostics.extend(diagnostics);
+        if let Some(root) = self.akr_dir.parent() {
+            ledger.facts.scratch_kept = crate::scratch::kept_entries(root);
+        }
         self.ledger = ledger;
     }
 

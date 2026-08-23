@@ -1,4 +1,4 @@
-//! `V-001`..`V-024` over the in-memory model.
+//! `V-001`..`V-025` over the in-memory model.
 //!
 //! Every function here corresponds to one section of `docs/05-validation-rules.md`, and
 //! the fixture that exercises it is named for the same rule in `fixtures/validate/err/`.
@@ -466,11 +466,38 @@ pub fn v006_historical_references(ledger: &Ledger) -> Vec<Diagnostic> {
                         target.id, target.state
                     ),
                 )
-                .help("point at the live head, or use a historical relation and pin it"),
+                .help(pinned_reference_help(ledger, target)),
             );
         }
     }
     out
+}
+
+/// What to do about a pinned reference to a terminal revision.
+///
+/// The common case has a shape worth naming outright: the reference was written pinned to
+/// the head of the day, and then the target was revised — so writing the answer to a
+/// question, and pinning the question revision the answer was written against, invalidates
+/// the answer in the same transition that records it. It reads as circular, and the way
+/// out is not obvious from "point at the live head", because at the moment the author
+/// reads that help there is no live head yet
+/// (`akr.papercut.collated-19-papercuts-from-evidence-intake`, from
+/// Evidence-intake-project). An unpinned `@key` follows the head through the revision and
+/// needs no second edit.
+fn pinned_reference_help(ledger: &Ledger, target: &Record) -> String {
+    let successor = ledger
+        .revisions_of(&target.id.key)
+        .into_iter()
+        .find(|revision| revision.is_live());
+    match successor {
+        Some(live) if target.state == State::Superseded => format!(
+            "drop the revision and write `@{}`, which follows the head — {} superseded \
+             this one. Pin a revision only to cite that revision for good, and then use \
+             a historical relation",
+            target.id.key, live.id
+        ),
+        _ => "point at the live head, or use a historical relation and pin it".to_owned(),
+    }
 }
 
 /// Whether `child` is dispositioned by a record that supersedes `superseded`.
@@ -1449,4 +1476,71 @@ fn lifecycle_only_seal_drift(
     before.state = recorded_state;
     crate::hash::content_hash(&crate::syntax::record_text(&before, &ledger.project.name))
         == *recorded_hash
+}
+
+// ---------------------------------------------------------------------------------
+// V-025
+// ---------------------------------------------------------------------------------
+
+/// V-025: an evidence `artifact` does not live in disposable scratch.
+///
+/// Scratch is the one place in the workspace the protocol documents as disposable, and
+/// `akr scratch prune` deletes from it on an ordinary handoff (D-036). An artefact cited
+/// from there is a verified claim whose backing some later session removes without
+/// knowing it was cited, and nothing notices, because a path is not a reference the
+/// ledger resolves. An audit of Lege-ecosystem found 38 records citing scratch paths, most
+/// of them already dangling
+/// (`akr.papercut.collated-19-papercuts-from-evidence-intake`).
+///
+/// This is a rule rather than a check on one command because evidence reaches the ledger
+/// by four routes — `akr evidence add`, `akr evidence add-many --from`, `akr propose
+/// --kind evidence --from`, and `knowledge.propose` over MCP — and a guard on the first
+/// of them leaves the other three open. Every write validates the resulting ledger before
+/// it writes anything (`docs/07` §4), so a rule here is still a refusal at write time,
+/// which is the point: a warning from a later build arrives after the record is in the
+/// ledger, which is when nobody goes back and moves the file.
+///
+/// D-036's "scratch is never a ledger diagnostic" is about the directory's contents — how
+/// much is sitting there, and how old. This is about a record. A top-level entry named in
+/// `.agent/scratch/KEEP` is not disposable and is therefore a valid citation target; the
+/// keep index is attached as a ledger input fact by both read and write pipelines.
+#[must_use]
+pub fn v025_evidence_artifact_durable(ledger: &Ledger) -> Vec<Diagnostic> {
+    const RULE: RuleId = RuleId(25);
+    let mut out = Vec::new();
+    for record in ordered(ledger)
+        .into_iter()
+        .filter(|r| r.kind == Kind::Evidence)
+    {
+        let Some(ContentValue::Text(artifact)) = record.get(ContentSlot::Artifact) else {
+            continue;
+        };
+        let Some(entry) = crate::scratch::cited_entry(artifact) else {
+            continue;
+        };
+        if !entry.is_empty() && ledger.facts.scratch_kept.contains(&entry) {
+            continue;
+        }
+        let help = if entry.is_empty() {
+            "move the artefact somewhere durable and cite that path".to_owned()
+        } else {
+            format!(
+                "move the artefact somewhere durable and cite that path, or keep it with \
+                 `akr scratch keep {entry}` first"
+            )
+        };
+        out.push(
+            Diagnostic::error(
+                c::T023,
+                RULE,
+                subject(record),
+                format!(
+                    "artifact {artifact:?} is under {}, which is disposable",
+                    crate::scratch::SCRATCH_DIR
+                ),
+            )
+            .help(help),
+        );
+    }
+    out
 }

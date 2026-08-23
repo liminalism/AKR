@@ -326,3 +326,145 @@ fn chunk_ids(example: &Example) -> Vec<String> {
         .expect("the query runs");
     rows.filter_map(Result::ok).collect()
 }
+
+/// A cited-only source keeps its citations valid, lines included.
+///
+/// `--context block` widens each retained fragment to the chunk that contains it, so a
+/// fragment nearly always ends on one or two newlines. The fragment branch of
+/// `check_citation_at` counted those trailing newlines as lines of the citation while the
+/// full-document branch trimmed them, so finalizing a document every record cited
+/// reported `AKR-S022` on every one of them, for line ranges one or two past the ones the
+/// records stored — and the only safe move left was to un-finalize
+/// (`akr.papercut.collated-19-papercuts-from-evidence-intake`, from jpegXL-rs).
+#[test]
+fn finalizing_a_cited_source_leaves_its_citations_checking() {
+    let example = Example::materialise("source-finalize-cited");
+    let id = register(&example);
+
+    // Cite by line, and let the command hand back the byte locator for exactly those
+    // lines: this is the citation an author actually writes.
+    let located = example.run(&["source", "get", &id, "--lines", "5:8"]);
+    assert_eq!(located.code, 0, "{}", located.output());
+    let cite = located
+        .stdout
+        .lines()
+        .find(|line| line.trim_start().starts_with(&format!("cite {id}:")))
+        .expect("the locator line")
+        .to_owned();
+    let word_after = |name: &str| -> String {
+        let mut words = cite.split_whitespace();
+        while let Some(word) = words.next() {
+            if word == name {
+                return words.next().expect("a value after the field").to_owned();
+            }
+        }
+        panic!("{name} is not in {cite:?}");
+    };
+    let hash = located
+        .stdout
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("excerpt_hash "))
+        .expect("the excerpt hash")
+        .to_owned();
+
+    example.write_file(
+        "fragment.akr",
+        &format!(
+            "statement \"\"\"
+    The audit names the nonzero-origin path.
+    \"\"\"
+observed_at git:{commit}
+source {{
+    kind external
+    document \"{id}\"
+    start_byte {start_byte}
+    end_byte {end_byte}
+    start_line 5
+    end_line 8
+    excerpt_hash \"{hash}\"
+}}
+",
+            commit = example.commit(4),
+            start_byte = word_after("start_byte"),
+            end_byte = word_after("end_byte"),
+        ),
+    );
+    let proposed = example.run(&[
+        "propose",
+        "sim.observation.audit-origins",
+        "--kind",
+        "observation",
+        "--title",
+        "The audit names the nonzero-origin path",
+        "--from",
+        "fragment.akr",
+    ]);
+    assert_eq!(proposed.code, 0, "{}", proposed.output());
+    assert_eq!(
+        example.run(&["build"]).code,
+        0,
+        "the citation must check before finalization"
+    );
+
+    let finalized = example.run(&[
+        "source",
+        "finalize",
+        &id,
+        "--retain",
+        "cited",
+        "--context",
+        "block",
+    ]);
+    assert_eq!(finalized.code, 0, "{}", finalized.output());
+
+    let checked = example.run(&["check"]);
+    assert_eq!(
+        checked.code,
+        0,
+        "a retained fragment must not move the citation's lines:
+{}",
+        checked.output()
+    );
+    assert!(
+        !checked.output().contains("AKR-S022"),
+        "{}",
+        checked.output()
+    );
+}
+
+#[test]
+#[cfg(feature = "fts5")]
+fn a_source_is_searchable_without_a_build_in_between() {
+    // `akr search` has refreshed a stale record index since P7; the source surface did
+    // not, so the obvious next call after registering a document — search it — found
+    // nothing, and the add's own output said nothing about the build that was missing.
+    let example = Example::materialise("source-search-after-add");
+    example.write_file("advice.md", AUDIT);
+    let add = example.run(&["source", "add", "advice.md", "--id", "jp2lam-audit"]);
+    assert_eq!(add.code, 0, "{}", add.output());
+
+    let run = example.run(&["source", "search", "nonzero tile origins"]);
+    assert_eq!(run.code, 0, "{}", run.output());
+    assert!(
+        run.stdout.contains("nonzero tile origins"),
+        "a registered document should be searchable without an intervening build:\n{}",
+        run.output()
+    );
+
+    // `--no-rebuild` is still the opt-out, and still refuses rather than serving a stale
+    // answer: the index it would have needed was never written.
+    let fresh = Example::materialise("source-search-after-add-no-rebuild");
+    fresh.write_file("advice.md", AUDIT);
+    assert_eq!(
+        fresh
+            .run(&["source", "add", "advice.md", "--id", "jp2lam-audit"])
+            .code,
+        0
+    );
+    let refused = fresh.run(&["--no-rebuild", "source", "search", "nonzero tile origins"]);
+    assert!(
+        !refused.stdout.contains("nonzero tile origins"),
+        "--no-rebuild must not chunk the corpus: {}",
+        refused.output()
+    );
+}

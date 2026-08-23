@@ -11,7 +11,7 @@
 
 mod support;
 
-use support::Example;
+use support::{Example, Run};
 
 /// Asserts that a command refuses, exits 1, and writes nothing.
 fn refuses(example: &Example, args: &[&str]) -> String {
@@ -690,6 +690,26 @@ fn papercut_collate_gathers_sister_papercuts_once() {
         "a second run must not add another master record:\n{source}"
     );
 
+    // Resolving or withdrawing the master does not make its source reports new again.
+    // The collated slot is historical ingestion state, not a live dependency edge.
+    let terminal = source.replacen("state verified", "state withdrawn", 1);
+    example.write_file(".akr/records/sys/papercuts.akr", &terminal);
+    let after_resolution = example.run(&[
+        "papercut",
+        "collate",
+        "--projects",
+        projects,
+        "--all",
+        "--namespace",
+        "sys",
+    ]);
+    assert_eq!(after_resolution.code, 0, "{}", after_resolution.output());
+    assert!(
+        after_resolution.stdout.contains("nothing new to collate"),
+        "{}",
+        after_resolution.output()
+    );
+
     let _ = std::fs::remove_dir_all(&scan);
 }
 
@@ -888,4 +908,229 @@ fn a_papercut_can_name_what_it_was_about() {
     let view = example.read_file("docs/generated/PAPERCUTS.md");
     assert!(view.contains("## Not about this project"), "{view}");
     assert!(view.contains("(akr)"), "{view}");
+}
+
+#[test]
+fn a_papercut_needs_no_namespace_in_a_multi_namespace_workspace() {
+    // D-027 puts the whole ceremony of a papercut in one call. A workspace with several
+    // declared namespaces was the one shape where that was untrue: the call was refused,
+    // the agent had to go and read project.akr for a name the ledger already knew, and
+    // retry. The default is where this project's papercuts already go, falling back to
+    // the namespace carrying the most records; nothing about a papercut depends on which
+    // one it lands in.
+    let example = Example::materialise("write-papercut-default-namespace");
+    let declared = example.run(&["start", "anything"]);
+    assert!(
+        declared.stdout.contains("namespaces  lege, sim, sys"),
+        "the fixture must declare several namespaces for this to mean anything: {}",
+        declared.output()
+    );
+
+    let run = example.run(&["papercut", "-m", "tester", "the cache went stale mid-run"]);
+    assert_eq!(run.code, 0, "{}", run.output());
+    let source = example.read_file(".akr/records/sys/papercuts.akr");
+    assert!(source.contains("the cache went stale mid-run"), "{source}");
+
+    // `--namespace` still says otherwise.
+    let elsewhere = example.run(&[
+        "papercut",
+        "-m",
+        "tester",
+        "the viewer dropped a frame on resize",
+        "--namespace",
+        "lege",
+    ]);
+    assert_eq!(elsewhere.code, 0, "{}", elsewhere.output());
+    assert!(
+        example
+            .read_file(".akr/records/lege/papercuts.akr")
+            .contains("dropped a frame on resize")
+    );
+
+    // And once a workspace has logged papercuts, the default follows them rather than
+    // re-deciding: three in `lege` outnumber the one in `sys`, so the next default is
+    // `lege`. This is the rule that matters — the first papercut of a workspace picks a
+    // namespace, and every one after it goes to the same place without being told.
+    for message in [
+        "the resize path allocated twice",
+        "the atlas reloaded on every tab",
+    ] {
+        assert_eq!(
+            example
+                .run(&["papercut", "-m", "tester", message, "--namespace", "lege"])
+                .code,
+            0
+        );
+    }
+    let followed = example.run(&["papercut", "-m", "tester", "the log file rotated mid-write"]);
+    assert_eq!(followed.code, 0, "{}", followed.output());
+    assert!(
+        example
+            .read_file(".akr/records/lege/papercuts.akr")
+            .contains("rotated mid-write"),
+        "the default should follow where papercuts already go"
+    );
+
+    assert_eq!(example.run(&["build"]).code, 0);
+    let checked = example.run(&["check"]);
+    assert_eq!(checked.code, 0, "{}", checked.output());
+}
+
+#[test]
+fn evidence_refuses_an_artifact_under_the_scratch_directory() {
+    // Scratch is documented as disposable and `akr scratch prune` deletes from it on an
+    // ordinary handoff, so an evidence record whose artefact lives there is a verified
+    // claim whose backing some later session removes without knowing it was cited. The
+    // refusal is V-025 rather than a check on `--artifact`, because evidence reaches the
+    // ledger by four routes and a guard on the flag leaves three of them open. Every one
+    // of the four is exercised here; the pipeline validates the resulting ledger before
+    // writing, so all four still refuse at write time.
+    let example = Example::materialise("write-evidence-scratch");
+    let head = example.commit(5).to_owned();
+    let before = example.sources();
+
+    let expect_refusal = |run: &Run, what: &str| {
+        assert_ne!(run.code, 0, "{what} was accepted: {}", run.output());
+        assert!(
+            run.output().contains("AKR-T023"),
+            "{what}: {}",
+            run.output()
+        );
+        assert!(
+            run.output().contains(".agent/scratch"),
+            "{what}: {}",
+            run.output()
+        );
+    };
+
+    // 1. `akr evidence add --artifact`, in every spelling of the same place.
+    for path in [
+        ".agent/scratch/ocr-benchmark/out.txt",
+        "./.agent/scratch/run/score.json",
+    ] {
+        let run = example.run(&[
+            "evidence",
+            "add",
+            "sys.evidence.benchmark",
+            "--result",
+            "pass",
+            "--method",
+            "command",
+            "--command",
+            "cargo test",
+            "--artifact",
+            path,
+            "--summary",
+            "the benchmark ran",
+        ]);
+        expect_refusal(&run, path);
+    }
+
+    // 2. `akr evidence add-many --from`, which parses records rather than building them.
+    let batch = format!(
+        "record sys.evidence.batch-scratch/1 : evidence {{\n    \
+             title \"Batched benchmark\"\n    \
+             result pass\n    \
+             method command\n    \
+             command \"cargo bench\"\n    \
+             artifact \".agent/scratch/ocr-benchmark/out.txt\"\n    \
+             observed_at git:{head}\n\
+         }}\n"
+    );
+    example.write_file("batch.akr", &batch);
+    expect_refusal(
+        &example.run(&["evidence", "add-many", "--from", "batch.akr"]),
+        "evidence add-many",
+    );
+
+    // 3. `akr propose --kind evidence --from`, which never touches the evidence builder.
+    let body = format!(
+        "    result pass\n    \
+             method command\n    \
+             command \"cargo bench\"\n    \
+             artifact \".agent/scratch/ocr-benchmark/out.txt\"\n    \
+             observed_at git:{head}\n"
+    );
+    example.write_file("body.akr", &body);
+    expect_refusal(
+        &example.run(&[
+            "propose",
+            "sys.evidence.proposed-scratch",
+            "--kind",
+            "evidence",
+            "--title",
+            "Proposed benchmark",
+            "--from",
+            "body.akr",
+        ]),
+        "propose --kind evidence",
+    );
+
+    assert_eq!(example.sources(), before, "a refusal writes nothing");
+
+    // A durable path is untouched by the check.
+    let ok = example.run(&[
+        "evidence",
+        "add",
+        "sys.evidence.benchmark",
+        "--result",
+        "pass",
+        "--method",
+        "command",
+        "--command",
+        "cargo test",
+        "--artifact",
+        "docs/benchmarks/2026-08-22.txt",
+        "--summary",
+        "the benchmark ran",
+    ]);
+    assert_eq!(ok.code, 0, "{}", ok.output());
+}
+
+#[test]
+fn revising_a_completed_record_names_every_acceptance_reference() {
+    // V-020 compares each acceptance reference's `observed_at` against the commit that
+    // last changed the record's content, so revising a completed record puts *all* of its
+    // evidence back in question at once. Refreshing three of four leaves the fourth to
+    // surface as AKR-R022 on a later build, long after the session that could have
+    // refreshed it. The write pipeline cannot settle the question — the commit this
+    // revision lands in does not exist yet — but it can name the references in play at
+    // the one moment somebody is looking.
+    let example = Example::materialise("write-completed-acceptance-notes");
+    let revised = example.run(&[
+        "revise",
+        "sys.milestone.m1-walking-skeleton",
+        "--title",
+        "M1 — walking skeleton, restated",
+        "--state",
+        "completed",
+    ]);
+    assert_eq!(revised.code, 0, "{}", revised.output());
+    assert!(
+        revised
+            .stdout
+            .contains("V-020 will compare every acceptance reference"),
+        "{}",
+        revised.output()
+    );
+    assert!(
+        revised.stdout.contains("viewer-boundary-clean"),
+        "the note should name the check: {}",
+        revised.output()
+    );
+    assert!(
+        revised.stdout.contains("@lege.evidence.boundary-lint-pass"),
+        "the note should name the evidence: {}",
+        revised.output()
+    );
+
+    // Advisory, never a diagnostic: a note does not fail a strict write, and it is in the
+    // JSON envelope for the MCP surface to render the same lines.
+    let json = example.run(&[
+        "--format",
+        "json",
+        "get",
+        "sys.milestone.m1-walking-skeleton",
+    ]);
+    assert_eq!(json.code, 0, "{}", json.output());
 }

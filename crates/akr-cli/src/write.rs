@@ -550,7 +550,7 @@ pub fn papercut(
 ///
 /// Reads the live papercut heads of every workspace under a scan directory — the
 /// siblings of the workspace root, or `--projects` — and proposes one master papercut
-/// record for every key not already listed in a live collation's `collated` slot. The
+/// record for every key not already listed in any collation's `collated` slot. The
 /// sisters are read, never written. Nothing new is not a refusal: the command exits 0
 /// and writes nothing.
 #[allow(clippy::too_many_arguments)]
@@ -1046,6 +1046,10 @@ fn render_applied(session: &Session, applied: &Applied) -> Output {
     for diagnostic in &applied.diagnostics {
         text.push_str(&akr_core::diagnostics::render(diagnostic, &session.sources));
     }
+    for note in &applied.notes {
+        text.push_str(note);
+        text.push('\n');
+    }
 
     Output {
         text,
@@ -1066,6 +1070,10 @@ fn render_applied(session: &Session, applied: &Applied) -> Output {
                 ),
             ),
             ("lock_stale", Value::bool(applied.lock_stale)),
+            (
+                "notes",
+                Value::array(applied.notes.iter().cloned().map(Value::string).collect()),
+            ),
         ]),
         diagnostics: applied.diagnostics.clone(),
         exit: Exit::Ok,

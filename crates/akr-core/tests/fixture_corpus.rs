@@ -262,7 +262,7 @@ fn every_err_fixture_produces_exactly_its_expected_codes() {
     }
     assert!(
         checked >= 20,
-        "expected the err corpus to cover most of V-001..V-024, checked {checked}"
+        "expected the err corpus to cover most of V-001..V-025, checked {checked}"
     );
 }
 

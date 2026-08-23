@@ -131,8 +131,9 @@ point, so `007-idempotent` is not the only idempotence check, just the most expl
 | `validate/err/v022-observation-no-provenance` | `AKR-R032` | V-022 |
 | `validate/err/v023-contradiction` | `AKR-R041` | V-023 |
 | `validate/err/v024-sealed-modified` | `AKR-R051`, `AKR-R052` | V-024 |
+| `validate/err/v025-evidence-scratch-artifact` | `AKR-T023` | V-025 |
 
-Every rule `V-001`–`V-024` has exactly one failing fixture. Codes with no fixture are
+Every rule `V-001`–`V-025` has exactly one failing fixture. Codes with no fixture are
 listed below with the reason.
 
 ## 6. Codes with no fixture

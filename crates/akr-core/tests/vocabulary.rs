@@ -272,7 +272,7 @@ fn every_rule_has_a_function_and_the_json_code() {
     let json = names(&v["rules"]);
     let code: BTreeSet<String> = RULES.iter().map(|r| r.id.to_string()).collect();
     assert_eq!(json, code, "rule sets differ");
-    assert_eq!(code.len(), 24, "V-001..V-024");
+    assert_eq!(code.len(), 25, "V-001..V-025");
 
     for spec in RULES {
         let entry = &v["rules"][spec.id.to_string()];

@@ -179,6 +179,20 @@ impl Detail {
     }
 }
 
+/// Brings the chunk index up to date before a query reads it.
+///
+/// `akr search` has done this since P7 through `ensure_search_index`, and the source
+/// surface did not: `akr source add` writes the file and the catalog, and only a `build`
+/// chunked it, so the obvious next call — search for the passage you just registered —
+/// returned `AKR-I031` or nothing at all, with no step in the add's own output to say why
+/// (`akr.papercut.collated-19-papercuts-from-evidence-intake`, from
+/// Evidence-intake-project). The sync is a no-op when the corpus hash has not moved, so
+/// this costs an unchanged library nothing, and `--no-rebuild` still refuses to write.
+#[cfg(feature = "fts5")]
+fn ensure_source_index(session: &Session) -> Result<(), EnvError> {
+    crate::commands::source_index_build(session).map(|_| ())
+}
+
 /// `akr source search <query>` — BM25 over the chunk index.
 ///
 /// Every result carries the words `non-authoritative`. `docs/15-external-sources.md` §8:
@@ -195,6 +209,7 @@ pub fn search(
     limit: Option<usize>,
 ) -> Result<Output, EnvError> {
     let path = akr_core::store::sources_cache_path(&session.akr_dir);
+    ensure_source_index(session)?;
     let request = akr_core::store::SourceRequest {
         query: query.to_owned(),
         mode,
@@ -241,6 +256,7 @@ pub fn search(
 #[cfg(feature = "fts5")]
 pub fn get_chunk(session: &Session, chunk_id: &str, neighbors: usize) -> Result<Output, EnvError> {
     let path = akr_core::store::sources_cache_path(&session.akr_dir);
+    ensure_source_index(session)?;
     let chunks = akr_core::store::get_chunk(&path, chunk_id, neighbors)
         .map_err(|e| EnvError::new(e.code.as_str(), e.message))?;
     let mut text = String::new();

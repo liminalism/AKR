@@ -410,6 +410,8 @@ pub mod codes {
         T021 = "AKR-T021";
         /// Evidence missing a required slot.
         T022 = "AKR-T022";
+        /// Evidence artefact cited from the disposable scratch directory.
+        T023 = "AKR-T023";
         /// Resolved question missing a resolution.
         T031 = "AKR-T031";
         /// Malformed scope term.

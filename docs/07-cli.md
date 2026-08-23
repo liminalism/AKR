@@ -237,9 +237,16 @@ Exit 0 if clean, 1 if differences (with `--check`) or a parse error.
 
 ```
 akr check [--review-clean] [--views-current] [--at <commit>] [--today <date>]
+akr validate [same flags]
 ```
 
 Runs stages A–D and reports every diagnostic. This is the command CI runs.
+
+`validate` is the same command under the name the MCP surface uses. The agent protocol
+says "run `knowledge.validate` before handing work back", and from a shell that was not a
+command at all — so the reader either found `check` by inference or gave up on the check.
+One behaviour with two names in two places is not the rule this workspace keeps; one
+behaviour with two names, both of which work, is the smaller wrong.
 
 | Flag | Effect |
 | --- | --- |
@@ -399,6 +406,10 @@ akr search <query> [--kind <kind> ...] [--state <state> ...] [--limit <n>]
 
 Full-text search over live revisions (`records_fts`), ranked by BM25 and then by key.
 Filters are applied *before* ranking.
+
+Ordinary multi-word queries match any term and rank records matching more of them first.
+This makes a natural-language task description useful even when no one record repeats
+every word. `--fts` is the explicit escape hatch for callers that need raw FTS5 operators.
 
 **Search ranks; it never authorises.** Nothing enters a context bundle because it matched
 a query ([`09-context-assembly.md`](09-context-assembly.md) §1). `akr search` is a
@@ -750,8 +761,15 @@ where the project needs sanding down.
 The message is the whole ceremony. The key is allocated
 (`<namespace>.papercut.<slug-of-message>`, suffixed on collision), `observed_at`
 defaults to HEAD, the `-m` value lands in `author`, and the date in `created_at`. The
-write runs the full pipeline of §4 like every other write. `--namespace` is needed only
-when the project declares several.
+write runs the full pipeline of §4 like every other write.
+
+`--namespace` chooses where the key goes, and is never required. With several declared,
+the default is the namespace this project's papercuts already live in, by count; a
+workspace that has logged none falls back to the namespace carrying the most records —
+the project-wide one in practice — and then to the alphabetically first. So the first
+papercut of a workspace picks a place and every one after it follows, without being told.
+Declaration order is not available to decide this: `project.akr`'s namespaces are a set
+in the model, not a list.
 
 The aggregate is `docs/generated/PAPERCUTS.md`, emitted by `akr build` once at least
 one papercut exists, newest first.
@@ -774,8 +792,10 @@ sisters are read, never written.
 
 Each absorbed key lands in the master record's `collated` slot — the dedup set the next
 run checks, so a source papercut is processed once and a second run with nothing new
-exits 0 and writes nothing. A broken sister workspace is skipped, not fatal. `--namespace`
-is needed only when the project declares several.
+exits 0 and writes nothing. Terminal master records still contribute to this historical
+dedup set: resolving or withdrawing the master does not make its source reports new.
+A broken sister workspace is skipped, not fatal. `--namespace` is needed only when the
+project declares several.
 
 **The scan is global; the decision is local.** Every sister ledger is read, but only the
 papercuts aimed at *this* project should land here, and what marks one is the free-text
@@ -855,6 +875,22 @@ akr evidence add <key> --result pass|fail|inconclusive
 
 Creates an `evidence` record. `--observed-at` defaults to HEAD; a commit not in the
 repository is `AKR-G011`.
+
+`--artifact` may not name a path under an unkept `.agent/scratch` entry (`AKR-T023`,
+V-025). Scratch is
+documented as disposable and `akr scratch prune` deletes from it on an ordinary handoff
+(D-036), so an artefact cited from there is a verified claim whose backing some later
+session removes without knowing it was cited — and nothing notices, because a path is not
+a reference the ledger resolves. Move the artefact somewhere durable and cite that, or
+`akr scratch keep <entry>` first and cite it where it is.
+
+The refusal is a validation rule rather than a check on this flag, because evidence
+reaches the ledger by four routes — this command, `akr evidence add-many --from`,
+`akr propose --kind evidence --from`, and `knowledge.propose` over MCP — and a guard on
+the flag leaves the other three open. It is still a refusal at write time, since §4's
+pipeline validates the resulting ledger before it writes anything, which is the property
+that matters: a warning from a later build arrives after the record is in the ledger,
+which is when nobody goes back and moves the file.
 
 The command deliberately offers **no** flag for "what this verifies". Evidence never
 declares what it verifies (D-016); the link is authored on the check, with

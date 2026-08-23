@@ -115,7 +115,7 @@ Read in this order. The frozen spine is authoritative over everything else.
 | [`02-data-model.md`](02-data-model.md) | The thirteen kinds, four classes, four lifecycles, twelve relations, scope, claims, acceptance. |
 | [`03-syntax.md`](03-syntax.md) | Lexical structure and canonical formatting. |
 | [`04-references-and-versioning.md`](04-references-and-versioning.md) | Keys, revisions, the four reference forms, supersession, `akr.lock`. |
-| [`05-validation-rules.md`](05-validation-rules.md) | V-001..V-024, each with its diagnostic code and a failing example. |
+| [`05-validation-rules.md`](05-validation-rules.md) | V-001..V-025, each with its diagnostic code and a failing example. |
 
 **The tool.**
 

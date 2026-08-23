@@ -497,7 +497,8 @@ pub enum Command {
         message: String,
         /// Who hit it: a model or harness name. Lands in `author`.
         agent: Option<String>,
-        /// The namespace for the key; needed only when the project declares several.
+        /// The namespace for the key; optional, and defaults to where this project's
+        /// papercuts already go.
         namespace: Option<String>,
         /// What the friction was with, when that is not this project (D-033).
         about: Option<String>,
@@ -508,8 +509,8 @@ pub enum Command {
         /// A directory of sibling workspaces to scan; defaults to the siblings of the
         /// workspace root.
         projects: Option<PathBuf>,
-        /// The namespace for the master record's key; needed only when the project
-        /// declares several.
+        /// The namespace for the master record's key; optional, and defaults to where
+        /// this project's papercuts already go.
         namespace: Option<String>,
         /// Absorb only the sisters' papercuts whose `about` names one of these subjects.
         ///
@@ -680,6 +681,7 @@ pub const COMMANDS: &[&str] = &[
     "init",
     "fmt",
     "check",
+    "validate",
     "build",
     "view",
     "get",
@@ -881,7 +883,15 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
                 paths: positional.iter().map(|p| PathBuf::from(*p)).collect(),
             }
         }
-        "check" => {
+        // `validate` is `check` under the name the MCP surface uses. An agent that had
+        // read the protocol — "run knowledge.validate before handing work back" — and
+        // then had only a shell reached for `akr validate`, was told there was no such
+        // command, and had to work out that `check` was the same thing; it happened often
+        // enough to be logged twice from one sister project
+        // (`akr.papercut.collated-19-papercuts-from-evidence-intake`). One name per
+        // behaviour is the rule the workspace keeps; this is one behaviour that already
+        // had two names, in two places, and only one of them worked.
+        "check" | "validate" => {
             known_flags(&["--review-clean", "--views-current", "--scratch-clean"])?;
             Command::Check {
                 scratch_clean: flag_set("--scratch-clean"),
@@ -1913,10 +1923,13 @@ pub fn help_for(name: &str) -> Option<String> {
              FLAGS\n\
              \x20   --check    write nothing; report differences as AKR-F diagnostics, exit 1\n"
         }
-        "check" => {
+        "check" | "validate" => {
             "akr check [--review-clean] [--views-current] [--scratch-clean]\n\
+             akr validate [same flags]\n\
              \n\
              Runs stages A-D and reports every diagnostic. The command CI runs.\n\
+             `validate` is the same command under the name the MCP tool uses, so a\n\
+             protocol that says \"run knowledge.validate\" reads the same from a shell.\n\
              Staleness never changes the exit code (D-024), and neither does what\n\
              is sitting in .agent/scratch (D-036); both are reported as build facts.\n\
              \n\
@@ -2313,7 +2326,8 @@ pub fn help_for(name: &str) -> Option<String> {
              \x20   --projects <dir>      collate: a directory of sibling workspaces to scan\n\
              \x20   --all                 collate: absorb every subject, not just this project's\n\
              \x20   --dry-run             collate: report what would be absorbed, write nothing\n\
-             \x20   --namespace <ns>      only needed when the project declares several\n"
+             \x20   --namespace <ns>      where the key goes; defaults to where this project's\n\
+             \x20                         papercuts already go\n"
         }
         "evidence" | "evidence add" => {
             "akr evidence add <key> --result pass|fail|inconclusive\n\
@@ -2372,7 +2386,10 @@ pub fn help() -> String {
     for (name, summary) in [
         ("init", "scaffold a workspace"),
         ("fmt", "canonically format, or --check"),
-        ("check", "run stages A-D; --review-clean, --views-current"),
+        (
+            "check",
+            "run stages A-D; --review-clean, --views-current (alias: validate)",
+        ),
         ("build", "run stages A-F: index, views, lock; --check"),
         ("view", "render one view to stdout"),
         ("get", "retrieve one record"),

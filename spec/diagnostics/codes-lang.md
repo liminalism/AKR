@@ -5,7 +5,7 @@ resolve. Runtime stages (`I`, `E`, `X`, `G`, `C`, `M`) are in
 `spec/diagnostics/codes-runtime.md`.
 
 The code scheme, severity model, and rendering are specified in
-`spec/diagnostics/README.md`. Rules `V-001`–`V-024` are catalogued in
+`spec/diagnostics/README.md`. Rules `V-001`–`V-025` are catalogued in
 `docs/05-validation-rules.md` and frozen in `spec/tables/vocabulary.json`.
 
 **Reading the tables.** *Sev* is `error` or `warning`; under the default `--strict`
@@ -122,6 +122,7 @@ One record against the vocabulary. This stage sees a record and
 | `AKR-T014` | Array/scalar mismatch | error | V-008 | `slot `{name}` expects {an array\|a single value}` | Relation slots are always arrays, even with one element. |
 | `AKR-T021` | Observation missing `observed_at` | error | V-009 | `observation requires `observed_at`` | An observation without a commit is a rumour, and can never go stale. |
 | `AKR-T022` | Evidence missing required slot | error | V-010 | `evidence requires `{slot}`` | `result`, `method`, and `observed_at`, all three. |
+| `AKR-T023` | Evidence artefact under disposable scratch | error | V-025 | `artifact {path} is under .agent/scratch, which is disposable` | Unkept scratch is pruned on an ordinary handoff (D-036), so the citation outlives its backing. |
 | `AKR-T031` | Resolved question missing resolution | error | V-011 | `question in state `resolved` requires a `resolution` slot` | The companion check — that something `resolves` it — is at resolve, under the same rule. |
 | `AKR-T032` | Malformed scope term | error | V-008 | `scope term must be `all`, `ref @key`, or `path "glob"`` | Three forms (D-010). |
 | `AKR-T033` | Malformed glob | error | V-008 | `glob may use * ** ? and [...]; brace expansion and negation are not supported` | |
@@ -219,6 +220,6 @@ Every code above is cited by at least one of `docs/02-data-model.md`,
 `tools/check-design.py` enforces that in both directions: no uncited code, no
 unregistered citation.
 
-Every rule `V-001`–`V-024` maps to exactly one primary code here, and the mapping in
+Every rule `V-001`–`V-025` maps to exactly one primary code here, and the mapping in
 `spec/tables/vocabulary.json` is authoritative where this document and that file could
 ever disagree.

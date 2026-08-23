@@ -501,7 +501,8 @@
     "V-021": {"title": "An active decision cites a requirement, policy, constraint or evidence", "stage": "resolve", "code": "AKR-R031", "doc": "docs/05-validation-rules.md"},
     "V-022": {"title": "A verified observation has provenance", "stage": "resolve", "code": "AKR-R032", "doc": "docs/05-validation-rules.md"},
     "V-023": {"title": "A declared contradiction is resolved or acknowledged", "stage": "resolve", "code": "AKR-R041", "doc": "docs/05-validation-rules.md"},
-    "V-024": {"title": "A sealed revision matches its content hash in akr.lock", "stage": "resolve", "code": "AKR-R051", "doc": "docs/05-validation-rules.md"}
+    "V-024": {"title": "A sealed revision matches its content hash in akr.lock", "stage": "resolve", "code": "AKR-R051", "doc": "docs/05-validation-rules.md"},
+    "V-025": {"title": "An evidence artifact is cited from a durable path", "stage": "type", "code": "AKR-T023", "doc": "docs/05-validation-rules.md"}
   },
 
   "rule_id_ranges": {

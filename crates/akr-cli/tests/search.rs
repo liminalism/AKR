@@ -67,6 +67,19 @@ fn zero_results_is_an_answer_and_exits_zero() {
 }
 
 #[test]
+fn natural_language_queries_match_any_term_and_rank_the_overlap() {
+    let example = Example::materialise("search-natural-language");
+    assert_eq!(example.run(&["build"]).code, 0);
+
+    // No record contains the invented final term. Implicit AND used to turn the whole
+    // orientation query into a silent miss even though `projection` has useful hits.
+    let run = example.run(&["search", "projection gorgonzola"]);
+    assert_eq!(run.code, 0, "{}", run.output());
+    assert!(run.stdout.contains("projection"), "{}", run.stdout);
+    assert!(!run.stdout.contains("0 results"), "{}", run.stdout);
+}
+
+#[test]
 fn query_flag_is_an_alias_for_the_positional_query() {
     let example = Example::materialise("search-query-alias");
     let positional = example.run(&["search", "playable day"]);

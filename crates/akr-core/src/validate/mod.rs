@@ -1,4 +1,4 @@
-//! The validation rules, `V-001` through `V-024`.
+//! The validation rules, `V-001` through `V-025`.
 //!
 //! Each rule is a named function over a [`Ledger`](crate::model::Ledger) returning
 //! diagnostics. Rules are pure: they read the ledger and allocate diagnostics, and do
@@ -79,6 +79,7 @@ catalogue! {
     22, v022_observation_provenance, c::R032, Stage::Resolve, "Live observations have provenance";
     23, v023_contradiction_dispositioned, c::R041, Stage::Resolve, "Contradictions are dispositioned";
     24, v024_seals_match, c::R051, Stage::Resolve, "Sealed revisions match their recorded hash";
+    25, v025_evidence_artifact_durable, c::T023, Stage::Type, "Evidence artefacts are cited from durable paths";
 }
 
 /// Looks up a rule by identifier.

@@ -507,3 +507,66 @@ fn every_command_answers_its_own_help() {
         );
     }
 }
+
+#[test]
+fn validate_is_check_under_the_name_the_mcp_tool_uses() {
+    // The protocol every agent reads says "run knowledge.validate before handing work
+    // back". From a shell that was not a command, and two sessions in one sister project
+    // spent the difference working out that `check` was the same thing.
+    let example = Example::of(&SYS_TANDEM, "cli-validate-alias");
+    let check = example.run(&["check"]);
+    let validate = example.run(&["validate"]);
+    assert_eq!(check.code, validate.code, "{}", validate.output());
+    assert_eq!(check.stdout, validate.stdout);
+
+    // The flags come with it, and so does the help.
+    assert_eq!(
+        example.run(&["check", "--review-clean"]).code,
+        example.run(&["validate", "--review-clean"]).code
+    );
+    let help = example.run(&["validate", "--help"]);
+    assert_eq!(help.code, 0, "{}", help.output());
+    assert!(help.stdout.contains("akr validate"), "{}", help.stdout);
+    assert!(!help.stdout.contains("unknown command"), "{}", help.stdout);
+}
+
+#[test]
+fn explain_prints_the_members_of_a_closed_slot_and_the_state_entry_rules() {
+    // `explain <kind>` is what both write surfaces point at for "which slots may this
+    // kind have". Answering that with the word `enum` for the one slot with a fixed
+    // vocabulary sent the author back to guessing — `measurement` is the obvious guess
+    // for an observation's `method`, and it is wrong. The state-entry rules are the same
+    // shape of omission: V-021 refused an author's first `active` decision after listing
+    // `supported_by` among seven optional relations and saying nothing about one of them
+    // being required.
+    let example = Example::of(&SYS_TANDEM, "cli-explain-enums");
+
+    let observation = example.run(&["explain", "observation"]);
+    assert_eq!(observation.code, 0, "{}", observation.output());
+    assert!(
+        observation
+            .stdout
+            .contains("method: manual|command|instrumented|observation"),
+        "{}",
+        observation.stdout
+    );
+
+    let evidence = example.run(&["explain", "evidence"]);
+    assert!(
+        evidence.stdout.contains("result: pass|fail|inconclusive"),
+        "{}",
+        evidence.stdout
+    );
+
+    let decision = example.run(&["explain", "decision"]);
+    assert!(decision.stdout.contains("V-021"), "{}", decision.stdout);
+    assert!(
+        decision.stdout.contains("acknowledged true"),
+        "a kind that accepts `contradicts` should say what V-023 wants: {}",
+        decision.stdout
+    );
+
+    // A kind with no closed slot and no state-entry rule gains neither line.
+    let work = example.run(&["explain", "work"]);
+    assert!(!work.stdout.contains("V-021"), "{}", work.stdout);
+}

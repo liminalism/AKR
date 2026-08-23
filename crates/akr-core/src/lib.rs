@@ -11,7 +11,7 @@
 //! - [`model`] — kinds, classes, lifecycle states, relations, records, references, scope.
 //! - [`syntax`] — lexer, parser, CST, canonical formatter, and lowering to the model.
 //! - [`ops`] — the validated write operations of `docs/07` §4 and §6.
-//! - [`validate`] — `V-001`..`V-024` as named functions over a [`model::Ledger`].
+//! - [`validate`] — `V-001`..`V-025` as named functions over a [`model::Ledger`].
 //! - [`diagnostics`] — codes, severity, subjects, and the span-ready diagnostic type.
 //! - [`hash`] — SHA-256 and the three hashes of `spec/schema/akr-lock.md` §3.
 //! - [`graph`] — deterministic cycles, reachability, and staleness propagation.

@@ -133,4 +133,4 @@ confused with the resolve stage letter `R`:
 | `V-101`–`V-149` | `docs/10-freshness-and-git.md`, `docs/11-projections.md`, `docs/09-context-assembly.md` — freshness, emission and context rules | Writer B |
 
 A rule names the code it raises; a code names the rule that raises it. The frozen list
-of `V-001`–`V-024` with their codes is in `spec/tables/vocabulary.json` under `rules`.
+of `V-001`–`V-025` with their codes is in `spec/tables/vocabulary.json` under `rules`.

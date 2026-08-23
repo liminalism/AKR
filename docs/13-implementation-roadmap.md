@@ -67,7 +67,7 @@ those types and tested — before any text can be parsed.
 - Lifecycle state machines as data, generated from or checked against
   `spec/tables/vocabulary.json`.
 - Relation domain/range/cardinality/acyclicity tables, likewise.
-- `akr-core::validate`: V-001..V-024 over an in-memory model, each rule a named function
+- `akr-core::validate`: V-001..V-025 over an in-memory model, each rule a named function
   returning diagnostics.
 - Model builders for tests that construct records without text.
 - The D-010 scope-overlap function, with its conservative bias tested in both directions.
@@ -397,7 +397,7 @@ crates/
         src/
             syntax/      lexer, parser, CST, formatter, spans        [P2]
             model/       kinds, states, relations, records           [P1]
-            validate/    V-001..V-024                                [P1, P3]
+            validate/    V-001..V-025                                [P1, P3]
             resolve/     heads, supersession, resolved model, lock   [P3]
             graph/       cycles, reachability, propagation           [P3, P5]
             git/         commits, ancestry, changed paths            [P5]

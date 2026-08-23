@@ -26,7 +26,7 @@ shell:
 | `knowledge.supersede` / `knowledge.complete` | `akr supersede <key>` / `akr complete <key>` |
 | `knowledge.evidence_add` / `knowledge.evidence_add_many` | `akr evidence add <key>` / `akr evidence add-many --from <file>` |
 | `knowledge.papercut` | `akr papercut -m <agent> "<message>"` |
-| `knowledge.validate` | `akr check` |
+| `knowledge.validate` | `akr check`, or `akr validate` under the same name |
 | `knowledge.source_*` | `akr source add|list|get|search|verify|supersede` |
 
 If the MCP server is unavailable, every step below is still reachable through
@@ -82,7 +82,15 @@ Consult AKR at task and state-transition boundaries, not after every edit.
   child. The tool will list them; answer each one.
 - Finishing work: record what you observed with `knowledge.evidence_add`, then
   `knowledge.complete` with evidence for every acceptance check. Evidence records
-  state what was observed; they never state what they verify.
+  state what was observed; they never state what they verify. An `artifact` may not
+  be a path under `.agent/scratch` (`AKR-T023`, V-025 — on every route that writes an
+  evidence record, not just `evidence_add`): scratch is pruned on an ordinary handoff,
+  so a citation into it is a verified claim that quietly loses its backing. Move the
+  artefact somewhere durable, or `akr scratch keep <entry>` first.
+- Revising a record that stays `completed` puts every one of its acceptance
+  references back in question at once, because V-020 measures each against the commit
+  that last changed the record. The write's `notes` list them; refresh all of them,
+  not the ones you happened to rerun.
 - Unsure what a kind requires? `akr explain <kind>` prints its schema.
 
 **Papercuts**

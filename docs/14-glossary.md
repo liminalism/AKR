@@ -254,7 +254,7 @@ warnings are errors. → D-013
 them and exists for `akr import` on legacy material, per invocation only. → D-013,
 [`12-migration.md`](12-migration.md)
 
-**Validation rule** — A `V-nnn` invariant. `V-001`–`V-024` are the language and graph
+**Validation rule** — A `V-nnn` invariant. `V-001`–`V-025` are the language and graph
 rules; `V-101`–`V-149` cover freshness, emission and context. A rule names the code it
 raises. → [`05-validation-rules.md`](05-validation-rules.md)
 

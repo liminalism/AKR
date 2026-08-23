@@ -44,8 +44,6 @@ pub struct LogPapercut {
 /// Why a papercut key could not be allocated.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PapercutKeyError {
-    /// No namespace was given and the project declares more than one.
-    AmbiguousNamespace(Vec<String>),
     /// The requested namespace is not declared in the project.
     UnknownNamespace(String),
     /// The project declares no namespaces at all.
@@ -55,11 +53,6 @@ pub enum PapercutKeyError {
 impl std::fmt::Display for PapercutKeyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::AmbiguousNamespace(names) => write!(
-                f,
-                "the project declares several namespaces ({}); say which with --namespace",
-                names.join(", ")
-            ),
             Self::UnknownNamespace(name) => {
                 write!(f, "namespace {name:?} is not declared in .akr/project.akr")
             }
@@ -73,8 +66,8 @@ impl std::error::Error for PapercutKeyError {}
 /// Allocates the key for a new papercut: `<namespace>.papercut.<slug-of-message>`,
 /// suffixed `-2`, `-3`, … until it collides with nothing in the ledger.
 ///
-/// With no namespace given, the project's sole declared namespace is used; several
-/// declared namespaces make the choice the caller's.
+/// With no namespace given, the namespace this project's papercuts already go to is
+/// used; see [`select_namespace`] for the rest of the rule.
 ///
 /// # Errors
 /// [`PapercutKeyError`] when the namespace cannot be determined.
@@ -129,11 +122,54 @@ pub fn select_namespace(
             }
             Ok(name.to_owned())
         }
-        None => match declared.as_slice() {
-            [] => Err(PapercutKeyError::NoNamespaces),
-            [sole] => Ok(sole.clone()),
-            _ => Err(PapercutKeyError::AmbiguousNamespace(declared)),
-        },
+        // A default, not an ambiguity. D-027 puts the whole ceremony of a papercut in
+        // one call, and a workspace with several namespaces was the one shape where that
+        // was untrue: the call was refused, the agent had to go and read project.akr for
+        // a name the ledger already knew, and retry — twice over from Lege-ecosystem,
+        // whose second namespace is a performance sub-ledger
+        // (`akr.papercut.collated-19-papercuts-from-evidence-intake`).
+        //
+        // The rule is: where papercuts already go, then where the project's records
+        // already are, then alphabetically. `Project::namespaces` is a set, so
+        // declaration order is not something the model keeps and "the first declared"
+        // is not available to be the default — but neither of those tie-breaks needs it.
+        // The first says a workspace that has logged papercuts keeps logging them in the
+        // same place. The second decides the first papercut of a workspace that has not:
+        // the namespace carrying the most records is the project-wide one in every
+        // multi-namespace ledger to hand, which is where a papercut about the project
+        // belongs. `--namespace` says otherwise in every case, and nothing about a
+        // papercut depends on the choice — it has no scope, no topic, no watches, and
+        // never goes stale.
+        None => {
+            let mut papercuts: BTreeMap<String, usize> = BTreeMap::new();
+            let mut records: BTreeMap<String, usize> = BTreeMap::new();
+            for record in ledger.records() {
+                let namespace = record.id.key.namespace().to_string();
+                if record.kind == Kind::Papercut {
+                    *papercuts.entry(namespace.clone()).or_default() += 1;
+                }
+                *records.entry(namespace).or_default() += 1;
+            }
+            let rank = |name: &String| {
+                (
+                    papercuts.get(name).copied().unwrap_or(0),
+                    records.get(name).copied().unwrap_or(0),
+                )
+            };
+            // `declared` is sorted, so keeping the first strict maximum breaks a tie
+            // alphabetically.
+            declared
+                .iter()
+                .fold(None::<((usize, usize), &String)>, |best, name| {
+                    let score = rank(name);
+                    match best {
+                        Some((seen, _)) if seen >= score => best,
+                        _ => Some((score, name)),
+                    }
+                })
+                .map(|(_, name)| name.clone())
+                .ok_or(PapercutKeyError::NoNamespaces)
+        }
     }
 }
 

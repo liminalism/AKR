@@ -115,7 +115,7 @@ in prose and in these two checks, not in a schema anyone can validate against.
 | `knowledge.source_dependents` | read | `akr source dependents` | yes |
 | `knowledge.source_finalize` | write | `akr source finalize` | by state |
 | `knowledge.impact` | read | `akr impact` | yes |
-| `knowledge.validate` | read | `akr check` | yes |
+| `knowledge.validate` | read | `akr check` (alias `akr validate`) | yes |
 | `knowledge.propose` | write | `akr propose` | by key |
 | `knowledge.revise` | write | `akr revise` | no |
 | `knowledge.supersede` | write | `akr supersede` | no |
@@ -332,11 +332,28 @@ exactly the bytes it selected, so a located citation verifies itself. Lines with
 `document` are refused: there is nothing to read the offsets from. A document that retains
 only cited ranges or metadata cannot be located in either, and says so.
 
+If the requested `end_line` is blank after nonblank cited text, authoring normalizes both
+the stored `end_line` and `end_byte` to the preceding covered line. This is the same
+trailing-newline convention `AKR-S022` validates, so a successful proposal cannot become
+invalid merely because the caller ended its line selection on a blank separator.
+
 The command-line equivalent is `akr source get <id> --lines a:b`, which reports the same
 locator alongside the text.
 
 Creates revision 1 of a **new** key, in its class's initial state. An existing key is an
 error — the tool will not silently turn a proposal into a revision.
+
+The callable schema derives every kind's required and optional slots from the vocabulary
+table. In particular, work uses required `intent`, decision uses required `decision`, and
+`topic` is a separate normative-only field. `scope` accepts compact strings (`"all"`, a
+bare path glob, or `"@key"`) and exposes typed object alternatives as a `oneOf`:
+`{form:"all"}`, `{form:"path",glob:"src/**"}`, or `{form:"ref",ref:"@key"}`.
+
+`acknowledged: true` marks a declared `contradicts` edge as knowingly tolerated (D-023).
+Two live records that contradict each other fail V-023 (`AKR-R041`) unless one of them
+carries it, and acknowledging is a legitimate ledger state rather than a workaround — the
+alternative an agent reaches for when the marker is unreachable is dropping the relation,
+which is the contradiction going unrecorded that the rule exists to prevent.
 
 A milestone requires a non-empty `acceptance` block to exist at all (V-008), so
 `knowledge.propose` accepts one directly — an array of `{id, statement, method, command?,
@@ -366,6 +383,16 @@ than the request:
 - `next` names `akr build` and explains that it refreshes `akr.lock` and generated views
   before validation. This makes the required post-write maintenance executable rather
   than leaving the agent to infer it from `lock_stale`.
+- `notes` is present only when the write leaves something for the caller to look at, and
+  is advisory: never a diagnostic, never blocking, never a reason a strict write fails.
+  Today it carries one thing. Revising a record that stays `completed` puts *every* one of
+  its acceptance references back in question at once, because V-020 compares each one's
+  `observed_at` against the commit that last changed the record's content — so refreshing
+  three checks of four leaves the fourth to surface as `AKR-R022` on a later build, long
+  after the session that could have refreshed it. The pipeline cannot settle the question,
+  since the commit this revision will land in does not exist yet; it can name the
+  references in play at the one moment somebody is looking. `akr revise` prints the same
+  lines.
 
 ### `knowledge.revise`
 
@@ -384,10 +411,14 @@ because the underlying store is a git working tree that a human is also watching
 An explicit `state` lands on the successor even when the old head is sealed. Without an
 explicit state, a content revision of settled knowledge starts `proposed` for review.
 
-Omitted fields carry forward from the head — slots, relations, scope, claims, acceptance
-and `sources` alike. Provenance is the one part of a record the ledger cannot reconstruct
-from anything else, so a revision that says nothing about it keeps it; supplying `sources`
-replaces the head's attributions outright.
+Omitted fields carry forward from the head — slots, relations, scope, claims, acceptance,
+`topic`, `acknowledged` and `sources` alike. The last three are the ones worth naming,
+because each was for a while dropped by the merge rather than carried: provenance is the
+part of a record the ledger cannot reconstruct from anything else, `topic` is a normative
+record's exclusivity handle (D-004b), and `acknowledged` is what keeps a tolerated
+contradiction from failing V-023 on the next build. An edit that renames a policy must not
+silently retire a marker it never mentioned. Supplying any of them replaces the head's
+value outright.
 
 ### `knowledge.supersede`
 
@@ -456,7 +487,7 @@ commits together, validates the resulting ledger once, and commits every record 
 ```jsonc
 { "agent": "claude",
   "message": "Ran knowledge.search right after a write and got stale results;               akr build in between fixed it.",
-  "namespace": "sys" }   // needed only when the project declares several
+  "namespace": "sys" }   // optional; defaults to where this project's papercuts go
 ```
 
 Logs a small friction as a `papercut` record (D-027): what you were doing, what got in

@@ -45,9 +45,12 @@ Consult at task and state-transition boundaries, not after every edit.
   they can go out of date.
 - Changed knowledge: `knowledge.revise` — never edit a record that is not `proposed`.
 - A replaced plan: `knowledge.supersede`, with a disposition for every unfinished child.
-- Finished work: `knowledge.evidence_add`, then `knowledge.complete`.
+- Finished work: `knowledge.evidence_add`, then `knowledge.complete`. An evidence
+  `artifact` may not be a path under `.agent/scratch` — scratch is pruned on an
+  ordinary handoff, and a citation into it is a verified claim that quietly loses its
+  backing. Move the artefact somewhere durable first, or `akr scratch keep` it.
 - Friction you hit on the way: `knowledge.papercut`.
-- Before handing work back: `knowledge.validate`.
+- Before handing work back: `knowledge.validate`, or `akr validate` from a shell.
 
 ### Scratch persists — it is yours to clean up
 

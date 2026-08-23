@@ -724,6 +724,18 @@ pub fn locate_lines(
     }
 
     let start = line_starts[start_line as usize - 1];
+    let requested_end = if (end_line as usize) < lines {
+        line_starts[end_line as usize]
+    } else {
+        bytes.len()
+    };
+    // Citation validation does not count trailing empty lines as part of a passage. A
+    // line-only authoring call used to store the requested blank `end_line` while its
+    // computed bytes described the preceding passage, so the write succeeded and the
+    // immediately following check raised AKR-S022. Normalize both coordinates together
+    // before the record exists. A citation consisting only of a blank line retains that
+    // line because `last_line_of` cannot move before `start_line`.
+    let end_line = last_line_of(start_line, &bytes[start..requested_end]);
     let end = if (end_line as usize) < lines {
         line_starts[end_line as usize]
     } else {
@@ -977,8 +989,7 @@ pub fn check_citation(
     // disagree is worse than one with no lines at all: a reader would open the file at
     // the wrong place and believe they had found the passage.
     let start_line = u32::try_from(text[..start].matches('\n').count() + 1).unwrap_or(u32::MAX);
-    let counted = slice.trim_end_matches('\n').matches('\n').count();
-    let end_line = start_line.saturating_add(u32::try_from(counted).unwrap_or(0));
+    let end_line = last_line_of(start_line, slice.as_bytes());
     if (range.start_line, range.end_line) != (start_line, end_line) {
         problems.push(CitationProblem::LinesDisagree {
             document: document.clone(),
@@ -987,6 +998,26 @@ pub fn check_citation(
         });
     }
     problems
+}
+
+/// The last line a cited slice covers, counting from `start_line`.
+///
+/// Trailing newlines are trimmed before the count, and that is the whole of the rule:
+/// a range that stops at the end of line 40 is written `40`, not `41`, and one that
+/// swallows a blank line after it is still `40`. Both citation paths — the full document
+/// and a retained fragment — go through this, because they did not, and the fragment path
+/// counted every newline in the slice. A range captured by `akr source finalize --context
+/// block` ends on a chunk boundary, so it almost always ends in one or two newlines, and
+/// every retained citation on a cited-only source came back `AKR-S022` for line ranges
+/// one or two lines past the ones the record stored
+/// (`akr.papercut.collated-19-papercuts-from-evidence-intake`).
+fn last_line_of(start_line: u32, slice: &[u8]) -> u32 {
+    let mut end = slice.len();
+    while end > 0 && slice[end - 1] == b'\n' {
+        end -= 1;
+    }
+    let counted = slice[..end].iter().filter(|byte| **byte == b'\n').count();
+    start_line.saturating_add(u32::try_from(counted).unwrap_or(u32::MAX))
 }
 
 /// Checks one citation against the catalog and its full or retained bytes.
@@ -1088,9 +1119,7 @@ pub fn check_citation_at(
         u32::try_from(bytes[..start].iter().filter(|byte| **byte == b'\n').count())
             .unwrap_or(u32::MAX),
     );
-    let end_line = start_line.saturating_add(
-        u32::try_from(slice.iter().filter(|byte| **byte == b'\n').count()).unwrap_or(u32::MAX),
-    );
+    let end_line = last_line_of(start_line, slice);
     if (range.start_line, range.end_line) != (start_line, end_line) {
         problems.push(CitationProblem::LinesDisagree {
             document: document.clone(),

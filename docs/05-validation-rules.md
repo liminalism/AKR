@@ -1,7 +1,7 @@
 # Validation Rules
 
 The catalogue of everything `akr check` enforces, and — just as importantly — what it
-deliberately does not. Twenty-four rules, `V-001` through `V-024`, each raising exactly
+deliberately does not. Twenty-five rules, `V-001` through `V-025`, each raising exactly
 one diagnostic code from the language registry (`spec/diagnostics/codes-lang.md`).
 
 Rule identifiers and their codes are frozen in `spec/tables/vocabulary.json`. Freshness,
@@ -792,12 +792,66 @@ and the lock needs rebuilding. A simultaneous body edit still reports `AKR-R051`
 
 ---
 
+### V-025 — An evidence artifact is cited from a durable path
+
+**Stage** type · **Code** `AKR-T023`
+
+**Statement.** No `evidence` record has an `artifact` under an unkept
+`.agent/scratch` entry.
+
+**Why.** Scratch is the one directory the protocol documents as disposable, and
+`akr scratch prune` deletes from it on an ordinary handoff (D-036). An artefact cited from
+there is a verified claim whose backing a later session removes without knowing it was
+cited — and nothing notices, because a path is not a reference the ledger resolves. The
+audit that prompted this found 38 records across five files citing scratch paths, most of
+them already dangling.
+
+```
+# fails — the benchmark output is in the directory `akr scratch prune` empties
+record sys.evidence.ocr-benchmark/1 : evidence {
+    result pass
+    method command
+    observed_at git:5d9c2a70e31f8b46c07d5924ab6e3f1074c9d285
+    artifact ".agent/scratch/ocr-benchmark/out.txt"
+```
+
+```
+# passes
+    artifact "docs/benchmarks/2026-08-22.txt"
+```
+
+An artifact under `.agent/scratch/<entry>/...` also passes when `<entry>` is named in
+`.agent/scratch/KEEP`, as written by `akr scratch keep <entry> --reason <why>`.
+
+**Fix.** Move the artefact somewhere durable and cite that path, or `akr scratch keep
+<entry>` first and cite it where it is.
+
+This is a rule rather than a flag check on `akr evidence add` because evidence reaches the
+ledger by four routes — `akr evidence add`, `akr evidence add-many --from`, `akr propose
+--kind evidence --from`, and `knowledge.propose` over MCP — and a guard on the first leaves
+the other three open. Every write validates the resulting ledger before writing anything
+(`docs/07` §4), so the rule still refuses at write time, which is the point: a warning from
+a later build arrives after the record is in the ledger, which is when nobody goes back and
+moves the file.
+
+D-036 says scratch is never a ledger diagnostic. That is about the directory's contents —
+how much is sitting there and how old it is, which `akr check` reports as a build fact.
+This is about a record, and the record is wrong whether or not the file behind it still
+exists.
+
+The comparison is textual and normalises separators, a leading `./`, and an absolute path
+that passes through a scratch directory, because those all name the same place. It reads
+the `artifact` slot only: a papercut whose statement quotes a scratch path is describing
+the problem, not committing it.
+
+---
+
 ## 3. Rule-to-stage matrix
 
 | Stage | Rules | Codes | What it can see |
 | --- | --- | --- | --- |
 | **A — parse** | — | `AKR-P*`, `AKR-F*` | One file's bytes |
-| **B — type** | V-007, V-008, V-009, V-010, V-011 | `AKR-T001`, `T002`, `T011`, `T021`, `T022`, `T031` | One record, plus the vocabulary |
+| **B — type** | V-007, V-008, V-009, V-010, V-011, V-025 | `AKR-T001`, `T002`, `T011`, `T021`, `T022`, `T023`, `T031` | One record, plus the vocabulary |
 | **C — link** | V-001, V-002, V-003, V-004, V-005, V-006 | `AKR-L001`, `L002`, `L004`, `L006`, `L012`, `L021`, `L031` | All records, unresolved |
 | **D — resolve** | V-012 … V-024 | `AKR-R001`, `R002`, `R011`–`R015`, `R018`, `R021`, `R022`, `R031`, `R032`, `R041`, `R051`, `R052` | The whole graph, heads resolved, git history, the lock |
 

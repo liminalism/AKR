@@ -121,14 +121,16 @@ pub struct Collate {
     pub subjects_seen: Vec<SubjectTally>,
 }
 
-/// The keys a ledger has already absorbed, from the `collated` slot of its live
-/// papercuts. Plain `akr papercut` records never carry the slot, so they contribute
-/// nothing; only collation records do.
+/// The keys a ledger has already absorbed, from every `collated` slot in its history.
+///
+/// A terminal master means its reports were resolved or dispositioned; it does not make
+/// the source reports new again. Plain `akr papercut` records never carry the slot, so
+/// they contribute nothing; only collation records do.
 #[must_use]
 pub fn already_collated(ledger: &Ledger) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     for record in ledger.records() {
-        if record.kind != Kind::Papercut || !record.is_live() {
+        if record.kind != Kind::Papercut {
             continue;
         }
         if let Some(ContentValue::Strings(keys)) = record.get(ContentSlot::Collated) {

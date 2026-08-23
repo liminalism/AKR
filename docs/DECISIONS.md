@@ -1336,3 +1336,74 @@ directory is one the protocol itself creates.
 (`scratch_list`, `scratch_prune`, `scratch_keep`, `scratch_fact`,
 `scratch_clean_diagnostic`), `crates/akr-cli/src/args.rs` (`--scratch-clean`),
 `crates/akr-cli/tests/scratch.rs`, `AGENTS.md`, `scripts/agent-section.md`.
+
+---
+
+## D-037 — A cited artefact must outlive the citation, and that is a rule, not a flag check
+
+*Amendment, 2026-08-23.*
+
+**Question.** D-036 made `.agent/scratch` an explicitly disposable directory that
+`akr scratch prune` empties on an ordinary handoff. An evidence record whose `artifact`
+points there is therefore a verified claim whose backing a later session removes without
+knowing it was cited — and nothing notices, because a path is not a reference the ledger
+resolves. The audit that prompted D-036 found 38 records across five files citing scratch
+paths, most of them already dangling. The first fix put a refusal in front of one flag,
+`akr evidence add --artifact`, raising `AKR-C004`.
+
+**Question behind the question.** Where does an invariant about record content live? An
+evidence record reaches the ledger by four routes: `akr evidence add`,
+`akr evidence add-many --from`, `akr propose --kind evidence --from`, and
+`knowledge.propose` over MCP. Three of those parse a record rather than building a request,
+and never see the flag. A guard on one entry point is not an invariant; it is a
+convenience that the next entry point silently repeals. Every other content-slot invariant
+in the system — an observation's `observed_at`, evidence's `result` — is a `V-nnn` rule
+over the model, and is therefore true of the ledger however a record got into it.
+
+**Resolution.**
+
+**It is V-025, raising `AKR-T023` at type-check.** The rule reads the `artifact` slot of
+every evidence record and refuses a path under an unkept `.agent/scratch` entry. An entry
+named in `.agent/scratch/KEEP` is explicitly persistent and therefore passes. Being a rule
+rather than a flag check makes it true by construction on all four routes, and on any route added later.
+It is a type-stage rule because it is a property of one record read against the vocabulary,
+which is where V-009 and V-010 already live.
+
+**It is still a refusal at write time.** Every write parses the ledger, applies the change
+in memory, validates the *resulting* ledger, and only then writes atomically (`docs/07`
+§4). So the rule refuses before anything lands, which is the property the original guard
+was reaching for: a warning from a later build arrives after the record is in the ledger,
+which is exactly when nobody goes back and moves the file.
+
+**The flag check goes away rather than sitting beside it.** Two implementations of one
+invariant is how they drift, and the rule's message covers the flag's case. `AKR-C004` is
+no longer raised for this; `akr evidence add --artifact` under scratch now exits 1 with a
+ledger diagnostic rather than 2 with a usage error, which is the more honest classification
+— the record is wrong, not the command line.
+
+**The comparison is textual, and reads the `artifact` slot only.** A path is not something
+the ledger resolves, so there is nothing to look up; the check normalises separators, a
+leading `./`, and an absolute path that passes through a scratch directory, because those
+all name the same place. It does not read prose: a papercut whose statement quotes a
+scratch path is describing the problem, not committing it.
+
+**This does not re-open D-036.** D-036 says scratch is never a ledger diagnostic, and that
+stands: it is about the directory's contents, how much is sitting there and how old, which
+`akr check` reports as a build fact and never fails on by itself. V-025 is about a record,
+and the record is wrong whether or not the file behind it still exists.
+
+**Consequences.** A ledger that already cites scratch artefacts fails `akr check` until
+those records are revised — including on the next unrelated write, because the write
+pipeline validates the whole resulting ledger. That is the intended forcing function, and
+it is the same standing every other V-rule has, but it is a real migration cost for the
+workspaces the original audit was about. `akr scratch keep <entry>` is the escape hatch for
+an artefact that should stay where it is.
+
+**Honored by.** `crates/akr-core/src/validate/rules.rs`
+(`v025_evidence_artifact_durable`), `crates/akr-core/src/validate/mod.rs`,
+`crates/akr-core/src/scratch/mod.rs` (`cited_entry`),
+`crates/akr-core/src/diagnostics/mod.rs` (`T023`), `spec/tables/vocabulary.json`,
+`spec/diagnostics/codes-lang.md`, `docs/05-validation-rules.md`, `docs/07-cli.md`,
+`fixtures/validate/err/v025-evidence-scratch-artifact.akr`,
+`crates/akr-core/tests/v_rules.rs`, `crates/akr-cli/tests/writes.rs`,
+`crates/akr-mcp/tests/writes.rs`, `AGENTS.md`.

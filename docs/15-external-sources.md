@@ -128,6 +128,11 @@ paragraph that happens to repeat the words.
 move independently, so a record write does not rechunk the corpus and a registration does
 not re-resolve the ledger.
 
+`akr source search` and `akr source get --chunk` bring the chunk index up to date before
+reading it, the way `akr search` has always done for the record index, so a document is
+searchable the moment it is registered rather than after the next build. `--no-rebuild` is
+still the opt-out and still refuses rather than serving a stale answer.
+
 Registered bytes are immutable while present, which makes source sync trivially incremental.
 Registration is not permanent: an advisor document may be finalized into retained cited
 fragments or metadata-only lineage, while its catalog identity and full-document hash remain.

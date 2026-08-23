@@ -169,9 +169,13 @@ fn query_error(error: &rusqlite::Error) -> IndexError {
 /// Turns a caller's words into an FTS5 expression that cannot be a syntax error.
 ///
 /// Each whitespace-separated term becomes one quoted phrase with its punctuation turned
-/// into token boundaries, matching what the tokeniser stored. `DecodeRequest::default()`
-/// becomes the phrase `"DecodeRequest default"`; a bare comma disappears; `non-default`
-/// stops being read as a column name.
+/// into token boundaries, matching what the tokeniser stored, and the phrases are joined
+/// with OR. Natural-language orientation queries routinely contain words no one record
+/// repeats; requiring every word made a multi-word task silently return zero even when
+/// several strong single-word matches existed. BM25 still ranks records matching more of
+/// the query first. `DecodeRequest::default()` becomes the phrase
+/// `"DecodeRequest default"`; a bare comma disappears; `non-default` stops being read as
+/// a column name.
 #[must_use]
 pub fn escape_query(query: &str) -> String {
     query
@@ -185,7 +189,7 @@ pub fn escape_query(query: &str) -> String {
         .filter(|term| !term.is_empty())
         .map(|term| format!("\"{term}\""))
         .collect::<Vec<_>>()
-        .join(" ")
+        .join(" OR ")
 }
 
 fn placeholders(count: usize, first: usize) -> String {
@@ -203,10 +207,10 @@ mod tests {
     fn the_three_queries_that_failed_in_the_field_now_parse() {
         // Every one of these came back as an FTS5 error from a real session
         // (`raw-autotune.papercut.knowledge-search-and-knowledge-start-via-the`).
-        assert_eq!(escape_query("budget, tokens"), "\"budget\" \"tokens\"");
+        assert_eq!(escape_query("budget, tokens"), "\"budget\" OR \"tokens\"");
         assert_eq!(
             escape_query("HDR slice 6 non-default feature"),
-            "\"HDR\" \"slice\" \"6\" \"non default\" \"feature\""
+            "\"HDR\" OR \"slice\" OR \"6\" OR \"non default\" OR \"feature\""
         );
         assert_eq!(
             escape_query("DecodeRequest::default()"),
@@ -225,7 +229,7 @@ mod tests {
     fn ordinary_words_are_unchanged_but_quoted() {
         assert_eq!(
             escape_query("decoder optimisation"),
-            "\"decoder\" \"optimisation\""
+            "\"decoder\" OR \"optimisation\""
         );
     }
 }

@@ -127,6 +127,13 @@ pub struct Applied {
     pub files: Vec<PathBuf>,
     /// Diagnostics that did not block the write. Empty under the strict default.
     pub diagnostics: Vec<Diagnostic>,
+    /// Advisory lines about what the write leaves for the caller to look at.
+    ///
+    /// Not diagnostics: a note never blocks a write and never fails a strict build. It
+    /// carries the things the pipeline can see and the next command cannot — most of all
+    /// which acceptance evidence a revision of a completed record has just put back in
+    /// question, which only shows up as `AKR-R022` after the commit lands.
+    pub notes: Vec<String>,
     /// Whether `akr.lock` is now stale and the caller should run `akr build`.
     pub lock_stale: bool,
 }
@@ -1270,8 +1277,68 @@ fn apply_inner(
             .into_iter()
             .filter(|d| d.severity == Severity::Warning)
             .collect(),
+        notes: acceptance_notes(&staged.ledger, operation, edits),
         lock_stale,
     })
+}
+
+/// What a revision of a completed record has just put back in question.
+///
+/// V-020 wants every acceptance check's evidence observed at a commit that descends from
+/// the last commit to change the record's content — so revising a completed record
+/// invalidates *all* of its evidence at once, and refreshing three checks out of four
+/// leaves the fourth to surface as `AKR-R022` on some later build, long after the session
+/// that could have refreshed it (`akr.papercut.collated-19-papercuts-from-evidence-intake`,
+/// from jpegXL-rs). The write pipeline cannot decide the question itself: the commit this
+/// revision will land in does not exist yet. It can say which references are in play, at
+/// the one moment somebody is looking, which is what stops a partial refresh from being
+/// invisible.
+fn acceptance_notes(
+    ledger: &crate::model::Ledger,
+    operation: Operation,
+    edits: &[(PathBuf, Record, ChangeKind)],
+) -> Vec<String> {
+    if !matches!(operation, Operation::Revise | Operation::Supersede) {
+        return Vec::new();
+    }
+    let mut notes = Vec::new();
+    for (_, record, _) in edits {
+        if record.state != State::Completed {
+            continue;
+        }
+        let Some(acceptance) = &record.acceptance else {
+            continue;
+        };
+        if acceptance.checks.is_empty() {
+            continue;
+        }
+        notes.push(format!(
+            "{} stays `completed`; V-020 will compare every acceptance reference against \
+             the commit this revision lands in:",
+            record.id
+        ));
+        for check in &acceptance.checks {
+            if check.verified_by.is_empty() {
+                notes.push(format!("  {} — no evidence", check.id));
+                continue;
+            }
+            for reference in &check.verified_by {
+                let observed = ledger
+                    .resolve(reference)
+                    .ok()
+                    .flatten()
+                    .and_then(|evidence| evidence.get(crate::model::ContentSlot::ObservedAt))
+                    .and_then(crate::model::ContentValue::as_commit)
+                    .map_or_else(
+                        || "no observed_at".to_owned(),
+                        |c| c.as_str()[..8].to_owned(),
+                    );
+                notes.push(format!("  {} — {reference} at {observed}", check.id));
+            }
+        }
+        notes.push("  refresh every one of them, not the ones you happened to rerun".to_owned());
+    }
+    notes
 }
 
 /// Replaces a record in a tree, or inserts it, preserving comments where it can.

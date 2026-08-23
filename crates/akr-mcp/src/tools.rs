@@ -1382,6 +1382,15 @@ fn write_result(
                 ("written", Value::bool(true)),
                 ("lock_stale", Value::bool(applied.lock_stale)),
             ];
+            // Advisory, never blocking, and the CLI prints the same lines: a revision of a
+            // completed record has just put every acceptance reference back in question,
+            // and this is the only moment anyone is looking.
+            if !applied.notes.is_empty() {
+                fields.push((
+                    "notes",
+                    Value::array(applied.notes.iter().cloned().map(Value::string).collect()),
+                ));
+            }
             if applied.lock_stale {
                 fields.push((
                     "next",
@@ -1709,10 +1718,26 @@ fn merged(arguments: &Value, head: &akr_core::model::Record) -> Value {
         "author",
         "created_at",
         "acceptance",
+        "acknowledged",
+        "topic",
     ] {
         if let Some(value) = arguments.get(name) {
             fields.push((name.to_owned(), value.clone()));
         }
+    }
+
+    // Two more the merge used to build a fresh payload without, and so silently dropped
+    // from the next revision: `topic` is a normative record's exclusivity handle (D-004b),
+    // and `acknowledged` is what keeps a tolerated contradiction from failing V-023. Both
+    // carry forward by default, for the same reason `sources` does below — an edit naming
+    // one slot must not retire a marker the author never mentioned.
+    if arguments.get("topic").is_none()
+        && let Some(topic) = &head.topic
+    {
+        fields.push(("topic".to_owned(), Value::string(topic.to_string())));
+    }
+    if arguments.get("acknowledged").is_none() && head.acknowledged {
+        fields.push(("acknowledged".to_owned(), Value::bool(true)));
     }
     if let Some(acceptance) = &head.acceptance
         && arguments.get("acceptance").is_none()

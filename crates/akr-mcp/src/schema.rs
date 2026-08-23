@@ -176,7 +176,13 @@ pub fn input_schema(name: &str) -> Option<Value> {
     let schema = match name {
         "knowledge.search" => object(
             vec![
-                ("query", string("What to search for.")),
+                (
+                    "query",
+                    string(
+                        "Natural-language terms to search for. Ordinary multi-word \
+                         queries match any term and rank records matching more first.",
+                    ),
+                ),
                 ("kinds", string_array("Restrict to these record kinds.")),
                 ("states", string_array("Restrict to these states.")),
                 (
@@ -407,6 +413,7 @@ pub fn input_schema(name: &str) -> Option<Value> {
                     acceptance_schema("Required to propose a milestone (V-008)."),
                 ),
                 ("sources", sources_schema()),
+                ("acknowledged", acknowledged_schema()),
             ],
             &["key", "kind", "title"],
         ),
@@ -416,6 +423,13 @@ pub fn input_schema(name: &str) -> Option<Value> {
                 ("title", string("Replace the title.")),
                 ("state", string("Move along the class's lifecycle.")),
                 ("scope", scope_schema()),
+                (
+                    "topic",
+                    string(
+                        "Replace the exclusivity handle, normative kinds only. Omit to \
+                         keep the head's.",
+                    ),
+                ),
                 ("slots", slots_schema()),
                 ("claims", claims_schema()),
                 (
@@ -431,6 +445,7 @@ pub fn input_schema(name: &str) -> Option<Value> {
                     ),
                 ),
                 ("sources", sources_schema()),
+                ("acknowledged", acknowledged_schema()),
                 (
                     "base_rev",
                     integer(
@@ -513,8 +528,9 @@ pub fn input_schema(name: &str) -> Option<Value> {
                 (
                     "namespace",
                     string(
-                        "Namespace for the key. Needed only when the project declares \
-                         several.",
+                        "Namespace for the key. Never required: the default is where \
+                         this project's papercuts already go, falling back to the \
+                         namespace carrying the most records.",
                     ),
                 ),
                 (
@@ -769,16 +785,81 @@ fn slots_schema() -> Value {
         ("type", Value::string("object")),
         (
             "description",
-            Value::string(
-                "Content slots for the record's kind. Required prose is `intent` on work \
-                 and `statement` on most other kinds — not `summary` or `goal`. Topic is \
-                 only valid on normative kinds. Planning kinds accept `note` (D-026): \
-                 operator commentary, rendered in views for terminal records. Call \
-                 knowledge.explain with the kind for the exact contract.",
-            ),
+            Value::string(format!(
+                "Content slots for the selected kind. Exact contracts: {}. Topic is a \
+                 separate top-level field and is only valid on normative kinds. Planning \
+                 kinds accept optional `note` (D-026): operator commentary, rendered in \
+                 views for terminal records. Closed slots: {}.",
+                slot_contract_summary(),
+                enum_slot_summary(),
+            )),
         ),
         ("additionalProperties", Value::bool(true)),
     ])
+}
+
+/// Every kind's slots, generated from the vocabulary table used by the type-checker.
+fn slot_contract_summary() -> String {
+    akr_core::model::Kind::ALL
+        .iter()
+        .map(|kind| {
+            let slots = kind
+                .content_slots()
+                .iter()
+                .map(|spec| {
+                    format!(
+                        "{}:{}:{}",
+                        spec.slot.name(),
+                        spec.slot.value_type(),
+                        if spec.required {
+                            "required"
+                        } else {
+                            "optional"
+                        }
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{} [{}]", kind.name(), slots)
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/// The `acknowledged` marker, on both write tools.
+fn acknowledged_schema() -> Value {
+    boolean(
+        "Marks a declared `contradicts` edge as knowingly tolerated (D-023). Two live \
+         records that contradict each other fail V-023 (AKR-R041) unless one of them sets \
+         this; acknowledging is a legitimate ledger state, and dropping the relation \
+         instead loses the contradiction. Carried forward by knowledge.revise unless the \
+         call names it.",
+    )
+}
+
+/// Every enum content slot in the vocabulary, with its members, as one clause.
+///
+/// `slots` is one free-form object across thirteen kinds, so the members of a closed slot
+/// had nowhere to be advertised and were discovered by having a call refused: `method` on
+/// an observation reads as an obvious place for `measurement`, and the allowed words only
+/// appeared in the error (`akr.papercut.collated-19-papercuts-from-evidence-intake`, from
+/// openarc). There are four such slots in the whole language, so naming all four costs a
+/// line and takes the guess out of it.
+fn enum_slot_summary() -> String {
+    let mut clauses: Vec<String> = Vec::new();
+    for kind in akr_core::model::Kind::ALL {
+        for spec in kind.content_slots() {
+            if let Some(values) = kind.content_enum_values(spec.slot) {
+                clauses.push(format!(
+                    "{}.{} is one of {}",
+                    kind.name(),
+                    spec.slot.name(),
+                    values.join("|")
+                ));
+            }
+        }
+    }
+    clauses.join("; ")
 }
 
 fn scope_schema() -> Value {
@@ -786,9 +867,43 @@ fn scope_schema() -> Value {
         ("type", Value::string("array")),
         (
             "description",
-            Value::string("Scope terms: \"all\", a path glob, or a \"@key\" reference."),
+            Value::string(
+                "Scope terms. Compact strings are \"all\", a bare path glob such as \
+                 \"src/**\", or an \"@key\" reference. Typed objects use exactly \
+                 {form:\"all\"}, {form:\"path\",glob:\"src/**\"}, or \
+                 {form:\"ref\",ref:\"@key\"}.",
+            ),
         ),
-        ("items", Value::object(vec![])),
+        (
+            "items",
+            Value::object(vec![(
+                "oneOf",
+                Value::array(vec![
+                    string("Compact scope term: all, a bare path glob, or @key."),
+                    object(
+                        vec![("form", enumeration("All project paths.", &["all"]))],
+                        &["form"],
+                    ),
+                    object(
+                        vec![
+                            ("form", enumeration("Path-glob scope.", &["path"])),
+                            ("glob", string("Repository path glob, for example src/**.")),
+                        ],
+                        &["form", "glob"],
+                    ),
+                    object(
+                        vec![
+                            ("form", enumeration("Record-reference scope.", &["ref"])),
+                            (
+                                "ref",
+                                string("Record reference, for example @sys.track.ui."),
+                            ),
+                        ],
+                        &["form", "ref"],
+                    ),
+                ]),
+            )]),
+        ),
     ])
 }
 
@@ -822,7 +937,12 @@ fn relations_schema() -> Value {
                  (V-005): `implements` accepts requirement, policy, constraint or \
                  decision, not a work record. Use depends_on for a prerequisite; a \
                  completed planning prerequisite remains satisfied. Use derived_from \
-                 for provenance rather than prerequisite ordering.",
+                 for provenance rather than prerequisite ordering. A `contradicts` edge \
+                 between two live records needs `acknowledged: true` on one of them, or \
+                 one side superseded, or it fails V-023 (AKR-R041). Pin a revision \
+                 (`@key/2`) only to cite that revision for good: an unpinned `@key` \
+                 follows the head, and a pinned reference to a revision that a later one \
+                 supersedes fails V-006 (AKR-L021).",
             ),
         ),
         ("additionalProperties", string_array("References.")),
@@ -909,7 +1029,13 @@ fn sources_schema() -> Value {
         ("type", Value::string("array")),
         (
             "description",
-            Value::string("Source attributions for the record."),
+            Value::string(
+                "Source attributions for the record. A citation given by line \
+                 (start_line/end_line with no bytes) also needs `document`, the id of a \
+                 registered source: the byte offsets are read off the registered bytes, \
+                 and `path` is not a substitute for it. Give start_byte and end_byte \
+                 instead if the document is not in the library.",
+            ),
         ),
         ("items", source_schema()),
     ])
@@ -1011,5 +1137,24 @@ mod tests {
                 .map(|o| o.name())
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn authoring_schema_names_scope_forms_and_exact_kind_slots() {
+        let schema = input_schema("knowledge.propose").expect("propose schema");
+        let rendered = schema.to_pretty();
+        for required in [
+            "oneOf",
+            "glob",
+            "Compact scope term",
+            "decision [decision:text:required",
+            "work [intent:text:required",
+            "Topic is a separate top-level field",
+        ] {
+            assert!(
+                rendered.contains(required),
+                "missing {required:?}: {rendered}"
+            );
+        }
     }
 }

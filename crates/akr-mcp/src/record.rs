@@ -16,7 +16,7 @@
 use std::path::Path;
 
 use akr_core::json::Value;
-use akr_core::model::{ContentSlot, Kind, LogicalKey, Record, Relation};
+use akr_core::model::{Class, ContentSlot, Kind, LogicalKey, Record, Relation};
 
 use crate::errors::ToolError;
 
@@ -65,6 +65,15 @@ pub fn to_source(heading: &Heading, payload: &Value) -> Result<String, ToolError
 
     if let Some(scope) = payload.get("scope") {
         out.push_str(&format!("    scope [ {} ]\n", scope_terms(scope)?));
+    }
+    if payload.get("topic").is_some() && kind.class() != Class::Normative {
+        return Err(ToolError::new(
+            "AKR-C004",
+            format!(
+                "`topic` is only valid on normative kinds; kind `{}` does not accept it",
+                kind.name()
+            ),
+        ));
     }
     if let Some(topic) = payload.get("topic").and_then(Value::as_str) {
         out.push_str(&format!("    topic {topic}\n"));
@@ -157,6 +166,23 @@ pub fn to_source(heading: &Heading, payload: &Value) -> Result<String, ToolError
                 ));
             }
         }
+    }
+
+    // V-023 refuses a live `contradicts` edge between two live records unless one of them
+    // says the contradiction is knowingly tolerated, and `acknowledged true` is how it
+    // says so (D-023). The marker is a common slot rather than a content slot, so it never
+    // appeared in `slots`, and no other field carried it: an agent that hit `AKR-R041` on
+    // a `contradicts` it meant to keep had no way through this surface to acknowledge it,
+    // and dropped the relation instead — which is exactly the contradiction going
+    // unrecorded that the rule exists to prevent
+    // (`akr.papercut.collated-19-papercuts-from-evidence-intake`, from
+    // Evidence-intake-project).
+    if payload
+        .get("acknowledged")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        out.push_str("    acknowledged true\n");
     }
 
     if let Some(Value::Array(sources)) = payload.get("sources") {
@@ -401,7 +427,7 @@ fn slot_line(slot: ContentSlot, value: &Value) -> Result<String, ToolError> {
         ContentSlot::ReviewAfter | ContentSlot::Target => string(value, name)?,
         // Enum members are bare words.
         ContentSlot::Method | ContentSlot::Result | ContentSlot::Confidence => string(value, name)?,
-        ContentSlot::Watches | ContentSlot::Aliases => {
+        ContentSlot::Watches | ContentSlot::Aliases | ContentSlot::Collated => {
             let items: Vec<String> = array(value, name)?
                 .iter()
                 .filter_map(Value::as_str)
@@ -506,15 +532,30 @@ fn scope_terms(value: &Value) -> Result<String, ToolError> {
             Value::String(text) => format!("path {}", quote(text)),
             Value::Object(_) => match item.get("form").and_then(Value::as_str) {
                 Some("all") => "all".to_owned(),
-                Some("path") => format!(
-                    "path {}",
-                    quote(item.get("glob").and_then(Value::as_str).unwrap_or_default())
-                ),
-                Some("ref") => format!(
-                    "ref {}",
-                    reference(item.get("ref").and_then(Value::as_str).unwrap_or_default())
-                ),
-                _ => return Err(ToolError::new("AKR-C004", "unknown scope form")),
+                Some("path") => {
+                    let glob = item.get("glob").and_then(Value::as_str).ok_or_else(|| {
+                        ToolError::new(
+                            "AKR-C004",
+                            "a path scope object needs `glob`, for example {\"form\":\"path\",\"glob\":\"src/**\"}",
+                        )
+                    })?;
+                    format!("path {}", quote(glob))
+                }
+                Some("ref") => {
+                    let target = item.get("ref").and_then(Value::as_str).ok_or_else(|| {
+                        ToolError::new(
+                            "AKR-C004",
+                            "a ref scope object needs `ref`, for example {\"form\":\"ref\",\"ref\":\"@key\"}",
+                        )
+                    })?;
+                    format!("ref {}", reference(target))
+                }
+                _ => {
+                    return Err(ToolError::new(
+                        "AKR-C004",
+                        "unknown scope form; use \"all\", a bare glob such as \"src/**\", a reference such as \"@key\", or an object with form all|path|ref",
+                    ));
+                }
             },
             _ => return Err(ToolError::new("AKR-C004", "unknown scope term")),
         };

@@ -3198,10 +3198,18 @@ fn explain_kind(kind: akr_core::model::Kind) -> Output {
 
     let (required, optional): (Vec<_>, Vec<_>) =
         kind.content_slots().iter().partition(|spec| spec.required);
+    // A closed slot prints its members, not the word `enum`. `explain` is the command the
+    // write surfaces point at for "which slots may this kind have", and answering that
+    // with a type name for the one slot that has a fixed vocabulary sends the author back
+    // to guessing — `measurement` for an observation's `method` is the obvious guess, and
+    // it is wrong (`akr.papercut.collated-19-papercuts-from-evidence-intake`).
     let names = |specs: &[&akr_core::model::ContentSlotSpec]| {
         specs
             .iter()
-            .map(|spec| format!("{}: {}", spec.slot.name(), spec.slot.value_type()))
+            .map(|spec| match kind.content_enum_values(spec.slot) {
+                Some(values) => format!("{}: {}", spec.slot.name(), values.join("|")),
+                None => format!("{}: {}", spec.slot.name(), spec.slot.value_type()),
+            })
             .collect::<Vec<_>>()
     };
     let required = names(&required);
@@ -3237,6 +3245,23 @@ fn explain_kind(kind: akr_core::model::Kind) -> Output {
     if kind == akr_core::model::Kind::Observation {
         text.push_str(
             "  standing   verified requires provenance: `method`, a source block, or supporting evidence (V-022)\n",
+        );
+    }
+    // The state-entry rules. V-021 refused the first `active` decision an author wrote
+    // because `explain` had listed `supported_by` and `implements` among seven optional
+    // relations and said nothing about one of them being required to leave `proposed`
+    // (`akr.papercut.collated-19-papercuts-from-evidence-intake`, from Lege-ecosystem).
+    if kind == akr_core::model::Kind::Decision {
+        text.push_str(
+            "  standing   active requires a live `implements`, `depends_on` or `supported_by` \
+             edge to a requirement, policy, constraint or evidence-bearing record (V-021); \
+             `proposed` carries no such requirement\n",
+        );
+    }
+    if relations.contains(&"contradicts") {
+        text.push_str(
+            "  conflict   a `contradicts` edge between two live records needs `acknowledged true` \
+             on one of them, or one side superseded (V-023)\n",
         );
     }
     text.push_str("  reference  docs/02-data-model.md; spec/tables/vocabulary.json\n");
