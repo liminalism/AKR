@@ -453,6 +453,13 @@ pub fn install_hooks(session: &Session) -> Result<Output, EnvError> {
 /// verification the author could have run, and refuses rather than repairing.
 pub fn git_hook(session: &Session, name: &str) -> Result<Output, EnvError> {
     match name {
+        "pre-commit" if is_reword(session) => Ok(Output::plain(
+            "AKR OK (reword)\n",
+            Value::object(vec![
+                ("ok", Value::bool(true)),
+                ("reword", Value::bool(true)),
+            ]),
+        )),
         "pre-commit" => match prepare(session, false) {
             Ok(output) => Ok(Output::plain("AKR OK\n", output.result)),
             Err(error) => Ok(Output::plain(
@@ -470,6 +477,31 @@ pub fn git_hook(session: &Session, name: &str) -> Result<Output, EnvError> {
             format!("`{other}` is not a hook akr installs"),
         )),
     }
+}
+
+/// Whether this commit changes only the message: nothing is staged beyond `HEAD`.
+///
+/// The transaction closes at `akr git commit`, so every later `git commit` in the worktree
+/// meets a `pre-commit` hook with no transaction to check and is refused `AKR-C031` —
+/// including `git commit --amend` that only rewords the subject, which leaves the tree
+/// untouched and the AKR trailers byte-identical. That left `--no-verify` as the only way
+/// to fix a commit subject, which is a bad habit to teach for a change the protocol has no
+/// opinion about
+/// (`jpegxl-rs.papercut.amending-an-akr-generated-commit-message-to`).
+///
+/// An empty index against `HEAD` is exactly the reword case: an ordinary commit has
+/// something staged or git refuses it before any hook runs. A transaction in flight is
+/// still checked, because an author who began one and then rewords is mid-protocol and
+/// wants the check. The up-front remedy is unchanged and better: `akr change begin
+/// --summary` and `--kind` decide the subject before the commit exists.
+fn is_reword(session: &Session) -> bool {
+    let Ok(repository) = repository(session) else {
+        return false;
+    };
+    if change::load(repository).ok().flatten().is_some() {
+        return false;
+    }
+    repository.has_staged_changes() == Ok(false)
 }
 
 /// The prepared transaction, refusing when the staged tree has moved under it.

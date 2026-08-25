@@ -1526,6 +1526,38 @@ fn get(
             text.push_str(&format!("    #{:<14} {first}\n", claim.anchor.as_str()));
         }
     }
+    // Acceptance, because `complete` demands a mapping for every check and a reader who
+    // cannot see the checks cannot supply one. The block used to appear only under
+    // `--detail canonical`, so the first `knowledge.complete` on a ten-check work item
+    // was always refused for the ten mappings its author had never been shown
+    // (`saveyourskin.papercut.knowledge-get-detail-body-omitted-a-work-record`).
+    if detail != Detail::Summary
+        && let Some(acceptance) = &record.acceptance
+        && !acceptance.checks.is_empty()
+    {
+        let verdicts = akr_core::resolve::acceptance_verdicts(ledger);
+        text.push_str("\n  acceptance\n");
+        for check in &acceptance.checks {
+            let verdict = verdicts
+                .iter()
+                .find(|v| v.owner == record.id && v.check == check.id)
+                .map_or_else(|| "no evidence".to_owned(), |v| verdict_line(&v.verdict));
+            text.push_str(&format!(
+                "    #{:<14} {} — {verdict}\n",
+                check.id.as_str(),
+                check.method.name()
+            ));
+            for line in check.statement.lines() {
+                text.push_str(&format!("      {line}\n"));
+            }
+            if let Some(command) = &check.command {
+                text.push_str(&format!("      command  {command}\n"));
+            }
+            for reference in &check.verified_by {
+                text.push_str(&format!("      verified_by  {reference}\n"));
+            }
+        }
+    }
     // Provenance, printed rather than left in the file. `sources/akr-ingest-and-mcp-fix-advice.md`:
     // an agent should never have to open a `.akr` file to find out where a record came
     // from, and the locator is the thing that makes the difference between "this came
@@ -1684,6 +1716,53 @@ fn get(
                 .collect(),
         ),
     ));
+    if let Some(acceptance) = &record.acceptance
+        && !acceptance.checks.is_empty()
+    {
+        let verdicts = akr_core::resolve::acceptance_verdicts(ledger);
+        fields.push((
+            "acceptance",
+            Value::array(
+                acceptance
+                    .checks
+                    .iter()
+                    .map(|check| {
+                        let mut check_fields = vec![
+                            ("id", Value::string(check.id.to_string())),
+                            ("statement", Value::string(check.statement.clone())),
+                            ("method", Value::string(check.method.name())),
+                        ];
+                        if let Some(command) = &check.command {
+                            check_fields.push(("command", Value::string(command.clone())));
+                        }
+                        check_fields.push((
+                            "verified_by",
+                            Value::array(
+                                check
+                                    .verified_by
+                                    .iter()
+                                    .map(|r| Value::string(r.to_string()))
+                                    .collect(),
+                            ),
+                        ));
+                        check_fields.push((
+                            "verdict",
+                            Value::string(
+                                verdicts
+                                    .iter()
+                                    .find(|v| v.owner == record.id && v.check == check.id)
+                                    .map_or_else(
+                                        || "no evidence".to_owned(),
+                                        |v| verdict_line(&v.verdict),
+                                    ),
+                            ),
+                        ));
+                        Value::object(check_fields)
+                    })
+                    .collect(),
+            ),
+        ));
+    }
     if relations {
         fields.push(("relations", relations_json(session, record)));
     }
@@ -1715,6 +1794,24 @@ fn get(
         fields.push(("source_text", Value::string(source.clone())));
     }
     Ok(Output::text(text).with_result(Value::object(fields)))
+}
+
+/// One acceptance verdict, in plain terminal words.
+///
+/// The Markdown renderer's phrasing without its backticks: `get` prints to a terminal and
+/// feeds a JSON field, and neither wants `**satisfied**`.
+fn verdict_line(verdict: &akr_core::resolve::Verdict) -> String {
+    use akr_core::resolve::Verdict;
+    match verdict {
+        Verdict::Satisfied { by, .. } => format!("satisfied by @{by}"),
+        Verdict::NoEvidence => "not satisfied — no evidence".to_owned(),
+        Verdict::Unresolved => "not satisfied — the cited evidence does not resolve".to_owned(),
+        Verdict::Failing { by, result } => format!(
+            "not satisfied — @{by} reports {}",
+            result.map_or("no result", akr_core::model::EvidenceResult::name)
+        ),
+        Verdict::TooOld { by, .. } => format!("not satisfied — @{by} predates the last change"),
+    }
 }
 
 /// A record's provenance, as locators rather than copied text.
@@ -3056,7 +3153,7 @@ fn context(
     request.paths = paths.to_vec();
     request.budget = budget;
 
-    let bundle = assemble(&model, &freshness, &request).map_err(|error| {
+    let bundle = assemble_within_budget(&model, &freshness, &request).map_err(|error| {
         let code = match &error {
             akr_core::context::ContextError::GoalUnresolved(_) => "AKR-X001",
             akr_core::context::ContextError::GoalTerminal { id, .. } => {
@@ -3083,7 +3180,118 @@ fn context(
 
     let text = render_text(&bundle, &model, &freshness);
     let result = render_json(&bundle, &model);
+    let delivered = delivered_tokens(&text, &result);
+    let result = match budget {
+        Some(requested) if requested > 0 => with_budget_accounting(result, requested, delivered),
+        _ => result,
+    };
     Ok(Output::text(text).with_result(result))
+}
+
+/// Assembles until the *rendered* bundle honours the budget, not just the records in it.
+///
+/// `--budget` and `budget_tokens` are stated in tokens of result, and the assembler counts
+/// tokens of selected content: titles and prose, not the rendered lines that carry them
+/// and not the JSON half MCP sends alongside. The two are far apart. A bundle assembled to
+/// 4,500 was delivered at close to three times that, and the agent that asked for it got a
+/// transport-truncated answer to a budget it had set deliberately small
+/// (`saveyourskin.papercut.knowledge-context-for-the-focused-mealtime-work`).
+///
+/// So render, measure both halves, and when the result overshoots, ask the assembler for
+/// proportionally less and look again. Three passes: the ratio between selected content and
+/// rendered bytes is stable enough that the second lands, and a bundle marginally over is a
+/// better answer than a loop with no end. The extra passes are pure assembly over a model
+/// that is already resolved — no git query is repeated.
+///
+/// This lives here rather than in the MCP adapter because both surfaces make the same
+/// promise and `docs/08-mcp.md` §1 requires them to keep it identically.
+fn assemble_within_budget(
+    model: &akr_core::resolve::ResolvedModel<'_>,
+    freshness: &akr_core::render::Freshness,
+    request: &Request,
+) -> Result<akr_core::context::Bundle, akr_core::context::ContextError> {
+    const PASSES: usize = 3;
+    let bundle = assemble(model, freshness, request)?;
+    let Some(requested) = request.budget.filter(|budget| *budget > 0) else {
+        return Ok(bundle);
+    };
+
+    let mut bundle = bundle;
+    let mut assembly = requested;
+    for _ in 0..PASSES {
+        let delivered = delivered_tokens(
+            &render_text(&bundle, model, freshness),
+            &render_json(&bundle, model),
+        );
+        if delivered <= requested {
+            break;
+        }
+        // Proportional, then floored at a tenth of the request: the mandatory sections put
+        // a hard bottom under every bundle, and driving the assembly budget to nothing
+        // trades an oversized bundle for an `AKR-X021` that answers a budget nobody asked
+        // for.
+        let next = (assembly.saturating_mul(requested) / delivered).max(requested / 10);
+        if next >= assembly {
+            break;
+        }
+        assembly = next;
+        let mut narrowed = request.clone();
+        narrowed.budget = Some(assembly);
+        match assemble(model, freshness, &narrowed) {
+            Ok(next_bundle) => bundle = next_bundle,
+            Err(_) => break,
+        }
+    }
+    Ok(bundle)
+}
+
+/// What a bundle costs to deliver: the rendered text and the JSON half, which MCP sends
+/// together and which the budget is stated in.
+fn delivered_tokens(text: &str, result: &Value) -> usize {
+    fn estimate(text: &str) -> usize {
+        text.split_whitespace()
+            .map(|word| 1 + word.chars().filter(char::is_ascii_punctuation).count() / 3)
+            .sum()
+    }
+    estimate(text) + estimate(&result.to_pretty())
+}
+
+/// States what the budget asked for and what it got, on every budgeted bundle.
+///
+/// A bundle can be irreducible above the request: V-123 never truncates a relation, a
+/// state, a key or an acceptance verdict, so a goal with eighty-four normative records in
+/// scope costs what its structure costs however small the budget. Refusing to shrink
+/// further is right; doing it silently is how a caller ends up trusting a number the
+/// result never honoured. Both figures leave them the one action that works, which is
+/// narrowing `paths` rather than lowering the budget again.
+fn with_budget_accounting(result: Value, requested: usize, delivered: usize) -> Value {
+    let mut accounting = vec![
+        (
+            "requested_tokens",
+            Value::integer(i64::try_from(requested).unwrap_or(i64::MAX)),
+        ),
+        (
+            "delivered_tokens",
+            Value::integer(i64::try_from(delivered).unwrap_or(i64::MAX)),
+        ),
+    ];
+    if delivered > requested {
+        accounting.push((
+            "note",
+            Value::string(
+                "the bundle's mandatory content — keys, states, relations, acceptance \
+                 verdicts, contradictions and staleness — is never truncated (V-123), so it \
+                 does not fit the requested budget. Narrow `paths` to the files this work \
+                 touches; lowering the budget cannot reduce it further.",
+            ),
+        ));
+    }
+    let Value::Object(mut fields) = result else {
+        return result;
+    };
+    fields.retain(|(name, _)| name != "budget");
+    fields.push(("budget".to_owned(), Value::object(accounting)));
+    Value::Object(fields)
 }
 
 // -------------------------------------------------------------------------------------
@@ -3233,8 +3441,18 @@ fn explain_kind(kind: akr_core::model::Kind) -> Output {
     if !optional.is_empty() {
         text.push_str(&format!("  optional   {}\n", optional.join(", ")));
     }
+    // `topic` either way round. Listing only what a kind accepts leaves an author who has
+    // seen `topic` on the write surface to assume it is universal, and the refusal arrives
+    // as an `AKR-C004` from a rule `explain` had every chance to mention
+    // (`orderflower.papercut.while-proposing-a-work-record-the-generic`).
     if class.scope_required() {
         text.push_str("  scope      required; `topic` marks normative exclusivity (D-004b)\n");
+    } else {
+        text.push_str(&format!(
+            "  topic      not accepted; a {} is not normative, and `topic` on one is \
+             AKR-C004 (D-004b)\n",
+            kind.name()
+        ));
     }
     let relations = akr_core::model::Relation::ALL
         .iter()
@@ -3276,6 +3494,17 @@ fn explain_kind(kind: akr_core::model::Kind) -> Output {
         (
             "optional_slots",
             Value::array(optional.into_iter().map(Value::string).collect()),
+        ),
+        ("accepts_topic", Value::bool(class.scope_required())),
+        (
+            "lifecycle",
+            Value::array(
+                class
+                    .states()
+                    .iter()
+                    .map(|state| Value::string(state.name()))
+                    .collect(),
+            ),
         ),
     ]))
 }

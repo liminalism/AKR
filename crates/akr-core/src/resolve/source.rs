@@ -15,7 +15,7 @@ use super::{BuildInputs, SourceFile};
 use crate::diagnostics::{Diagnostic, SlotRef, SourceMap, Span, Subject};
 use crate::hash::source_file_hash;
 use crate::model::{ContentSlot, Ledger, LogicalKey, Relation, RevisionId, Segment};
-use crate::syntax::cst::{BodyItem, File, Item};
+use crate::syntax::cst::{BodyItem, File, Item, Value};
 use crate::syntax::{format, lower::lower_all, parse};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -222,6 +222,70 @@ pub fn definitional_record_text(file: &File, index: usize) -> Option<String> {
     let rendered = format(&single);
     let start = rendered.find("\nrecord ")? + 1;
     Some(rendered[start..].to_owned())
+}
+
+/// The same projection with the revision's own identity removed as well, for comparing a
+/// record's definition *across* a revision boundary (D-038).
+///
+/// D-029 established that a change confined to lifecycle bookkeeping must not move a
+/// record's last definitional change. It compares one revision with its earlier selves,
+/// which is enough while a record is edited in place — and a sealed record cannot be
+/// edited in place. Revising it is the only way to change it, and revision `n+1` did not
+/// exist before the commit that wrote it, so its last definitional change is that commit
+/// by construction and every citation it carries is instantly too old. Retargeting a
+/// check at evidence that had already landed therefore un-satisfied it, with no way to
+/// re-land a measurement that was still perfectly valid
+/// (`jpegxl-rs.papercut.a-work-revision-that-cites-already-committed`).
+///
+/// Two things separate `n+1` from `n` whatever else changed: the revision number in the
+/// header, and the `supersedes` edge back to `n` that `akr revise` writes. Both are the
+/// mechanics of revising, not a redefinition, so both are removed here. A `supersedes`
+/// pointing at some *other* key is a real editorial statement and stays. Everything D-029
+/// keeps, this keeps: a changed `intent`, a changed check `statement` or `method`, a
+/// changed `target` still moves the gate.
+///
+/// Returns `None` if the index does not name a record.
+#[must_use]
+pub fn revision_independent_definitional_text(file: &File, index: usize) -> Option<String> {
+    let Some(Item::Record(subject)) = file.items.get(index) else {
+        return None;
+    };
+    let self_reference = format!("{}/", subject.key);
+    let mut single = file.clone();
+    single.leading = Vec::new();
+    single.trailing = Vec::new();
+    single.blank_before_header = false;
+    let mut item = file.items[index].clone();
+    if let Item::Record(record) = &mut item {
+        strip_bookkeeping(&mut record.body);
+        strip_self_supersession(&mut record.body, &self_reference);
+        record.revision = 0;
+    }
+    single.items = vec![item];
+
+    let rendered = format(&single);
+    let start = rendered.find("\nrecord ")? + 1;
+    Some(rendered[start..].to_owned())
+}
+
+/// Drops `supersedes` targets naming an earlier revision of this same key, and the slot
+/// with them when nothing else is left in it.
+fn strip_self_supersession(body: &mut Vec<BodyItem>, self_reference: &str) {
+    for item in body.iter_mut() {
+        let BodyItem::Slot(slot) = item else { continue };
+        if slot.name != "supersedes" {
+            continue;
+        }
+        if let Value::Array(targets, _) = &mut slot.value {
+            targets.retain(
+                |target| !matches!(target, Value::Ref(text, _) if text.starts_with(self_reference)),
+            );
+        }
+    }
+    body.retain(|item| {
+        !matches!(item, BodyItem::Slot(slot) if slot.name == "supersedes"
+            && matches!(&slot.value, Value::Array(targets, _) if targets.is_empty()))
+    });
 }
 
 /// Removes `state`, `note` and `verified_by` slots from a body, recursing into blocks so a

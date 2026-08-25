@@ -1504,13 +1504,23 @@ fn lifecycle_only_seal_drift(
 /// much is sitting there, and how old. This is about a record. A top-level entry named in
 /// `.agent/scratch/KEEP` is not disposable and is therefore a valid citation target; the
 /// keep index is attached as a ledger input fact by both read and write pipelines.
+///
+/// Only live revisions are judged, for the reason V-023 gives about contradictions: a
+/// sealed revision is a fact of history, not a live claim, and a rule that judges one is
+/// a rule the sanctioned write path cannot satisfy. Superseding an evidence record leaves
+/// the old revision in the file, so a rule reading every revision survives its own repair
+/// — `knowledge.revise` was refused "because the superseded invalid revision still had to
+/// validate" (`evidence-intake-project.papercut.correcting-an-invalid-scratch-backed-evidence`).
+/// The same reading made every write in a workspace with historical scratch citations
+/// fail on ~230 diagnostics about records nobody was touching, because every write
+/// validates the whole resulting ledger (`docs/07` §4).
 #[must_use]
 pub fn v025_evidence_artifact_durable(ledger: &Ledger) -> Vec<Diagnostic> {
     const RULE: RuleId = RuleId(25);
     let mut out = Vec::new();
     for record in ordered(ledger)
         .into_iter()
-        .filter(|r| r.kind == Kind::Evidence)
+        .filter(|r| r.kind == Kind::Evidence && r.is_live())
     {
         let Some(ContentValue::Text(artifact)) = record.get(ContentSlot::Artifact) else {
             continue;

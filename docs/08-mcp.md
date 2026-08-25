@@ -252,8 +252,28 @@ ceiling for this call. The same rule applies to `knowledge.start` and its handof
 assembly. The server does not assemble an 8,000-token bundle and then discard it behind
 a smaller transport limit. When the argument is omitted, the normal per-tool ceiling
 applies; an oversized result retains a compact preview and an actionable continuation
-instead of withholding all content. The value remains approximate because MCP carries
-both readable text and structured metadata.
+instead of withholding all content.
+
+The budget is a promise about the **delivered** result — both halves, the readable text
+and the structured metadata that repeats it — and not about the records the assembler
+selected, which is a much smaller number. Assembly measures what it rendered and, when the
+result overshoots, re-assembles to proportionally less, up to three passes. It used to
+measure only the content it had chosen, and a caller who asked for 4,500 tokens received
+close to three times that and a transport-truncated bundle. Because the promise belongs to
+the bundle rather than to this transport, `akr context --budget` keeps it identically
+(§1).
+
+Every budgeted bundle reports what happened, as `budget`:
+
+```json
+"budget": { "requested_tokens": 4500, "delivered_tokens": 4887,
+            "note": "the bundle's mandatory content … is never truncated (V-123) …" }
+```
+
+The `note` appears only when the request could not be met. Mandatory content — keys,
+states, relations, acceptance verdicts, contradictions, staleness — is never truncated, so
+a goal with a large normative scope costs what its structure costs however small the
+budget. Narrowing `paths` reduces it; lowering `budget_tokens` again does not.
 
 Sections appear in the fixed order above, always, whether or not they are empty. The
 membership of each is computed by the algorithm of `09-context-assembly.md` §4 — a pure

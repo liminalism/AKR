@@ -189,6 +189,17 @@ The checks stay in the binary. A hook that carried them would be a second implem
 nobody keeps in step with the first, and hooks are bypassable anyway — CI is the final
 authority.
 
+**A commit that changes only its message passes.** The transaction closes at
+`akr git commit`, so every later commit in the worktree meets a hook with no transaction
+to check — including `git commit --amend` that rewords a subject, which leaves the tree
+untouched and the AKR trailers byte-identical. Refusing that made `--no-verify` the only
+way to fix a commit subject, which is a bad habit to teach for a change the protocol has
+no opinion about. The hook detects it precisely: no transaction open, and an index equal
+to `HEAD`. An ordinary commit has something staged or git refuses it before any hook runs,
+and an amend that also stages changes is still refused. A transaction in flight is still
+checked, because an author mid-protocol wants the check. Deciding the subject up front
+remains better and needs no amend: `akr change begin --summary` and `--kind` write it.
+
 ## 10. A commit never completes work
 
 ```text

@@ -750,6 +750,102 @@ record akr.work.papercut-reconciliation/2 : work {
     supersedes [ @akr.work.papercut-reconciliation/1 ]
 }
 
+record akr.work.papercuts-2026-08-25/1 : work {
+    title "Resolve the 2026-08-25 collated AKR papercuts"
+    state completed
+    scope [
+        path "crates/akr-cli/**",
+        path "crates/akr-core/**",
+        path "crates/akr-mcp/**",
+        path "docs/**",
+        path "fixtures/**"
+    ]
+    intent """
+        Resolve the 2026-08-25 collated AKR papercuts. Seven are live defects: V-025 judged
+        every historical revision rather than the live ones, so a scratch-backed evidence
+        artifact could not be repaired by revision and blocked unrelated writes; an invalid
+        lifecycle state was refused without naming the kind's states; `get` rendered no
+        acceptance block below canonical, so `complete` demanded mappings the reader never saw;
+        `explain` listed what a kind accepts but never that a planning kind rejects `topic`;
+        `budget_tokens` was measured against record content while the result carries a rendered
+        half and a structured duplicate, so a bundle was delivered at several times the
+        requested size; the pre-commit hook refused a message-only amend because the change
+        transaction closed at `akr git commit`; and a revision reset `last_change` and stranded
+        evidence whose measurement was still valid, which D-038 settles. Six more are the
+        per-kind authoring schema already shipped on 2026-08-23 and reported from server
+        processes that predate it. Two are the tools behaving correctly.
+        """
+    acceptance {
+        check acceptance-is-visible {
+            statement """
+                `get` renders each acceptance check's statement, method, command, citations and
+                verdict in both halves, so a reader can supply what `complete` demands.
+                """
+            method command
+            command "cargo test -p akr-cli --test commands get_shows_the_acceptance_checks_that_complete_will_demand"
+            verified_by [ @akr.evidence.papercuts-2026-08-25/1 ]
+        }
+        check budget-is-a-promise {
+            statement """
+                A context budget is measured against the delivered bundle, both halves, and the
+                result reports what was requested and what was delivered. Both surfaces keep the
+                promise identically.
+                """
+            method command
+            command "cargo test -p akr-mcp --test differential && cargo test -p akr-cli --test commands a_context_budget_is_a_promise_about_the_delivered_bundle"
+            verified_by [ @akr.evidence.papercuts-2026-08-25/1 ]
+        }
+        check refusals-name-the-remedy {
+            statement """
+                A refusal carries the list it is refusing against: an unknown lifecycle state
+                names the kind's states, and `explain` says when a kind rejects `topic`.
+                """
+            method command
+            command "cargo test -p akr-cli --test commands"
+            verified_by [ @akr.evidence.papercuts-2026-08-25/1 ]
+        }
+        check repair-is-reachable {
+            statement """
+                A rule about record content can be satisfied by the sanctioned write path:
+                V-025 reads live revisions only, so revising an evidence record to a durable
+                path clears it, and a superseded revision is not judged.
+                """
+            method command
+            command "cargo test -p akr-core --test v_rules"
+            verified_by [ @akr.evidence.papercuts-2026-08-25/1 ]
+        }
+        check revising-is-not-redefining {
+            statement """
+                A revision that changes nothing definitional preserves its predecessor's
+                last_change, and a revision that redefines a check still moves it.
+                """
+            method command
+            command "cargo test -p akr-core --test git_queries"
+            verified_by [ @akr.evidence.papercuts-2026-08-25/1 ]
+        }
+        check reword-passes {
+            statement """
+                A commit that changes only its message passes the pre-commit hook, and a staged
+                change with no transaction is still refused.
+                """
+            method command
+            command "cargo test -p akr-cli --test change_protocol"
+            verified_by [ @akr.evidence.papercuts-2026-08-25/1 ]
+        }
+        check workspace-green {
+            statement """
+                The workspace builds and passes with default and no-default features, clippy is
+                silent, formatting is clean, and the design set is coherent.
+                """
+            method command
+            command "cargo test && cargo test --no-default-features && cargo clippy --all-targets && cargo fmt --all -- --check && python3 tools/check-design.py"
+            verified_by [ @akr.evidence.papercuts-2026-08-25/1 ]
+        }
+    }
+    implements [ @akr.decision.revision-is-not-redefinition/1 ]
+    supported_by [ @akr.assessment.papercut-reconciliation-2026-08-25/1 ]
+}
+
 record akr.work.post-commit-validation/1 : work {
     title "Make AKR commits validate after Git advances"
     state superseded

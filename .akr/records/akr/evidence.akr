@@ -382,6 +382,18 @@ record akr.evidence.papercut-subject-suite/1 : evidence {
         """
 }
 
+record akr.evidence.papercuts-2026-08-25/1 : evidence {
+    title "The whole workspace is green with default and no-default features, clippy is silent, formatting is clean and the design set is coherent, over the six papercut fixes: V-025 scoped to live revisions, AKR-T012 naming the kind's states, get rendering acceptance, explain naming topic's refusal, the context budget measured against the delivered bundle, and the pre-commit hook passing a message-only amend."
+    state verified
+    result pass
+    method command
+    observed_at git:4b3212b16511e2cd2546c26c35271ada3d1cea6a
+    command "cargo test && cargo test --no-default-features && cargo clippy --all-targets && cargo fmt --all -- --check && python3 tools/check-design.py"
+    summary """
+        The whole workspace is green with default and no-default features, clippy is silent, formatting is clean and the design set is coherent, over the six papercut fixes: V-025 scoped to live revisions, AKR-T012 naming the kind's states, get rendering acceptance, explain naming topic's refusal, the context budget measured against the delivered bundle, and the pre-commit hook passing a message-only amend.
+        """
+}
+
 record akr.evidence.post-commit-validation-suite/1 : evidence {
     title "The full workspace suite, no-default-features build, projection regeneration, and current-view validation passed with post-commit convergence regressions included."
     state verified

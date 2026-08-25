@@ -31,6 +31,7 @@ mod source;
 
 pub use source::{
     SpanIndex, Workspace, canonical_record_text, definitional_record_text, load_workspace,
+    revision_independent_definitional_text,
 };
 
 use crate::diagnostics::Diagnostic;

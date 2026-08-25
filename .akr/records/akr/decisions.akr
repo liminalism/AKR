@@ -580,6 +580,41 @@ record akr.decision.revision-and-replacement-contract/1 : decision {
     supported_by [ @akr.evidence.papercut-reconciliation-suite/1 ]
 }
 
+record akr.decision.revision-is-not-redefinition/1 : decision {
+    title "Revising a record is not redefining it"
+    state active
+    scope [ path "crates/akr-core/**", path "docs/**" ]
+    topic freshness-definitional-change
+    decision """
+        Revising a record is not redefining it. `last_change` compares definitions across the
+        revision boundary: the projection it hashes drops the revision number and a
+        `supersedes` naming an earlier revision of the same key, on top of everything D-029
+        already removes, and the history walk continues past the commit that introduced a
+        revision into the history of the revision it was revised from. A `supersedes` naming
+        a different key is a real editorial statement and is untouched, and every definitional
+        change D-029 keeps still moves the gate.
+        """
+    context """
+        D-029 narrowed "content change" to what a record requires, so completing a milestone
+        would not strand the evidence that closes it. That reaches only the in-place case, and
+        D-015 makes a sealed record uneditable — revising it is the only way to change it.
+        Revision n+1 did not exist before the commit that wrote it, so its last definitional
+        change was that commit by construction and every citation it carried was instantly too
+        old. Retargeting a check at a measurement that had already landed un-satisfied the
+        check, with no way to re-land it: a fresh observed_at would have to name a commit that
+        does not exist yet, and duplicating the evidence duplicates a measurement nobody re-ran.
+        """
+    consequences """
+        A revision that changes nothing definitional preserves its predecessor's last_change,
+        so acceptance verdicts survive a lifecycle edit, a note, and a plain retarget. This can
+        lower an existing last_change, so a ledger built before and after this change can
+        disagree about which commit that was; it is a projection difference, not a diagnostic.
+        Byte reproducibility is unaffected — the computation stays a pure function of the
+        repository and the ledger. The D-015 seal still hashes the whole revision.
+        """
+    supported_by [ @akr.evidence.papercuts-2026-08-25/1 ]
+}
+
 record akr.decision.search-refreshes-disposable-index/1 : decision {
     title "Search refreshes its disposable index before querying"
     state active

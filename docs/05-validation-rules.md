@@ -796,7 +796,7 @@ and the lock needs rebuilding. A simultaneous body edit still reports `AKR-R051`
 
 **Stage** type · **Code** `AKR-T023`
 
-**Statement.** No `evidence` record has an `artifact` under an unkept
+**Statement.** No **live** `evidence` revision has an `artifact` under an unkept
 `.agent/scratch` entry.
 
 **Why.** Scratch is the one directory the protocol documents as disposable, and
@@ -843,6 +843,15 @@ The comparison is textual and normalises separators, a leading `./`, and an abso
 that passes through a scratch directory, because those all name the same place. It reads
 the `artifact` slot only: a papercut whose statement quotes a scratch path is describing
 the problem, not committing it.
+
+**Live revisions only**, as V-023 judges contradictions. A sealed revision is a fact of
+history rather than a live claim, and judging one made this the single rule the sanctioned
+write path could not satisfy: superseding the offending record leaves its old revision in
+the file, so the repair reproduced the diagnostic it was repairing. The repair is
+therefore what it should be — revise the evidence to cite a durable path, and the previous
+revision seals as `superseded` and stops being read. That also matters for a citation
+whose scratch entry has already been pruned, which `akr scratch keep` cannot rescue
+because there is nothing left to keep.
 
 ---
 

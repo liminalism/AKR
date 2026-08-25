@@ -98,6 +98,21 @@ impl Ctx {
         });
     }
 
+    /// The same diagnostic with a remedy attached.
+    fn error_with_help(
+        &mut self,
+        code: Code,
+        span: Span,
+        message: impl Into<String>,
+        slot: Option<SlotRef>,
+        help: impl Into<String>,
+    ) {
+        self.error(code, span, message, slot);
+        if let Some(last) = self.diagnostics.last_mut() {
+            last.help = Some(help.into());
+        }
+    }
+
     fn record(&mut self, node: &super::cst::Record, path: &str) -> Option<Record> {
         let key = match LogicalKey::parse(&node.key) {
             Ok(key) => key,
@@ -156,13 +171,25 @@ impl Ctx {
                     record.title = text;
                 }
             }
+            // Naming the kind's own states is the whole remedy: the word an author reaches
+            // for is usually a real lifecycle word from somewhere else — `accepted` for a
+            // decision the user settled — and the refusal by itself sends them to
+            // `knowledge.explain` for a list the diagnostic already knows
+            // (`saveyourskin.papercut.i-tried-to-record-a-user-settled-decision-with`).
+            // A word that is a real state but wrong for this kind is V-007's to refuse,
+            // and it already names the legal set. This arm is the other case — a word
+            // that is no state at all — and it used to name nothing, so an author who
+            // reached for `accepted` on a decision was sent to `knowledge.explain` for a
+            // list this diagnostic already had
+            // (`saveyourskin.papercut.i-tried-to-record-a-user-settled-decision-with`).
             "state" => match State::from_name(&self.word(&slot.value)) {
                 Some(state) => record.state = state,
-                None => self.error(
+                None => self.error_with_help(
                     c::T012,
                     span,
                     format!("{} is not a lifecycle state", slot.value.render_inline()),
                     Some(SlotRef::State),
+                    format!("a {} is one of {}", kind.name(), state_list(kind)),
                 ),
             },
             "scope" => record.scope = self.scope(&slot.value),
@@ -655,4 +682,14 @@ impl Ctx {
             },
         })
     }
+}
+
+/// A kind's lifecycle states, as the `state` refusal names them.
+fn state_list(kind: Kind) -> String {
+    kind.class()
+        .states()
+        .iter()
+        .map(|state| state.name().to_owned())
+        .collect::<Vec<_>>()
+        .join(", ")
 }

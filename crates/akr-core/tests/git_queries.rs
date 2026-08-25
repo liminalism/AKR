@@ -376,6 +376,99 @@ fn a_completion_does_not_move_last_change() {
 }
 
 #[test]
+fn a_revision_that_redefines_nothing_does_not_move_last_change() {
+    // D-038. A sealed record can only be changed by revising it, and revision 2 did not
+    // exist before the commit that wrote it — so by the pre-D-038 reading its last
+    // definitional change was always that commit, and every citation it carried was
+    // instantly too old. Here revision 2 differs from revision 1 only in the ways
+    // revising a record always differs: the revision number, the `supersedes` edge back,
+    // the sealed predecessor's state, and a check citation.
+    let mut repo = TempRepo::new("last-change-revision");
+    let introduced = repo.commit_file(".akr/records/m.akr", RECORD_V1, "introduce");
+    let revised = format!(
+        "{}\n{}",
+        RECORD_V1
+            .trim_end()
+            .replace("    state active\n", "    state superseded\n"),
+        "\
+record fx.milestone.m1/2 : milestone {
+    title \"M1\"
+    state active
+    intent \"\"\"
+        The first milestone.
+        \"\"\"
+    acceptance {
+        check done {
+            statement \"\"\"
+                It is done.
+                \"\"\"
+            method manual
+            verified_by [ @fx.evidence.done/1 ]
+        }
+    }
+    supersedes [ @fx.milestone.m1/1 ]
+}
+"
+    );
+    repo.commit_file(".akr/records/m.akr", &revised, "revise");
+
+    let git = Repository::open(repo.root()).expect("opens");
+    let answer = last_change_of(&git, ".akr/records/m.akr", &key("fx.milestone.m1"), 2)
+        .expect("query")
+        .expect("the record exists");
+    assert_eq!(
+        answer.as_str(),
+        introduced,
+        "revising a record is not redefining it (D-038)"
+    );
+}
+
+#[test]
+fn a_revision_that_redefines_a_check_does_move_last_change() {
+    // The other half of D-038: it narrows what counts as a redefinition, it does not
+    // abolish the gate. A changed check statement is exactly what the gate exists to
+    // catch, so evidence from before it must still be too old.
+    let mut repo = TempRepo::new("last-change-revision-redefines");
+    let introduced = repo.commit_file(".akr/records/m.akr", RECORD_V1, "introduce");
+    let revised = format!(
+        "{}\n{}",
+        RECORD_V1
+            .trim_end()
+            .replace("    state active\n", "    state superseded\n"),
+        "\
+record fx.milestone.m1/2 : milestone {
+    title \"M1\"
+    state active
+    intent \"\"\"
+        The first milestone.
+        \"\"\"
+    acceptance {
+        check done {
+            statement \"\"\"
+                It is done on every supported platform, which is a new requirement.
+                \"\"\"
+            method manual
+        }
+    }
+    supersedes [ @fx.milestone.m1/1 ]
+}
+"
+    );
+    let redefined = repo.commit_file(".akr/records/m.akr", &revised, "redefine");
+
+    let git = Repository::open(repo.root()).expect("opens");
+    let answer = last_change_of(&git, ".akr/records/m.akr", &key("fx.milestone.m1"), 2)
+        .expect("query")
+        .expect("the record exists");
+    assert_eq!(
+        answer.as_str(),
+        redefined,
+        "a changed check statement is a redefinition (D-029, D-038)"
+    );
+    assert_ne!(answer.as_str(), introduced);
+}
+
+#[test]
 fn a_note_does_not_move_last_change() {
     // D-026 `note` is commentary; D-029 keeps it out of the definitional hash, so annotating
     // a completed record later does not re-strand its evidence.

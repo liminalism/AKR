@@ -1392,12 +1392,28 @@ stands: it is about the directory's contents, how much is sitting there and how 
 `akr check` reports as a build fact and never fails on by itself. V-025 is about a record,
 and the record is wrong whether or not the file behind it still exists.
 
-**Consequences.** A ledger that already cites scratch artefacts fails `akr check` until
-those records are revised — including on the next unrelated write, because the write
+**It judges live revisions only.** *Amended 2026-08-25.* The rule first read every
+revision in the ledger, which made it the one rule the sanctioned write path could not
+satisfy: superseding a bad evidence record leaves the offending revision in the file, so
+the repair reproduced the diagnostic it was repairing and `knowledge.revise` was refused
+"because the superseded invalid revision still had to validate"
+(`evidence-intake-project.papercut.correcting-an-invalid-scratch-backed-evidence`). The
+same reading turned every write in a workspace with a long evidence history into a refusal
+carrying ~230 diagnostics about records nobody was touching, and left a citation whose
+path had already been pruned with no repair at all, because `akr scratch keep` cannot keep
+a directory that is gone (`jpegxl-rs.papercut.after-akr-scratch-keep-visibly-added-a-new`,
+`saveyourskin.papercut.starting-the-mealtime-furniture-session`). V-023 had settled this
+shape already: a sealed revision is a fact of history, not a live claim. So V-025 filters
+`is_live`, which restores the repair — revise the evidence to a durable path, and the old
+revision seals as `superseded` and stops being judged.
+
+**Consequences.** A ledger whose *live* evidence cites scratch artefacts fails `akr check`
+until those records are revised — including on the next unrelated write, because the write
 pipeline validates the whole resulting ledger. That is the intended forcing function, and
 it is the same standing every other V-rule has, but it is a real migration cost for the
 workspaces the original audit was about. `akr scratch keep <entry>` is the escape hatch for
-an artefact that should stay where it is.
+an artefact that should stay where it is, and revising the record to a durable path is the
+escape hatch for one whose artefact is already gone.
 
 **Honored by.** `crates/akr-core/src/validate/rules.rs`
 (`v025_evidence_artifact_durable`), `crates/akr-core/src/validate/mod.rs`,
@@ -1405,5 +1421,66 @@ an artefact that should stay where it is.
 `crates/akr-core/src/diagnostics/mod.rs` (`T023`), `spec/tables/vocabulary.json`,
 `spec/diagnostics/codes-lang.md`, `docs/05-validation-rules.md`, `docs/07-cli.md`,
 `fixtures/validate/err/v025-evidence-scratch-artifact.akr`,
+`fixtures/validate/ok/004-superseded-scratch-artifact.akr`,
 `crates/akr-core/tests/v_rules.rs`, `crates/akr-cli/tests/writes.rs`,
 `crates/akr-mcp/tests/writes.rs`, `AGENTS.md`.
+
+## D-038 — Revising a record is not redefining it
+
+*Amendment, 2026-08-25.*
+
+**Question.** D-029 narrowed "content change" to mean a change to what a record
+*requires*: `last_change` hashes a definitional projection with `state`, `note` and each
+check's `verified_by` removed, so that completing a milestone does not count as the
+milestone's newest content change and strand the evidence that closes it. That fixed the
+in-place case. It does not reach the sealed case, and the sealed case is the ordinary one:
+D-015 makes a sealed record uneditable, so revising it is the *only* way to change it.
+
+Revision `n+1` did not exist before the commit that wrote it. Whatever it says, its last
+definitional change is that commit by construction, and every piece of evidence it cites
+was observed before it — so retargeting a check at a measurement that had already landed
+un-satisfied the check, and the report that surfaced this says the rest: "there is no way
+to re-land unchanged evidence", because a fresh `observed_at` would have to name a commit
+that does not exist yet, and duplicating the evidence record duplicates a measurement
+nobody re-ran (`jpegxl-rs.papercut.a-work-revision-that-cites-already-committed`, hit
+while pointing a workspace-gates check at evidence from the same day; repaired by dropping
+the revision commit, which is not a repair).
+
+**Question behind the question.** D-029 asked which slots are bookkeeping. This asks the
+same question one level up: which parts of a *revision* are bookkeeping? Two things
+separate `n+1` from `n` whatever else changed — the revision number in the header, and the
+`supersedes` edge back to `n` that `akr revise` writes. Neither is something the record
+says about the world. They are how a revision is made.
+
+**Resolution.** `last_change` compares definitions across the revision boundary. The
+projection `last_change_of` hashes drops the revision number and a `supersedes` target
+naming an earlier revision of the same key, on top of everything D-029 already removes;
+the history walk, on reaching a commit where revision `n` does not yet exist, continues
+against the newest revision at or below `n` rather than stopping. So the answer to "when
+was this last redefined?" is the commit where the *definition* last changed, however many
+times the record has been revised since.
+
+A `supersedes` naming a *different* key is a real editorial statement and is not touched.
+Everything D-029 keeps, this keeps: a changed `intent`, a changed check `statement`,
+`method` or `command`, a changed `target` still moves the gate, and evidence from before
+it is still too old. Searching at-or-below rather than exactly `n-1` covers a file version
+that predates several revisions at once, which squashing and rebasing produce.
+
+**The D-015 seal is untouched**, for the third time and the same reason: a seal attests
+the literal bytes of one revision, so it keeps hashing `canonical_record_text`. Only the
+freshness gate reads the definitional projection, and only the definitional projection
+learns to ignore the revision.
+
+**Consequences.** A revision that changes nothing definitional now preserves its
+predecessor's `last_change`, so acceptance verdicts survive a lifecycle edit, a note, a
+retitled check citation and a plain retarget. This can *lower* an existing `last_change`
+for such a record — a ledger built before this change and after it can disagree about
+which commit that was, which is a projection difference and not a diagnostic. Byte
+reproducibility is unaffected: the computation remains a pure function of the repository
+and the ledger.
+
+**Honored by.** `crates/akr-core/src/resolve/source.rs`
+(`revision_independent_definitional_text`, `strip_self_supersession`),
+`crates/akr-core/src/git/mod.rs` (`hash_at`, `last_change_of`, `last_changes`,
+`definitional_hashes`, `definition_at_or_below`), `docs/10-freshness-and-git.md`,
+`crates/akr-core/tests/git_queries.rs`.

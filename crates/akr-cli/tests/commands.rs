@@ -569,4 +569,120 @@ fn explain_prints_the_members_of_a_closed_slot_and_the_state_entry_rules() {
     // A kind with no closed slot and no state-entry rule gains neither line.
     let work = example.run(&["explain", "work"]);
     assert!(!work.stdout.contains("V-021"), "{}", work.stdout);
+
+    // `topic`, both ways round. Listing only what a kind accepts left an author who had
+    // seen `topic` on the write surface to assume it was universal, and the refusal
+    // arrived as an AKR-C004 from a rule `explain` had every chance to mention.
+    assert!(
+        work.stdout.contains("topic      not accepted"),
+        "a planning kind should say it rejects `topic`: {}",
+        work.stdout
+    );
+    assert!(
+        work.stdout.contains("AKR-C004"),
+        "and name the code it will be refused with: {}",
+        work.stdout
+    );
+    let policy = example.run(&["explain", "policy"]);
+    assert!(
+        !policy.stdout.contains("topic      not accepted"),
+        "a normative kind accepts it: {}",
+        policy.stdout
+    );
+}
+
+#[test]
+fn an_unknown_state_names_the_states_the_kind_has() {
+    // A word that is no lifecycle state at all used to be refused without naming one. The
+    // word an author reaches for is usually a real lifecycle word from somewhere else —
+    // `accepted`, for a decision the user settled — and the bare refusal sent them to
+    // `explain` for a list the diagnostic already had.
+    let example = Example::of(&SYS_TANDEM, "cli-unknown-state");
+    example.write_file(
+        ".akr/records/settled.akr",
+        "akr 0.1\nproject sys\n\nrecord sys.decision.settled/1 : decision {\n    \
+         title \"Settled\"\n    state accepted\n    scope all\n    decision \"\"\"\n        \
+         The user settled it.\n        \"\"\"\n}\n",
+    );
+    let run = example.run(&["check"]);
+    assert!(run.output().contains("AKR-T012"), "{}", run.output());
+    assert!(
+        run.output().contains("proposed")
+            && run.output().contains("active")
+            && run.output().contains("withdrawn"),
+        "the refusal should name the decision lifecycle: {}",
+        run.output()
+    );
+}
+
+#[test]
+fn get_shows_the_acceptance_checks_that_complete_will_demand() {
+    // `akr complete` demands a mapping for every check, and the block used to appear only
+    // under `--detail canonical` — so the first `complete` on a multi-check record was
+    // always refused for mappings its author had never been shown.
+    let example = Example::materialise("cli-get-acceptance");
+    let run = example.run(&["get", "@sys.milestone.m3-playable-day"]);
+    assert_eq!(run.code, 0, "{}", run.output());
+    assert!(
+        run.stdout.contains("acceptance"),
+        "the body should carry the block: {}",
+        run.stdout
+    );
+
+    let json = example.run(&["get", "@sys.milestone.m3-playable-day", "--format", "json"]);
+    let checks = json
+        .stdout
+        .find("\"acceptance\"")
+        .map(|at| &json.stdout[at..]);
+    let checks = checks.expect("the JSON half carries it too");
+    for field in ["\"id\"", "\"statement\"", "\"method\"", "\"verdict\""] {
+        assert!(
+            checks.contains(field),
+            "a check needs {field} to be actionable: {checks}"
+        );
+    }
+}
+
+#[test]
+fn a_context_budget_is_a_promise_about_the_delivered_bundle() {
+    // The budget is stated in tokens of result and used to be measured against the records
+    // the assembler selected, which is a much smaller number: a caller who asked for a
+    // small bundle received one several times the size, transport-truncated. Assembly now
+    // measures what it rendered — both halves, since MCP sends both — and reports the two
+    // figures so the promise is inspectable rather than assumed.
+    let example = Example::materialise("cli-context-budget");
+    let run = example.run(&[
+        "context",
+        "--goal",
+        "sys.milestone.m3-playable-day",
+        "--budget",
+        "900",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(run.code, 0, "{}", run.output());
+    assert!(
+        run.stdout.contains("\"requested_tokens\": 900"),
+        "{}",
+        run.stdout
+    );
+    assert!(
+        run.stdout.contains("\"delivered_tokens\""),
+        "{}",
+        run.stdout
+    );
+
+    // Without a budget there is nothing to report, and no field appears.
+    let unbudgeted = example.run(&[
+        "context",
+        "--goal",
+        "sys.milestone.m3-playable-day",
+        "--format",
+        "json",
+    ]);
+    assert!(
+        !unbudgeted.stdout.contains("requested_tokens"),
+        "{}",
+        unbudgeted.stdout
+    );
 }

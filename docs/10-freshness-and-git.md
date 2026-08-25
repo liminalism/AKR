@@ -49,8 +49,11 @@ computable and it is reported rather than guessed at.
 satisfied only by evidence whose `observed_at` **descends from** the last commit that
 changed the verified record's **definition** (D-029: the canonical record minus the
 `state` slot, each check's `verified_by`, and the `note` slot, so completing the record is
-not itself that change) — unless the verified record carries a `legacy` source, in which
-case D-028 waives the comparison entirely. The evidence's `observed_at` commit still has
+not itself that change; D-038 also minus the revision number and a `supersedes` naming an
+earlier revision of the same key, so *revising* the record is not itself that change
+either, and the history walk continues past the commit that introduced a revision into the
+history of the revision it was revised from) — unless the verified record carries a
+`legacy` source, in which case D-028 waives the comparison entirely. The evidence's `observed_at` commit still has
 to exist in the repository; only the descendancy comparison is skipped.
 
 ### `watches`

@@ -370,6 +370,12 @@ Retrieves one record. `<ref>` is any of the four forms of D-009. With no revisio
 current head. `--history` lists every revision with its state and supersession edges;
 `--relations` adds inbound edges, which are not visible in the source text.
 
+A planning record's `acceptance` block is part of the body, with each check's statement,
+method, command, citations and current verdict. `akr complete` demands a mapping for every
+check, so a reader who cannot see the checks cannot supply one: the block used to appear
+only under `--detail canonical`, and the first `complete` on a ten-check work item was
+always refused for ten mappings its author had never been shown.
+
 ```
 $ akr get @sys.policy.tandem-work
 sys.policy.tandem-work/1 : policy    state active    head

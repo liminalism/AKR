@@ -326,7 +326,17 @@ The bundle reports the exclusions in aggregate, by reason, so that a reader can 
 
 ## 6. Budgeting
 
-`--budget` is an approximate token ceiling. When the assembled bundle exceeds it, content
+`--budget` is an approximate token ceiling on the **delivered** bundle: the rendered text
+and the JSON half together, which is what a caller pays for, rather than the records the
+selection chose, which is a much smaller number and used to be the only thing measured. The
+command renders, measures both halves, and re-assembles to proportionally less when the
+result overshoots — three passes, because the ratio is stable enough that the second lands.
+The result reports `budget.requested_tokens` and `budget.delivered_tokens`, and says so
+when the two cannot be reconciled, which happens when the mandatory sections alone cost
+more than the request (§6, V-123): that is not a failure, it is the ceiling this document
+puts under every bundle, and the fix is a narrower `--paths`.
+
+When the assembled bundle exceeds it, content
 is reduced in a fixed order, and the order encodes what the design considers expendable:
 
 ```

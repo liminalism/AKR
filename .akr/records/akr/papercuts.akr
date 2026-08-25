@@ -539,6 +539,87 @@ record akr.papercut.collated-16-papercuts-from-kitchen-concept-lege/1 : papercut
     created_at 2026-08-14
 }
 
+record akr.papercut.collated-17-papercuts-from-evidence-intake/1 : papercut {
+    title "Collated 17 papercuts from Evidence-intake-project, Lege-ecosystem, LegeOS, SaveYourSkin and 3 more"
+    state verified
+    statement """
+        Collated 17 papercuts from /mnt/Samsung980_1TB/Rust-projects on 2026-08-25 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
+
+        ## Evidence-intake-project @evidence-intake-project.papercut.correcting-an-invalid-scratch-backed-evidence [about akr]
+        Correcting an invalid scratch-backed evidence artifact with knowledge.revise was rejected because the superseded invalid revision still had to validate. The required bridge was to `akr scratch keep` first, then revise to the durable artifact.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.while-recording-a-review-assessment-knowledge [about akr]
+        While recording a review assessment, knowledge.propose rejected the write because the tool schema did not surface the assessment kind's required `statement` slot. The validation diagnostic explained the missing slot, but kind-specific required slots in the tool description would prevent the failed round trip.
+
+        ## LegeOS @legeos.papercut.knowledge-propose-exposes-a-generic-slots [about akr]
+        knowledge.propose exposes a generic slots object but not each kind's valid slot names; authoring this work item required failed retries to learn that work accepts `intent`, not `work` (and that topic is normative-only). Including kind-slot guidance in the tool schema would avoid this.
+
+        ## SaveYourSkin @saveyourskin.papercut.a-decision-proposal-with-a-natural-language [about akr]
+        A decision proposal with a natural-language `topic` produced parser errors that treated later topic words as nonexistent slots. Topic values need token-safe slug syntax (or omission), but the tool schema only says `topic?: string`.
+
+        ## SaveYourSkin @saveyourskin.papercut.i-tried-to-record-a-user-settled-decision-with [about akr]
+        I tried to record a user-settled decision with state `accepted`, but decision lifecycle states are `proposed|active|rejected|superseded|withdrawn`; the schema error did not suggest the valid replacement. `knowledge.explain decision` supplied it, so use `active` plus a supported_by/implements edge.
+
+        ## SaveYourSkin @saveyourskin.papercut.knowledge-context-for-the-focused-mealtime-work [about akr]
+        knowledge.context for the focused mealtime work returned roughly 29-30k tokens and was transport-truncated even with budget_tokens 4500; the bundle included hundreds of unrelated work/evidence records, so the requested budget did not yield a fully readable bundle.
+
+        ## SaveYourSkin @saveyourskin.papercut.knowledge-get-detail-body-omitted-a-work-record [about akr]
+        knowledge.get detail=body omitted a work record's inherited acceptance checks, so the first knowledge.complete call lacked its 10 required mappings; completion listed the IDs, while only CLI canonical output exposed their statements/methods.
+
+        ## SaveYourSkin @saveyourskin.papercut.knowledge-propose-advertises-scope-as-array [about akr]
+        knowledge.propose advertises scope as Array<unknown>, but path objects were rejected as 'unknown scope form' without showing the accepted shape; the canonical context output suggests plain `path ...` strings.
+
+        ## SaveYourSkin @saveyourskin.papercut.knowledge-propose-exposes-topic-for-every-kind [about akr]
+        knowledge.propose exposes `topic` for every kind in its schema, but an observation proposal then fails AKR-C004 because topic is normative-only; surfacing that restriction in the field description would avoid a failed write/retry.
+
+        ## SaveYourSkin @saveyourskin.papercut.starting-the-mealtime-furniture-session [about akr]
+        Starting the mealtime furniture session, knowledge.start excluded the working ledger because two older evidence records cited unkept scratch artifacts; one cited directory had already been pruned. The validator's keep guidance was clear, but a missing cited path makes knowledge.revise circular until the path is reconstructed and retained.
+
+        ## bpg-rs @bpg.papercut.tried-to-assemble-context-from-a-licensing [about akr]
+        Tried to assemble context from a licensing observation key, but knowledge.context only accepts a milestone, work, or track. The ledger error clarified the accepted goal kinds.
+
+        ## bpg-rs @bpg.papercut.while-recording-the-licensing-observation [about akr]
+        While recording the licensing observation, knowledge.propose rejected local line citations because the source file was not registered as an AKR source. The error was clear; I will record the observation with its manual method and project scope instead of registering a source solely for this release audit.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.a-work-revision-that-cites-already-committed [about akr]
+        A work revision that cites already-committed evidence in verified_by lands "not satisfied - predates the last change" unless the evidence rows are committed in the very same commit as the revision (the current-together grace); revising a record in a later .akr-only commit therefore un-satisfies checks whose measurements are still perfectly valid, and there is no way to re-land unchanged evidence. Retargeting a check citation onto fresh evidence needs either an observed_at at-or-after the revision commit (chicken-and-egg) or duplicated evidence records. Hit while pointing pqc-usable-efforts-cost's workspace-gates check at the 2026-08-25 gates evidence; repaired by dropping the revision commit.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.after-akr-scratch-keep-visibly-added-a-new [about akr]
+        After `akr scratch keep` visibly added a new entry, knowledge.evidence_add still rejected that kept artifact from its cached workspace. The CLI fallback revalidated ~230 unrelated historical scratch citations lacking current keep markers and refused an otherwise valid atomic write; omitting the typed artifact was the only scoped path forward.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.amending-an-akr-generated-commit-message-to [about akr]
+        Amending an akr-generated commit message (to replace the generic "chore:" subject with a descriptive one while keeping the AKR trailers byte-identical) is rejected by the commit-msg hook with AKR-C031 because the change transaction closes at akr git commit; the only way through is git commit --amend --no-verify. Either akr git commit could accept a subject/body override, or the hook could allow amends whose trailers match the last commit.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.knowledge-propose-s-generic-slots-schema-does [about akr]
+        knowledge.propose's generic `slots` schema does not expose that an observation's `method` must be one of manual/command/instrumented/observation. V-022 said to add `method`; supplying explanatory prose then produced dozens of parser diagnostics before the enum expectation appeared.
+
+        ## orderflower @orderflower.papercut.while-proposing-a-work-record-the-generic [about akr]
+        While proposing a work record, the generic schema exposed `topic` and `knowledge.explain work` did not say work rejects it; the proposal failed with AKR-C004. The kind explanation could list forbidden shared fields or the tool schema could be kind-discriminated.
+        """
+    observed_at git:4b3212b16511e2cd2546c26c35271ada3d1cea6a
+    about "akr"
+    collated [
+        "evidence-intake-project.papercut.correcting-an-invalid-scratch-backed-evidence",
+        "lege-ecosystem.papercut.while-recording-a-review-assessment-knowledge",
+        "legeos.papercut.knowledge-propose-exposes-a-generic-slots",
+        "saveyourskin.papercut.a-decision-proposal-with-a-natural-language",
+        "saveyourskin.papercut.i-tried-to-record-a-user-settled-decision-with",
+        "saveyourskin.papercut.knowledge-context-for-the-focused-mealtime-work",
+        "saveyourskin.papercut.knowledge-get-detail-body-omitted-a-work-record",
+        "saveyourskin.papercut.knowledge-propose-advertises-scope-as-array",
+        "saveyourskin.papercut.knowledge-propose-exposes-topic-for-every-kind",
+        "saveyourskin.papercut.starting-the-mealtime-furniture-session",
+        "bpg.papercut.tried-to-assemble-context-from-a-licensing",
+        "bpg.papercut.while-recording-the-licensing-observation",
+        "jpegxl-rs.papercut.a-work-revision-that-cites-already-committed",
+        "jpegxl-rs.papercut.after-akr-scratch-keep-visibly-added-a-new",
+        "jpegxl-rs.papercut.amending-an-akr-generated-commit-message-to",
+        "jpegxl-rs.papercut.knowledge-propose-s-generic-slots-schema-does",
+        "orderflower.papercut.while-proposing-a-work-record-the-generic"
+    ]
+    created_at 2026-08-25
+}
+
 record akr.papercut.collated-18-papercuts-from-evidence-intake/1 : papercut {
     title "Collated 18 papercuts from Evidence-intake-project, Lege-ecosystem, SaveYourSkin, jpegXL-rs and 1 more"
     state verified

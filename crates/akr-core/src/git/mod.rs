@@ -1290,7 +1290,10 @@ pub fn last_change_of(
 
     let mut answer = newest.clone();
     for commit in commits.iter().skip(1) {
-        match hash_at(repository, commit, path, key, revision)? {
+        // At or below the revision, so that the walk crosses the commit that introduced
+        // it into the history of the revision it was revised from, whenever the two have
+        // the same definition (D-038).
+        match definition_at_or_below_in(repository, commit, path, key, revision)? {
             Some(hash) if hash == current => answer = commit.clone(),
             _ => break,
         }
@@ -1298,10 +1301,28 @@ pub fn last_change_of(
     Ok(Some(answer))
 }
 
-/// The *definitional* content hash of one record as it stood at one commit (D-029): the
-/// canonical text with lifecycle and completion bookkeeping (`state`, `note`, a check's
-/// `verified_by`) removed, so `last_change_of` reports the last redefinition, not the last
-/// lifecycle transition.
+/// The definitional hash of the newest revision of `key` at or below `revision`, at one
+/// commit.
+fn definition_at_or_below_in(
+    repository: &Repository,
+    commit: &Commit,
+    path: &str,
+    key: &crate::model::LogicalKey,
+    revision: u32,
+) -> Result<Option<crate::model::ContentHash>, GitError> {
+    for candidate in (1..=revision).rev() {
+        if let Some(hash) = hash_at(repository, commit, path, key, candidate)? {
+            return Ok(Some(hash));
+        }
+    }
+    Ok(None)
+}
+
+/// The *definitional* content hash of one record as it stood at one commit (D-029, D-038):
+/// the canonical text with lifecycle and completion bookkeeping (`state`, `note`, a check's
+/// `verified_by`) removed, along with the revision number and the `supersedes` edge to the
+/// revision it replaced, so `last_change_of` reports the last redefinition rather than the
+/// last lifecycle transition or the last time somebody revised the record.
 fn hash_at(
     repository: &Repository,
     commit: &Commit,
@@ -1325,9 +1346,14 @@ fn hash_at(
         }
         // D-029: `last_change` tracks the last *definitional* change, so a completion or
         // abandonment (state, a check's `verified_by`, or a `note`) does not count as the
-        // record's newest content change and strand the evidence that closes it. The D-015
-        // seal still hashes the whole record via `canonical_record_text`.
-        if let Some(definitional) = crate::resolve::definitional_record_text(&file, at) {
+        // record's newest content change and strand the evidence that closes it. D-038
+        // extends that across the revision boundary by dropping the revision number and
+        // the `supersedes` edge back to the revision this one replaced, which are how a
+        // revision is made rather than what it says. The D-015 seal still hashes the whole
+        // record via `canonical_record_text`.
+        if let Some(definitional) =
+            crate::resolve::revision_independent_definitional_text(&file, at)
+        {
             return Ok(Some(crate::hash::content_hash(&definitional)));
         }
     }
@@ -1382,7 +1408,9 @@ pub fn last_changes(
                 .and_then(Option::as_deref)
                 .map_or_else(BTreeMap::new, |text| definitional_hashes(text, &unresolved));
             unresolved.retain(|id| {
-                if older.get(id) == current.get(id) {
+                // D-038: at or below, so the walk crosses the commit that introduced this
+                // revision into the identical definition it was revised from.
+                if definition_at_or_below(&older, id).as_ref() == current.get(id) {
                     answers.insert(id.clone(), commit.clone());
                     true
                 } else {
@@ -1395,11 +1423,17 @@ pub fn last_changes(
     Ok(out)
 }
 
-/// Definitional hashes for the requested revisions in one historical file version.
+/// Definitional hashes for every revision of the wanted keys in one historical file
+/// version, with the revision's own identity removed (D-038).
+///
+/// Every revision rather than only the wanted ones, because the walk continues past the
+/// commit that introduced revision `n+1` into revision `n`'s history, and it can only do
+/// that if `n`'s hash is here to compare against.
 fn definitional_hashes(
     text: &str,
     wanted: &BTreeSet<crate::model::RevisionId>,
 ) -> BTreeMap<crate::model::RevisionId, crate::model::ContentHash> {
+    let keys: BTreeSet<&crate::model::LogicalKey> = wanted.iter().map(|id| &id.key).collect();
     let parsed = crate::syntax::parse(text, crate::diagnostics::FileId(0));
     let Some(file) = parsed.file else {
         return BTreeMap::new();
@@ -1412,13 +1446,32 @@ fn definitional_hashes(
         let Ok(key) = crate::model::LogicalKey::parse(&record.key) else {
             continue;
         };
-        let id = crate::model::RevisionId::new(key, record.revision);
-        if !wanted.contains(&id) {
+        if !keys.contains(&key) {
             continue;
         }
-        if let Some(definitional) = crate::resolve::definitional_record_text(&file, at) {
+        let id = crate::model::RevisionId::new(key, record.revision);
+        if let Some(definitional) =
+            crate::resolve::revision_independent_definitional_text(&file, at)
+        {
             out.insert(id, crate::hash::content_hash(&definitional));
         }
     }
     out
+}
+
+/// The newest revision of `id`'s key at or below `id`, and its hash, in one file version.
+///
+/// The walk asks "was this record's definition already here?", and once it steps past the
+/// commit that created revision `n+1` the answer lives under revision `n`. Searching
+/// downwards rather than only at `n-1` covers a file version that predates several
+/// revisions at once, which a squashed or rebased history produces.
+fn definition_at_or_below(
+    hashes: &BTreeMap<crate::model::RevisionId, crate::model::ContentHash>,
+    id: &crate::model::RevisionId,
+) -> Option<crate::model::ContentHash> {
+    (1..=id.revision).rev().find_map(|revision| {
+        hashes
+            .get(&crate::model::RevisionId::new(id.key.clone(), revision))
+            .cloned()
+    })
 }

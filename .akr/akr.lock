@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.3"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:f2e1cfb1b0cd873eccaf7d202c43cfd5257ba5afb4dfdf1365406522676964bb"
+    source_graph "sha256:c5cafff5de45d9b1e6f80dab50ecfc5322023046df03ef451c7addefd3ffbe07"
 }
 
 source ".akr/project.akr" {
@@ -14,18 +14,18 @@ source ".akr/project.akr" {
 }
 
 source ".akr/records/akr/assessments.akr" {
-    hash "sha256:9082f247fb64c63395fa2a709edab13c9108dd7e39d364729c6fbd1b618b082e"
-    records 2
+    hash "sha256:7474c1f90950afdd9f048c429a0d66d8cc0bbdc1d88a36e1187d55cf069df5ce"
+    records 3
 }
 
 source ".akr/records/akr/decisions.akr" {
-    hash "sha256:fa6672c670d126be97d6e5d438e0deba498c548e0b7b43331307c9b2a6de4f59"
-    records 24
+    hash "sha256:a338ccb446e129535ffbba76da0f5596460735615ff8db69e014ac54b6d39c00"
+    records 25
 }
 
 source ".akr/records/akr/evidence.akr" {
-    hash "sha256:88f1e9931a4aff31cbe97998e46a2ec125dcd0d2b04eaa0bc77d5f62986f2006"
-    records 43
+    hash "sha256:c383591f085b148320328d76b1dda35589c399275f4877cfbff516711d693076"
+    records 44
 }
 
 source ".akr/records/akr/milestones.akr" {
@@ -34,13 +34,13 @@ source ".akr/records/akr/milestones.akr" {
 }
 
 source ".akr/records/akr/papercuts.akr" {
-    hash "sha256:697911e9e1d709d4c42f53824b53c456d7e4de81ae4f5271a329bd4f730c03ad"
-    records 71
+    hash "sha256:0577d0215e5c85ad402b9fc4582d5f7bc964202ea48c3e47325f326eb60d7962"
+    records 72
 }
 
 source ".akr/records/akr/work.akr" {
-    hash "sha256:46a0879f4dd065b4708551659840edfc23fdefff19294305daf6f1308ab37318"
-    records 30
+    hash "sha256:e20c40be2e24e9b2b798396a86e73f4117f87767b260c7969f3276ec837b1848"
+    records 31
 }
 
 resolution @akr.decision.completed-planning-work-satisfies-dependency/1 {
@@ -275,6 +275,11 @@ seal @akr.assessment.papercut-reconciliation-2026-08-11/2 {
     hash "sha256:c960a7df7f278460680a4ac2225d693cd8fc6b126d0bfec4f31934e7859c928b"
 }
 
+seal @akr.assessment.papercut-reconciliation-2026-08-25/1 {
+    state verified
+    hash "sha256:591d00a19b64cf3aec7eb9da034fdef5c4971860cd18b4a4955b5130b0be325e"
+}
+
 seal @akr.decision.change-transaction-not-commit-kind/1 {
     state active
     hash "sha256:879bd3c794aac65ee656bf369d14a6f5042849087e3e820f1d5ca221b6c69eba"
@@ -368,6 +373,11 @@ seal @akr.decision.query-words-dirty-tree-ancestry/2 {
 seal @akr.decision.revision-and-replacement-contract/1 {
     state active
     hash "sha256:5fe705e27fa3ffa4888eb1fce2b677b34b6226bdd022285a3ca8e558a7ecfcc4"
+}
+
+seal @akr.decision.revision-is-not-redefinition/1 {
+    state active
+    hash "sha256:4269867ac323d949ed664a50150ed49d3438d40615e7b848b0ab96929fbb97c1"
 }
 
 seal @akr.decision.search-refreshes-disposable-index/1 {
@@ -535,6 +545,11 @@ seal @akr.evidence.papercut-subject-suite/1 {
     hash "sha256:5d6497987a79c2f292d6c6e3ca7eaabe33060f3c7611f055452f555f10c59cca"
 }
 
+seal @akr.evidence.papercuts-2026-08-25/1 {
+    state verified
+    hash "sha256:b5357188430d98ca839d6948b0478b7a67ff2a33d5bcde21a8cd4a6e210cee58"
+}
+
 seal @akr.evidence.post-commit-validation-suite/1 {
     state verified
     hash "sha256:84a2275544ad4ebe6e86e106242fbb73f6a664137b8fb2562f695de21a29d648"
@@ -678,6 +693,11 @@ seal @akr.papercut.collated-10-papercuts-from-evidence-intake-2/2 {
 seal @akr.papercut.collated-16-papercuts-from-kitchen-concept-lege/1 {
     state verified
     hash "sha256:909f322cc384e608da42b81effae631d9723fe31ec74e7b93ab30a422d871de6"
+}
+
+seal @akr.papercut.collated-17-papercuts-from-evidence-intake/1 {
+    state verified
+    hash "sha256:2c7c6bcd0d6195c510b74bb6598916294dd31e081fb25ce9e1e22cc3a6b97ce6"
 }
 
 seal @akr.papercut.collated-18-papercuts-from-evidence-intake/1 {
@@ -1023,6 +1043,11 @@ seal @akr.work.papercut-reconciliation/1 {
 seal @akr.work.papercut-reconciliation/2 {
     state completed
     hash "sha256:22bbb71faa8e57c52771315c30c9d5c183d08485f823143e17ca7cc3661c4854"
+}
+
+seal @akr.work.papercuts-2026-08-25/1 {
+    state completed
+    hash "sha256:cb0dc923ce447acdf14046ff4d905790844fdd0ab66df92cbd9b9c05ab67e6c3"
 }
 
 seal @akr.work.post-commit-validation/1 {

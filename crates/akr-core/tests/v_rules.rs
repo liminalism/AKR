@@ -1164,6 +1164,47 @@ fn v025_passes_for_an_explicitly_kept_scratch_entry() {
     assert_raises(&validate::v025_evidence_artifact_durable(&other), c::T023);
 }
 
+#[test]
+fn v025_ignores_a_superseded_revision_so_the_repair_is_reachable() {
+    // Superseding an evidence record leaves the offending revision in the file. A rule
+    // that reads every revision therefore survives its own repair, which made this the
+    // one rule the sanctioned write path could not satisfy: `revise` was refused because
+    // the superseded revision still had to validate (D-037, amended).
+    let repaired = ledger(vec![
+        rec("fx.evidence.benchmark", 1, Kind::Evidence)
+            .state(State::Superseded)
+            .content(
+                ContentSlot::Artifact,
+                ContentValue::Text(".agent/scratch/run/out.txt".to_owned()),
+            )
+            .build(),
+        rec("fx.evidence.benchmark", 2, Kind::Evidence)
+            .state(State::Verified)
+            .content(
+                ContentSlot::Artifact,
+                ContentValue::Text("docs/benchmarks/out.txt".to_owned()),
+            )
+            .build(),
+    ]);
+    assert_clean(&validate::v025_evidence_artifact_durable(&repaired));
+
+    // A withdrawn revision is equally historical, and the live one is still judged.
+    let withdrawn = ledger(vec![
+        rec("fx.evidence.benchmark", 1, Kind::Evidence)
+            .state(State::Withdrawn)
+            .content(
+                ContentSlot::Artifact,
+                ContentValue::Text(".agent/scratch/run/out.txt".to_owned()),
+            )
+            .build(),
+    ]);
+    assert_clean(&validate::v025_evidence_artifact_durable(&withdrawn));
+    assert_raises(
+        &validate::v025_evidence_artifact_durable(&artifact(".agent/scratch/run/out.txt")),
+        c::T023,
+    );
+}
+
 // ---------------------------------------------------------------------------------
 // the catalogue itself
 // ---------------------------------------------------------------------------------

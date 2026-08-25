@@ -1,0 +1,23 @@
+akr 0.1
+project fixtures
+
+record fx.evidence.benchmark/1 : evidence {
+    title "The revision whose artefact was disposable"
+    state superseded
+    result pass
+    method command
+    observed_at git:3f0a1c9d5b7e2648a0d4f1b8c36e9752ad014b6f
+    command "cargo bench"
+    artifact ".agent/scratch/ocr-benchmark/out.txt"
+}
+
+record fx.evidence.benchmark/2 : evidence {
+    title "The repair, citing a durable path"
+    state verified
+    result pass
+    method command
+    observed_at git:3f0a1c9d5b7e2648a0d4f1b8c36e9752ad014b6f
+    command "cargo bench"
+    artifact "docs/findings/ocr-benchmark.txt"
+    supersedes [ @fx.evidence.benchmark/1 ]
+}

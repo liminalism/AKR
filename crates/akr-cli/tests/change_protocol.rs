@@ -493,3 +493,28 @@ fn hooks_are_thin_wrappers_around_the_binary() {
     // keeps in step with the first.
     assert!(hook.lines().count() <= 3, "{hook}");
 }
+
+#[test]
+fn a_message_only_amend_passes_the_pre_commit_hook() {
+    // The transaction closes at `akr git commit`, so every later commit in the worktree
+    // meets a hook with no transaction to check — including `git commit --amend` that
+    // only rewords a subject, which leaves the tree untouched and the AKR trailers
+    // byte-identical. Refusing that made `--no-verify` the only way to fix a commit
+    // subject, which is a bad habit to teach for a change the protocol has no opinion
+    // about.
+    let example = Example::materialise("change-hook-reword");
+    let reword = example.run(&["git-hook", "pre-commit"]);
+    assert_eq!(reword.code, 0, "{}", reword.output());
+    assert!(reword.stdout.contains("reword"), "{}", reword.stdout);
+
+    // An ordinary commit with no transaction is still refused: the exemption is the empty
+    // index against HEAD, not the absent transaction.
+    example.write_file("src/new.rs", "fn main() {}\n");
+    example.git(&["add", "src/new.rs"]);
+    let staged = example.run(&["git-hook", "pre-commit"]);
+    assert!(
+        staged.output().contains("AKR-C031"),
+        "a staged change with no transaction is still refused: {}",
+        staged.output()
+    );
+}
