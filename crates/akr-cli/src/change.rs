@@ -48,7 +48,10 @@ fn staged_delta(session: &Session) -> Result<(SemanticDelta, Vec<IndexEntry>), E
     };
     let base = (!head_files.is_empty()).then(|| ledger_of(&head_files));
 
-    Ok((change::delta(base.as_ref(), &staged, &entries), entries))
+    let changed = repository
+        .staged_changes()
+        .map_err(|e| EnvError::new("AKR-G001", e.to_string()))?;
+    Ok((change::delta(base.as_ref(), &staged, &changed), entries))
 }
 
 /// Parses a set of `(path, text)` pairs into a ledger, ignoring diagnostics.

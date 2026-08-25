@@ -472,9 +472,10 @@ pub struct SemanticDelta {
     pub transitions: Vec<Transition>,
     /// Evidence records this change introduces.
     pub evidence: Vec<RevisionId>,
-    /// Implementation files staged, excluding AKR metadata and generated views.
+    /// Implementation files this change touches, excluding AKR metadata and generated
+    /// views. What the index *changes*, never what it merely holds.
     pub code: Vec<String>,
-    /// AKR files staged.
+    /// AKR files this change touches.
     pub ledger_files: Vec<String>,
 }
 
@@ -493,8 +494,13 @@ impl SemanticDelta {
 }
 
 /// Compares two ledgers and reports what changed.
+///
+/// `changed` is the set of paths this index changes against `HEAD`, which is what `code`
+/// and `ledger_files` mean: this change's contents, not the repository's inventory. The
+/// whole staged index goes to `staged_akr_files` and `implementation_digest` instead,
+/// which do want every tracked file.
 #[must_use]
-pub fn delta(base: Option<&Ledger>, staged: &Ledger, entries: &[IndexEntry]) -> SemanticDelta {
+pub fn delta(base: Option<&Ledger>, staged: &Ledger, changed: &[String]) -> SemanticDelta {
     let mut out = SemanticDelta::default();
 
     let base_revisions: BTreeMap<String, &crate::model::Record> = base
@@ -543,13 +549,13 @@ pub fn delta(base: Option<&Ledger>, staged: &Ledger, entries: &[IndexEntry]) -> 
         }
     }
 
-    for entry in entries {
-        if is_akr_metadata(&entry.path) {
-            if entry.path.starts_with(".akr/") {
-                out.ledger_files.push(entry.path.clone());
+    for path in changed {
+        if is_akr_metadata(path) {
+            if path.starts_with(".akr/") {
+                out.ledger_files.push(path.clone());
             }
         } else {
-            out.code.push(entry.path.clone());
+            out.code.push(path.clone());
         }
     }
 

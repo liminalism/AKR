@@ -895,6 +895,39 @@ impl Repository {
         Ok(self.status(&["diff", "--cached", "--quiet"])? != 0)
     }
 
+    /// The paths this index changes against `HEAD`.
+    ///
+    /// A different question from [`Self::staged_entries`], which lists the whole index.
+    /// "What is tracked" and "what is this commit changing" differ by the entire
+    /// repository, and reading the first as the second made a ledger-only commit report
+    /// 388 implementation files and then refuse itself for touching them
+    /// (`akr.papercut.akr-change-prepare-staged-reports-code-n-files`). An unborn `HEAD`
+    /// has no tree to diff against, so there every tracked path is a change.
+    ///
+    /// `-z` because git quotes a path with a space or a non-ASCII byte otherwise, and a
+    /// quoted path matches nothing.
+    ///
+    /// # Errors
+    /// [`GitError::CommandFailed`] when the diff fails.
+    pub fn staged_changes(&self) -> Result<Vec<String>, GitError> {
+        if self.head().is_err() {
+            return Ok(self
+                .staged_entries()?
+                .into_iter()
+                .map(|entry| entry.path)
+                .collect());
+        }
+        let text = self.run(&["diff", "--cached", "--name-only", "-z"])?;
+        let mut out: Vec<String> = text
+            .split('\0')
+            .filter(|path| !path.is_empty())
+            .map(|path| path.replace('\\', "/"))
+            .collect();
+        out.sort();
+        out.dedup();
+        Ok(out)
+    }
+
     /// Commits the index with `message`, returning the new commit.
     ///
     /// Git is asked to make the commit rather than reimplemented, which is the whole

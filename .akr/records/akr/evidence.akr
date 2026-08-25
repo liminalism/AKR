@@ -1,6 +1,41 @@
 akr 0.1
 project akr
 
+record akr.evidence.change-delta-green/1 : evidence {
+    title "The whole workspace is green, clippy is silent, formatting is clean and the design set is coherent over the delta fix."
+    state verified
+    result pass
+    method command
+    observed_at git:bf981795d30f434ed4ac3b8864af6b154cabf3e0
+    command "cargo test && cargo clippy --all-targets && cargo fmt --all -- --check && python3 tools/check-design.py"
+    summary """
+        The whole workspace is green, clippy is silent, formatting is clean and the design set is coherent over the delta fix.
+        """
+}
+
+record akr.evidence.change-delta-in-this-repo/1 : evidence {
+    title "In this repository, staging the papercut record and its regenerated views: the previous binary reported \"code 388 files\" and refused the commit with AKR-C032 for touching implementation files; the fixed binary reports \"code 0 files\" and prepares. 388 is exactly this repository's tracked non-AKR file count; the change touched none of them."
+    state verified
+    result pass
+    method manual
+    observed_at git:bf981795d30f434ed4ac3b8864af6b154cabf3e0
+    summary """
+        In this repository, staging the papercut record and its regenerated views: the previous binary reported "code 388 files" and refused the commit with AKR-C032 for touching implementation files; the fixed binary reports "code 0 files" and prepares. 388 is exactly this repository's tracked non-AKR file count; the change touched none of them.
+        """
+}
+
+record akr.evidence.change-delta-ledger-only/1 : evidence {
+    title "16 tests pass, including a new one holding that a change staging only .akr and generated views reports zero code files and prepares without being asked for a work record, and the existing one holding that a staged tree which moves afterwards still invalidates the preparation — so the implementation digest still spans the whole tracked tree while the delta reports the diff."
+    state verified
+    result pass
+    method command
+    observed_at git:bf981795d30f434ed4ac3b8864af6b154cabf3e0
+    command "cargo test -p akr-cli --test change_protocol"
+    summary """
+        16 tests pass, including a new one holding that a change staging only .akr and generated views reports zero code files and prepares without being asked for a work record, and the existing one holding that a staged tree which moves afterwards still invalidates the preparation — so the implementation digest still spans the whole tracked tree while the delta reports the diff.
+        """
+}
+
 record akr.evidence.client-matrix-accepts-every-response/1 : evidence {
     title "Three rmcp major versions (1.8.0, 2.2.0, 3.1.4) drive akr-mcp from outside the workspace and all accept every response: protocol negotiation echoes each requested version, server/discover offers all five published versions on 3.x, 23 tools list, and all 24 tool calls deserialise. Reintroducing each historical defect fails it on exactly the generation that rejected it in the field -- resultType 'tool' fails 3.x with 'Unexpected response type' while 1.x and 2.x pass, reproducing Codex 0.147 on 13 August versus 0.149 on the 21st. Reported alongside: 23 of 23 declared outputSchemas constrain nothing, so validating payloads against them cannot currently fail."
     state verified

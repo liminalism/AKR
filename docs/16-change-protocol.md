@@ -161,6 +161,13 @@ a file inside that tree changes the tree.
 The digest is over the **implementation portion** of the staged tree: sorted
 `(path, mode, blob)` triples, excluding `.akr/**` and `docs/generated/**`.
 
+That is the whole tracked tree, deliberately — it identifies the implementation a
+measurement ran against, not the handful of files one commit edited. The delta's `code`
+and `ledger_files` are the opposite question and read the diff against `HEAD` instead:
+what *this* change touches. Reading the whole index for both made a commit that writes
+only records report every tracked file as its own and then refuse itself under `AKR-C032`
+for touching implementation it had not touched.
+
 Excluding AKR's own files breaks the cycle, and it also makes the digest mean the right
 thing — the implementation that was tested, not the tree including the note about having
 tested it. Acceptance freshness uses Git ancestry normally. When evidence and the verified

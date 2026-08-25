@@ -518,3 +518,37 @@ fn a_message_only_amend_passes_the_pre_commit_hook() {
         staged.output()
     );
 }
+
+#[test]
+fn a_ledger_only_change_is_not_a_code_change() {
+    // `git ls-files --stage` lists the whole index, and reading it as "what is staged"
+    // made a commit that writes only records claim every tracked file as its own and then
+    // refuse itself for touching implementation it had never touched
+    // (`akr.papercut.akr-change-prepare-staged-reports-code-n-files`).
+    let example = Example::materialise("change-ledger-only");
+    baseline(&example);
+    let papercut = example.run(&[
+        "papercut",
+        "-m",
+        "tester",
+        "a friction worth recording",
+        "--namespace",
+        "sys",
+    ]);
+    assert_eq!(papercut.code, 0, "{}", papercut.output());
+    example.git(&["add", ".akr"]);
+    example.run(&["change", "begin", "--kind", "docs", "--summary", "log one"]);
+
+    let prepare = example.run(&["change", "prepare", "--staged"]);
+    assert_eq!(prepare.code, 0, "{}", prepare.output());
+    assert!(
+        prepare.output().contains("code             0 files"),
+        "a change that writes only records touches no code: {}",
+        prepare.output()
+    );
+    assert!(
+        !prepare.output().contains("names no work record"),
+        "and is not asked for a work record it does not need: {}",
+        prepare.output()
+    );
+}

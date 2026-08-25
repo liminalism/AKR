@@ -45,6 +45,45 @@ record akr.work.authoring-contracts/1 : work {
     derived_from [ @akr.papercut.collated-18-papercuts-from-evidence-intake/1 ]
 }
 
+record akr.work.change-delta-counts-the-index/1 : work {
+    title "Report what a change touches, not what the repository tracks"
+    state completed
+    scope [
+        path "crates/akr-cli/src/change.rs",
+        path "crates/akr-core/src/change/mod.rs",
+        path "crates/akr-core/src/git/mod.rs"
+    ]
+    intent """
+        `akr change prepare --staged` read `git ls-files --stage`, the whole index, where it meant the paths staged against HEAD. So it reported "code 388 files" for a change that touched twelve, and — worse than the wrong number — refused a ledger-only commit with AKR-C032 for touching implementation files it had not touched, forcing --untracked-reason onto every commit that only writes records. The whole index is the right input for the implementation digest and for reading staged .akr blobs; it is the wrong input for `SemanticDelta::code` and `ledger_files`, which are that change's contents. Give the delta the diff against HEAD instead. Reported as akr.papercut.akr-change-prepare-staged-reports-code-n-files.
+        """
+    acceptance {
+        check digest-still-spans-the-tree {
+            statement """
+                The implementation digest still covers every tracked implementation file, so a tree that moves elsewhere still invalidates a preparation.
+                """
+            method command
+            command "cargo test -p akr-cli --test change_protocol"
+            verified_by [ @akr.evidence.change-delta-ledger-only/1 ]
+        }
+        check ledger-only-change-is-not-code {
+            statement """
+                A change that stages only .akr and generated views reports zero code files and prepares without --primary or --untracked-reason.
+                """
+            method command
+            command "akr change prepare --staged"
+            verified_by [ @akr.evidence.change-delta-in-this-repo/1 ]
+        }
+        check workspace-green {
+            statement """
+                The whole workspace builds and tests clean, clippy is silent, formatting is clean, and the design set is coherent.
+                """
+            method command
+            command "cargo test && cargo clippy --all-targets && cargo fmt --all -- --check && python3 tools/check-design.py"
+            verified_by [ @akr.evidence.change-delta-green/1 ]
+        }
+    }
+}
+
 record akr.work.context-import-provenance-hardening/1 : work {
     title "Harden context budgets, plan import, and build provenance"
     state completed
