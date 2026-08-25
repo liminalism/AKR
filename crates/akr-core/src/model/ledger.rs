@@ -160,6 +160,14 @@ pub struct LedgerFacts {
     pub last_change: BTreeMap<RevisionId, Commit>,
     /// Commit ancestry (V-020, D-016).
     pub ancestry: Ancestry,
+    /// Referenced commits the resolved head does not reach (V-020, `AKR-G012`).
+    ///
+    /// [`Ancestry`] is a topological *order* over the commits a ledger mentions, not the
+    /// commit graph: one walk instead of a process per comparison. An order always puts
+    /// one of two commits first, so it cannot tell "older" from "on a branch this history
+    /// does not contain". This set can, and only the wording depends on it — a verdict is
+    /// never changed by what is in here.
+    pub off_branch: BTreeSet<Commit>,
     /// Top-level scratch entries protected by `.agent/scratch/KEEP` (V-025).
     ///
     /// This is an input fact rather than ledger knowledge: the keep index is ordinary

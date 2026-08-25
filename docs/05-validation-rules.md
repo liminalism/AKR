@@ -657,6 +657,24 @@ exists, then the evidence and verified record land together. Equal last-change c
 identify that case without allowing evidence from an older commit to verify a later
 redefinition.
 
+**A branch is not an age.** Three different facts can leave a check unsatisfied on its
+commit, and the message says which. Evidence *predates* the last definitional change only
+when that change genuinely descends from it. When the evidence's commit is one the
+resolved head does not reach — a rebase, a squashed re-upload, any rewritten history — the
+evidence is not old, it is on a branch this one does not contain, and the message says so
+and points at the `AKR-G012` warning that reports the same fact directly. Evidence naming
+a commit the repository does not have at all points at `AKR-G011`. Lege-ecosystem carries
+228 `AKR-G012`s from one re-upload, and every one of its eight `AKR-R022`s was reported as
+an age until this separation existed.
+
+The reachability fact is carried separately from the ancestry because the ancestry cannot
+answer it. `LedgerFacts::ancestry` is a topological *order* over the commits a ledger
+mentions — one history walk rather than a process per comparison — and an order always
+puts one of two commits first, so it reads two branches as an age. `LedgerFacts::off_branch`
+is filled from one `rev-list --not <head>`, free when every commit is an ancestor. It
+changes the wording and never the verdict: a workspace does not newly fail because its
+fault can now be named accurately.
+
 **D-028 exemption.** When the record carries at least one `source { kind legacy ... }`
 block, the descendant-commit comparison is waived — a historical port's own introduction
 commit says nothing about when the work happened. Everything else about the check is
@@ -824,7 +842,11 @@ An artifact under `.agent/scratch/<entry>/...` also passes when `<entry>` is nam
 `.agent/scratch/KEEP`, as written by `akr scratch keep <entry> --reason <why>`.
 
 **Fix.** Move the artefact somewhere durable and cite that path, or `akr scratch keep
-<entry>` first and cite it where it is.
+<entry>` first and cite it where it is. Once the entry has already been pruned neither is
+possible, and the repair is to drop the `artifact` slot: `command`, `summary` and
+`observed_at` carry the claim without it. The help line names all three, because a help
+line offering only the impossible ones is what sent one reader looking for an escape that
+was not there.
 
 This is a rule rather than a flag check on `akr evidence add` because evidence reaches the
 ledger by four routes — `akr evidence add`, `akr evidence add-many --from`, `akr propose
@@ -832,7 +854,10 @@ ledger by four routes — `akr evidence add`, `akr evidence add-many --from`, `a
 the other three open. Every write validates the resulting ledger before writing anything
 (`docs/07` §4), so the rule still refuses at write time, which is the point: a warning from
 a later build arrives after the record is in the ledger, which is when nobody goes back and
-moves the file.
+moves the file. What the rule does *not* do is re-judge records nobody is touching: a write
+answers for the diagnostics it introduces, not for the ones it inherits (D-039). Evidence
+is born `verified` at revision 1, so a citation made today is always a new subject and is
+always refused.
 
 D-036 says scratch is never a ledger diagnostic. That is about the directory's contents —
 how much is sitting there and how old it is, which `akr check` reports as a build fact.

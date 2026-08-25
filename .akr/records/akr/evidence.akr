@@ -406,6 +406,53 @@ record akr.evidence.post-commit-validation-suite/1 : evidence {
         """
 }
 
+record akr.evidence.repairable-ledger-diagnostics/1 : evidence {
+    title "79 tests pass, including AKR-T023's help offering the repair that survives a prune, and V-020 separating evidence that genuinely predates a record's last definitional change from evidence observed on a branch this history does not contain — with the reachability fact believed over the topological order, and the verdict unchanged either way."
+    state verified
+    result pass
+    method command
+    observed_at git:d4266ccf344fe34ad37e212c2a7f8783e4e1cef3
+    command "cargo test -p akr-core --test v_rules"
+    summary """
+        79 tests pass, including AKR-T023's help offering the repair that survives a prune, and V-020 separating evidence that genuinely predates a record's last definitional change from evidence observed on a branch this history does not contain — with the reachability fact believed over the topological order, and the verdict unchanged either way.
+        """
+}
+
+record akr.evidence.repairable-ledger-field-proof/1 : evidence {
+    title "On a copy of raw-autotune, whose 35 pre-existing AKR-T023 errors had made every write impossible: the installed binary refused a well-formed proposal with 36 diagnostics; the fixed binary wrote it, exit 0, and said the ledger still carries 35 it did not introduce. Revising one stranded evidence record to drop its dangling artifact then succeeded and the count fell to 34, so the ledger repairs itself one record at a time. Across all thirteen AKR workspaces the diagnostic profile is byte-identical before and after: wording and the write gate changed, no verdict did."
+    state verified
+    result pass
+    method manual
+    observed_at git:d4266ccf344fe34ad37e212c2a7f8783e4e1cef3
+    summary """
+        On a copy of raw-autotune, whose 35 pre-existing AKR-T023 errors had made every write impossible: the installed binary refused a well-formed proposal with 36 diagnostics; the fixed binary wrote it, exit 0, and said the ledger still carries 35 it did not introduce. Revising one stranded evidence record to drop its dangling artifact then succeeded and the count fell to 34, so the ledger repairs itself one record at a time. Across all thirteen AKR workspaces the diagnostic profile is byte-identical before and after: wording and the write gate changed, no verdict did.
+        """
+}
+
+record akr.evidence.repairable-ledger-green/1 : evidence {
+    title "The whole workspace is green with default and no-default features, clippy is silent, formatting is clean and the design set is coherent."
+    state verified
+    result pass
+    method command
+    observed_at git:d4266ccf344fe34ad37e212c2a7f8783e4e1cef3
+    command "cargo test && cargo test --no-default-features && cargo clippy --all-targets && cargo fmt --all -- --check && python3 tools/check-design.py"
+    summary """
+        The whole workspace is green with default and no-default features, clippy is silent, formatting is clean and the design set is coherent.
+        """
+}
+
+record akr.evidence.repairable-ledger-write-pipeline/1 : evidence {
+    title "29 tests pass, including the three that hold D-039: a write into a ledger carrying a pre-existing AKR-T023 lands and reports the fault it inherited as a note; a write that would introduce a scratch citation is refused with only its own diagnostic named and every source file byte-identical; and one of two inherited faults is repairable on its own, the note counting down from 2 to 1."
+    state verified
+    result pass
+    method command
+    observed_at git:d4266ccf344fe34ad37e212c2a7f8783e4e1cef3
+    command "cargo test -p akr-core --test ops_write"
+    summary """
+        29 tests pass, including the three that hold D-039: a write into a ledger carrying a pre-existing AKR-T023 lands and reports the fault it inherited as a note; a write that would introduce a scratch citation is refused with only its own diagnostic named and every source file byte-identical; and one of two inherited faults is repairable on its own, the note counting down from 2 to 1.
+        """
+}
+
 record akr.evidence.search-auto-refresh-suite/1 : evidence {
     title "Search auto-refresh and no-rebuild behavior verified"
     state verified

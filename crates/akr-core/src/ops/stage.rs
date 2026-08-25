@@ -1,8 +1,9 @@
 //! In-memory staging and the atomic write of `docs/07` §4.
 //!
-//! Nothing reaches the disk until the whole resulting ledger has validated. That is what
-//! makes the guarantee testable: on any failing path, every source file is byte-identical
-//! afterwards, because no path writes before step 5.
+//! Nothing reaches the disk until the resulting ledger has been derived and compared
+//! against the one the operation started from (D-039). That is what makes the guarantee
+//! testable: on any failing path, every source file is byte-identical afterwards, because
+//! no path writes before step 5.
 
 use crate::diagnostics::{Diagnostic, FileId, Severity};
 use crate::model::Ledger;

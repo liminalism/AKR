@@ -191,6 +191,8 @@ struct Memo {
     trees: BTreeMap<String, BTreeSet<String>>,
     /// A commit set -> that set in topological order.
     topological: BTreeMap<String, Vec<Commit>>,
+    /// (head, commit set) -> which of them that head does not reach.
+    unreachable: BTreeMap<String, BTreeSet<Commit>>,
     /// The working tree's changed paths, for the one snapshot this memo describes.
     worktree: Option<BTreeSet<String>>,
     /// Path -> is it ignored.
@@ -1004,6 +1006,54 @@ impl Repository {
             .collect();
         self.memo(|memo| memo.topological.insert(key, ordered.clone()));
         Ok(ordered)
+    }
+
+    /// Which of `commits` are **not** reachable from `head`.
+    ///
+    /// One walk with `--not <head>`, filtered back to the commits asked about, and free in
+    /// the ordinary case: when every commit is an ancestor, git prints nothing.
+    ///
+    /// A rewritten history — a rebase, a squashed re-upload — leaves records pointing at
+    /// commits that still exist and sit on no branch this one contains. That is a
+    /// different fault from evidence being old, with a different repair, and V-020 says
+    /// which of the two it is looking at (`AKR-G012`).
+    ///
+    /// # Errors
+    /// [`GitError::CommandFailed`] when the walk fails.
+    pub fn unreachable_from(
+        &self,
+        head: &Commit,
+        commits: &[Commit],
+    ) -> Result<BTreeSet<Commit>, GitError> {
+        if commits.is_empty() {
+            return Ok(BTreeSet::new());
+        }
+        let key = format!(
+            "{}|{}",
+            head.as_str(),
+            commits
+                .iter()
+                .map(Commit::as_str)
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        if let Some(known) = self.memo(|memo| memo.unreachable.get(&key).cloned()) {
+            return Ok(known);
+        }
+        let mut args: Vec<String> = vec!["rev-list".to_owned()];
+        args.extend(commits.iter().map(|c| c.as_str().to_owned()));
+        args.push("--not".to_owned());
+        args.push(head.as_str().to_owned());
+        let text = self.run(&args)?;
+        let wanted: BTreeSet<&str> = commits.iter().map(Commit::as_str).collect();
+        let out: BTreeSet<Commit> = text
+            .lines()
+            .map(str::trim)
+            .filter(|line| wanted.contains(line))
+            .filter_map(|line| Commit::new(line).ok())
+            .collect();
+        self.memo(|memo| memo.unreachable.insert(key, out.clone()));
+        Ok(out)
     }
 
     // -- process plumbing -------------------------------------------------------------

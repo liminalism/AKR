@@ -97,9 +97,18 @@ Consequences, all of them load-bearing:
 
 - **Validation is of the result, not the change.** Adding a record that creates a cycle
   fails, even though the record itself is well formed.
-- **Failure writes nothing.** If step 3 produces any diagnostic of effective severity
-  error, the command reports them, raises `AKR-C031`, exits 1, and leaves the working
-  tree byte-identical to how it found it. There is no partial write and no `.bak` file.
+- **A write answers for what it introduces, not for what it inherits** (D-039). Step 3
+  derives the resulting ledger's diagnostics and, when there are any, re-derives the
+  pre-edit ledger and takes the difference. A diagnostic this write introduced refuses it.
+  One the ledger already had does not: it is carried back as a reported diagnostic and a
+  note naming the count and the codes. Without this an already-invalid ledger refuses
+  every write, including the repair, and the only escape is hand-editing a `.akr` file,
+  which the protocol forbids. `akr build`, `akr validate` and `akr check` are unaffected
+  and still fail on the whole ledger.
+- **Failure writes nothing.** If step 3 finds a diagnostic of effective severity error
+  that this write introduced, the command reports them, raises `AKR-C031`, exits 1, and
+  leaves the working tree byte-identical to how it found it. There is no partial write and
+  no `.bak` file.
 - **Every write is canonically formatted**, so a written record and a hand-written one
   are indistinguishable, and `akr fmt` on a freshly written ledger is a no-op.
 - **Writes are per-file atomic**: write to a temporary file in the same directory, fsync,
@@ -598,7 +607,7 @@ in advance rather than discovering.
 
 ```
 $ akr propose sys.term.day-loop --kind term --title "The day loop"
-error[AKR-C031]: write aborted: the resulting ledger did not validate (1 diagnostics)
+error[AKR-C031]: write aborted: this write would introduce 1 diagnostic(s); nothing was written
 error[AKR-T001]: term requires slot `definition`
 nothing written
 ```
@@ -714,7 +723,7 @@ and §4 refuses to write it:
 ```
 $ akr complete sys.milestone.m3-playable-day \
       --check no-placeholder-assets=@sys.evidence.asset-audit/1
-error[AKR-C031]: write aborted: the resulting ledger did not validate (1 diagnostics)
+error[AKR-C031]: write aborted: this write would introduce 1 diagnostic(s); nothing was written
 error[AKR-R021]: sys.work.m3-plan/2 is active but `plan_of_record` resolves to
                  sys.milestone.m3-playable-day/1, which is completed
 help: repoint the reference, or revise this record (see V-019)

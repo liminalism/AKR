@@ -7,14 +7,14 @@
 mod ops_support;
 
 use akr_core::model::{
-    Class, ContentSlot, ContentValue, Kind, Outcome as DispositionOutcome, Record, Reference,
-    State, key,
+    Class, Commit, ContentSlot, ContentValue, Kind, Outcome as DispositionOutcome, Record,
+    RecordBuilder, Reference, Segment, State, key,
 };
 use akr_core::ops::{self, DispositionRequest, Edits, ReviseMode, WriteContext, conventional_file};
 use ops_support::Sandbox;
 
 fn term(key_text: &str, title: &str) -> Record {
-    let mut record = akr_core::model::RecordBuilder::new(key_text, 1, Kind::Term)
+    let mut record = RecordBuilder::new(key_text, 1, Kind::Term)
         .title(title)
         .all_scope()
         .build();
@@ -299,7 +299,7 @@ fn revise_refuses_an_unknown_key() {
 /// children pin the superseded revision, which is what the disposition already accounts
 /// for. So the scenario that makes V-017 fire has to be built.
 fn plan_with_a_child(context: &WriteContext) {
-    let mut plan = akr_core::model::RecordBuilder::new("sys.work.demo-plan", 1, Kind::Work)
+    let mut plan = RecordBuilder::new("sys.work.demo-plan", 1, Kind::Work)
         .title("Demo plan")
         .build();
     plan.content.insert(
@@ -315,7 +315,7 @@ fn plan_with_a_child(context: &WriteContext) {
     )
     .expect("the plan proposes");
 
-    let mut child = akr_core::model::RecordBuilder::new("sys.work.demo-child", 1, Kind::Work)
+    let mut child = RecordBuilder::new("sys.work.demo-child", 1, Kind::Work)
         .title("Demo child")
         .state(State::Ready)
         .rel(akr_core::model::Relation::PartOf, "@sys.work.demo-plan/1")
@@ -729,4 +729,173 @@ fn the_conventional_file_follows_namespace_and_kind() {
             assert!(path.to_string_lossy().ends_with(".akr"));
         }
     }
+}
+
+// -------------------------------------------------------------------------------------
+// inherited diagnostics (D-039)
+// -------------------------------------------------------------------------------------
+
+/// An evidence record whose artefact is in disposable scratch, written straight to the
+/// file the way a ledger authored before V-025 existed looks once `akr scratch prune` has
+/// taken the entry: `AKR-T023`, and no way to make the cited path exist again.
+fn stranded(slug: &str) -> String {
+    format!(
+        "\nrecord sys.evidence.{slug}/1 : evidence {{\n    \
+         title \"A capture that scratch no longer holds\"\n    \
+         state verified\n    \
+         result pass\n    \
+         method command\n    \
+         observed_at git:e806b3f54a2d7091c5e13b8a26f490dc7b135e64\n    \
+         command \"cargo test\"\n    \
+         artifact \".agent/scratch/{slug}/log.txt\"\n}}\n"
+    )
+}
+
+fn strand(sandbox: &Sandbox, slugs: &[&str]) {
+    let path = sandbox.akr_dir().join("records/sys/evidence.akr");
+    let mut text = std::fs::read_to_string(&path).expect("the evidence file is readable");
+    for slug in slugs {
+        text.push_str(&stranded(slug));
+    }
+    std::fs::write(&path, text).expect("the evidence file is writable");
+}
+
+#[test]
+fn a_write_is_not_blocked_by_a_diagnostic_it_inherited() {
+    let sandbox = Sandbox::save_your_skin();
+    strand(&sandbox, &["pruned-capture"]);
+    let context = WriteContext::new(sandbox.akr_dir()).with_author("tester");
+    let target = key("sys.term.audit-lane");
+
+    let applied = ops::propose(
+        &context,
+        &target,
+        Kind::Term,
+        "Audit lane",
+        Some(term("sys.term.audit-lane", "Audit lane")),
+    )
+    .expect("an unrelated fault is not this write's to answer for");
+
+    assert!(
+        sandbox.ledger().head(&target).is_ok(),
+        "the proposal reached disk"
+    );
+    let note = applied
+        .notes
+        .iter()
+        .find(|note| note.contains("did not introduce"))
+        .expect("the write says what it is leaving behind");
+    assert!(note.contains("AKR-T023"), "and names the code: {note}");
+    assert!(note.contains("1 diagnostic"), "and how many: {note}");
+    assert!(
+        applied.diagnostics.is_empty(),
+        "the inherited errors are counted in the note, not re-rendered one by one"
+    );
+}
+
+#[test]
+fn a_write_is_refused_for_the_diagnostic_it_introduces() {
+    let sandbox = Sandbox::save_your_skin();
+    strand(&sandbox, &["pruned-capture"]);
+    let before = sandbox.snapshot();
+    let context = WriteContext::new(sandbox.akr_dir()).with_author("tester");
+
+    let mut fresh = RecordBuilder::new("sys.evidence.fresh-capture", 1, Kind::Evidence)
+        .title("A capture written into scratch today")
+        .build();
+    fresh.state = State::Verified;
+    fresh.content.insert(
+        ContentSlot::Result,
+        ContentValue::Enum(Segment::new("pass").expect("a legal result")),
+    );
+    fresh.content.insert(
+        ContentSlot::Method,
+        ContentValue::Enum(Segment::new("command").expect("a legal method")),
+    );
+    fresh.content.insert(
+        ContentSlot::ObservedAt,
+        ContentValue::Commit(
+            Commit::new("git:e806b3f54a2d7091c5e13b8a26f490dc7b135e64").expect("a legal commit"),
+        ),
+    );
+    fresh.content.insert(
+        ContentSlot::Artifact,
+        ContentValue::Text(".agent/scratch/fresh-capture/log.txt".to_owned()),
+    );
+
+    let refusal = ops::propose(
+        &context,
+        &key("sys.evidence.fresh-capture"),
+        Kind::Evidence,
+        "A capture written into scratch today",
+        Some(fresh),
+    )
+    .expect_err("citing scratch now is still refused, however broken the ledger already is");
+
+    assert_eq!(
+        refusal.diagnostics.len(),
+        1,
+        "only the new fault is charged to this write: {:?}",
+        refusal
+            .diagnostics
+            .iter()
+            .map(|d| d.message.clone())
+            .collect::<Vec<_>>()
+    );
+    assert!(refusal.diagnostics[0].message.contains("fresh-capture"));
+    assert!(
+        refusal.message.contains("would introduce"),
+        "the refusal says whose fault it is: {}",
+        refusal.message
+    );
+    assert_eq!(before, sandbox.snapshot(), "a refused write writes nothing");
+}
+
+#[test]
+fn one_of_two_inherited_faults_can_be_repaired_at_a_time() {
+    let sandbox = Sandbox::save_your_skin();
+    strand(&sandbox, &["pruned-one", "pruned-two"]);
+    let context = WriteContext::new(sandbox.akr_dir()).with_author("tester");
+    let target = key("sys.evidence.pruned-one");
+
+    let mut repaired = RecordBuilder::new("sys.evidence.pruned-one", 2, Kind::Evidence)
+        .title("A capture that scratch no longer holds")
+        .build();
+    repaired.content.insert(
+        ContentSlot::Result,
+        ContentValue::Enum(Segment::new("pass").expect("a legal result")),
+    );
+    repaired.content.insert(
+        ContentSlot::Method,
+        ContentValue::Enum(Segment::new("command").expect("a legal method")),
+    );
+    repaired.content.insert(
+        ContentSlot::ObservedAt,
+        ContentValue::Commit(
+            Commit::new("git:e806b3f54a2d7091c5e13b8a26f490dc7b135e64").expect("a legal commit"),
+        ),
+    );
+
+    let applied = ops::revise(
+        &context,
+        &target,
+        ReviseMode::Auto,
+        &Edits {
+            title: Some("A capture that scratch no longer holds".to_owned()),
+            state: Some(State::Verified),
+            replace_with: Some(Box::new(repaired)),
+        },
+    )
+    .expect("dropping the dangling artefact is the repair, and it must be reachable");
+
+    let note = applied
+        .notes
+        .iter()
+        .find(|note| note.contains("did not introduce"))
+        .expect("the other fault is still standing and still said aloud");
+    assert!(
+        note.contains("1 diagnostic"),
+        "and the count has come down by one: {note}"
+    );
+    sandbox.assert_canonical();
 }

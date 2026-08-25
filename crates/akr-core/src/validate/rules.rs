@@ -1192,12 +1192,32 @@ pub fn v020_acceptance_satisfied(ledger: &Ledger) -> Vec<Diagnostic> {
                     reason = format!("{} does not record `result pass`", evidence.id);
                     continue;
                 }
-                if !descends(ledger, record, evidence) {
-                    reason = format!(
-                        "{} predates the last content change to {}",
-                        evidence.id, record.id
-                    );
-                    continue;
+                match commit_order(ledger, record, evidence) {
+                    CommitOrder::Descends => {}
+                    CommitOrder::Predates => {
+                        reason = format!(
+                            "{} predates the last content change to {}",
+                            evidence.id, record.id
+                        );
+                        continue;
+                    }
+                    CommitOrder::Divergent => {
+                        reason = format!(
+                            "{} was observed at a commit that is not an ancestor of the last \
+                             content change to {} \u{2014} the branch it was recorded on is not \
+                             in this history (AKR-G012)",
+                            evidence.id, record.id
+                        );
+                        continue;
+                    }
+                    CommitOrder::Unknown => {
+                        reason = format!(
+                            "{} was observed at a commit this repository does not have \
+                             (AKR-G011)",
+                            evidence.id
+                        );
+                        continue;
+                    }
                 }
                 satisfied = true;
                 break;
@@ -1221,43 +1241,76 @@ pub fn v020_acceptance_satisfied(ledger: &Ledger) -> Vec<Diagnostic> {
     out
 }
 
+/// How the evidence's commit stands to the record's last content change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommitOrder {
+    /// The evidence is current, or the facts needed to decide are absent and the rest of
+    /// V-020 is still worth enforcing.
+    Descends,
+    /// The evidence is genuinely older: the last change descends from it.
+    Predates,
+    /// Neither commit descends from the other. A rewritten or diverged history, not an
+    /// age.
+    Divergent,
+    /// The evidence names a commit this repository does not have at all.
+    Unknown,
+}
+
 /// Whether the evidence's commit descends from the record's last content change.
 ///
-/// `true` when the facts needed to decide are absent: P1 has no git, and the rest of
-/// V-020 is still worth enforcing.
+/// [`CommitOrder::Descends`] when the facts needed to decide are absent: P1 has no git,
+/// and the rest of V-020 is still worth enforcing.
+///
+/// The three failing answers are kept apart because they are not the same fault and do
+/// not have the same repair. "Predates" is a claim about time and is only true when the
+/// last change really does descend from the evidence. When a history is rewritten —
+/// a rebase, a squashed re-upload — the evidence's commit survives on no branch, neither
+/// commit reaches the other, and calling that "older" sends the reader looking for a
+/// newer run of a check that was never stale. Lege-ecosystem carries 228 `AKR-G012`
+/// warnings from one such re-upload, and every one of its eight `AKR-R022`s was reported
+/// as an age.
 ///
 /// When `record` carries a `legacy` source (D-028), the descendancy comparison itself is
 /// waived — a historical port's own introduction commit says nothing about when the work
 /// happened — but the evidence must still cite a commit this repository actually has,
 /// whenever git facts were supplied at all. That containment check is not waived.
-fn descends(ledger: &Ledger, record: &Record, evidence: &Record) -> bool {
+fn commit_order(ledger: &Ledger, record: &Record, evidence: &Record) -> CommitOrder {
     let observed = evidence
         .get(ContentSlot::ObservedAt)
         .and_then(ContentValue::as_commit);
     if record.sources.iter().any(|s| s.kind == SourceKind::Legacy) {
         return match observed {
-            Some(commit) if ledger.facts.ancestry.has_facts() => {
-                ledger.facts.ancestry.knows(commit)
+            Some(commit)
+                if ledger.facts.ancestry.has_facts() && !ledger.facts.ancestry.knows(commit) =>
+            {
+                CommitOrder::Unknown
             }
-            _ => true,
+            _ => CommitOrder::Descends,
         };
     }
     let Some(last_change) = ledger.facts.last_change.get(&record.id) else {
-        return true;
+        return CommitOrder::Descends;
     };
     if ledger.facts.last_change.get(&evidence.id) == Some(last_change) {
         // Evidence and the verified record were authored in the same prepared change.
         // Their commit could not be named by `observed_at` before Git created it.
-        return true;
+        return CommitOrder::Descends;
     }
     let Some(observed) = observed else {
-        return true;
+        return CommitOrder::Descends;
     };
-    ledger
-        .facts
-        .ancestry
-        .is_descendant(observed, last_change)
-        .unwrap_or(true)
+    let ancestry = &ledger.facts.ancestry;
+    match ancestry.is_descendant(observed, last_change) {
+        Some(true) | None => CommitOrder::Descends,
+        // Which of the two it is changes the words, never the verdict: the ancestry has
+        // already said this evidence does not carry, and a workspace whose history was
+        // rewritten should not newly fail because it can now be named accurately.
+        Some(false) if ledger.facts.off_branch.contains(observed) => CommitOrder::Divergent,
+        Some(false) => match ancestry.is_descendant(last_change, observed) {
+            Some(true) => CommitOrder::Predates,
+            _ => CommitOrder::Divergent,
+        },
+    }
 }
 
 // ---------------------------------------------------------------------------------
@@ -1531,12 +1584,20 @@ pub fn v025_evidence_artifact_durable(ledger: &Ledger) -> Vec<Diagnostic> {
         if !entry.is_empty() && ledger.facts.scratch_kept.contains(&entry) {
             continue;
         }
+        // The first two repairs need the file to still be there. Once `akr scratch prune`
+        // has taken it the citation cannot be honoured at all, and the only honest repair
+        // left is to stop making it: `command`, `summary` and `observed_at` carry the
+        // claim without it. A help line that names only the impossible repairs is what
+        // sent one agent looking for a way out and finding none.
         let help = if entry.is_empty() {
-            "move the artefact somewhere durable and cite that path".to_owned()
+            "move the artefact somewhere durable and cite that path, or drop the `artifact` \
+             slot if it is already gone"
+                .to_owned()
         } else {
             format!(
-                "move the artefact somewhere durable and cite that path, or keep it with \
-                 `akr scratch keep {entry}` first"
+                "move the artefact somewhere durable and cite that path, keep it with \
+                 `akr scratch keep {entry}` first, or drop the `artifact` slot if it is \
+                 already gone"
             )
         };
         out.push(

@@ -658,3 +658,28 @@ record akr.decision.start-collates-session-head/1 : decision {
         """
     supported_by [ @akr.evidence.session-head-briefing-suite/1 ]
 }
+
+record akr.decision.write-answers-for-what-it-introduces/1 : decision {
+    title "A write answers for what it introduces, not for what it inherits"
+    state active
+    scope [
+        path "crates/akr-core/src/git/mod.rs",
+        path "crates/akr-core/src/ops/mod.rs",
+        path "crates/akr-core/src/validate/rules.rs",
+        path "docs/07-cli.md"
+    ]
+    topic write-refusal-scope
+    decision """
+        Step 3 of the write pipeline compares rather than asserts. It derives the resulting ledger's diagnostics and, only when there are any, restores the pre-edit text of every touched file, re-derives, and takes the difference as a multiset keyed on code, rule, subject and message, never on span. A diagnostic this write introduced refuses it, nothing written and the working tree byte-identical. One the ledger already had does not, and is reported as a note naming the count and the codes.
+        """
+    context """
+        "Validates the resulting ledger" had been implemented as "the resulting ledger has no errors", which refuses every write into a ledger that is already invalid — including the write that would repair it, since each repair must first produce a ledger with none of the other faults in it. V-025 arrived on 2026-08-23 and judges history, so raw-autotune was left carrying 35 unfixable AKR-T023s and Lege-ecosystem 20 more plus 8 AKR-R022s, with hand-editing a .akr file the only escape and the protocol forbidding it. An agent hit it and wrote its findings into a Markdown file instead, which is the outcome the ledger exists to prevent. A promise that cannot survive its own violation is a latch, not an invariant; the one worth keeping is that a write never makes the ledger worse.
+        """
+    consequences """
+        A broken ledger is repairable one record at a time through the sanctioned path. The intake guarantee is unchanged: evidence is born verified at revision 1, so a citation made today is always a new subject, introduced, and refused on all four write routes. A write can now land into a ledger that does not build, and akr build, akr validate and akr check are unmoved and still fail on the whole ledger, so nothing here hides drift. Two extra derivations are paid only on the path that was about to fail anyway. Two diagnostics were reworded alongside it: AKR-T023's help now names dropping the artifact slot, the only repair left once scratch has been pruned, and AKR-R022 distinguishes evidence that genuinely predates a record's last definitional change from evidence observed on a branch this history does not contain — the ancestry fact being a topological order that cannot tell the two apart, so a separate reachability fact answers it. That moves wording only; across all thirteen AKR workspaces the diagnostic profile is byte-identical before and after.
+        """
+    supported_by [
+        @akr.evidence.repairable-ledger-field-proof/1,
+        @akr.evidence.repairable-ledger-write-pipeline/1
+    ]
+}

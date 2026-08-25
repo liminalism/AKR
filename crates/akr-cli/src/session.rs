@@ -262,6 +262,11 @@ impl Session {
                 )
                 .chain(commit.clone())
                 .collect();
+            if let Some(head) = &commit
+                && let Ok(off_branch) = repository.unreachable_from(head, &commits)
+            {
+                self.ledger.facts.off_branch = off_branch;
+            }
             if let Ok(ancestry) = akr_core::git::ancestry_over(repository, commits) {
                 self.ledger.facts.ancestry = ancestry;
             }

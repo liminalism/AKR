@@ -991,6 +991,70 @@ record akr.work.reference-supersession-consistency/1 : work {
     derived_from [ @akr.papercut.collated-18-papercuts-from-evidence-intake/1 ]
 }
 
+record akr.work.repairable-ledger/1 : work {
+    title "Make an already-broken ledger repairable through the sanctioned write path"
+    state completed
+    scope [
+        path "crates/akr-core/src/ops/mod.rs",
+        path "crates/akr-core/src/validate/rules.rs",
+        path "crates/akr-core/tests/ops_write.rs",
+        path "docs/07-cli.md",
+        path "docs/DECISIONS.md"
+    ]
+    intent """
+        Two sister workspaces can no longer write to their ledgers at all. Every write validates the whole resulting ledger and refuses on any error in it, including errors it inherited and did not cause, so a ledger that is already broken cannot be repaired by the only route the protocol allows — and hand-editing a .akr file is forbidden. raw-autotune carries 35 AKR-T023 errors and Lege-ecosystem 20 more plus 8 AKR-R022; none of them can be fixed, because fixing one is itself a write. Refuse a write for the diagnostics it introduces, report the ones it inherits, and fix the two diagnostics whose wording sent the reporting agent down a dead end: T023's help suggests only repairs that are impossible once the artefact is pruned, and V-020 calls an off-branch commit older than the record when the truth is that a rewritten history put it on no branch at all.
+        """
+    acceptance {
+        check inherited-does-not-block {
+            statement """
+                A write into a ledger that already carries an error succeeds, writes only what it was asked to write, and reports the inherited diagnostics as a note rather than a refusal.
+                """
+            method command
+            command "cargo test -p akr-core --test ops_write"
+            verified_by [ @akr.evidence.repairable-ledger-write-pipeline/1 ]
+        }
+        check introduced-still-refuses {
+            statement """
+                A write that introduces a diagnostic is still refused with that diagnostic named, and leaves every source file byte-identical.
+                """
+            method command
+            command "cargo test -p akr-core --test ops_write"
+            verified_by [ @akr.evidence.repairable-ledger-write-pipeline/1 ]
+        }
+        check off-branch-evidence-is-named-as-such {
+            statement """
+                V-020 distinguishes evidence that genuinely predates the record's last content change from evidence observed at a commit that is not an ancestor of it, and words each one truthfully.
+                """
+            method command
+            command "cargo test -p akr-core --test v_rules"
+            verified_by [ @akr.evidence.repairable-ledger-diagnostics/1 ]
+        }
+        check scratch-help-names-a-possible-repair {
+            statement """
+                AKR-T023's help offers dropping the artifact slot, which is the only repair left once the cited scratch entry has been pruned.
+                """
+            method command
+            command "cargo test -p akr-core --test v_rules"
+            verified_by [ @akr.evidence.repairable-ledger-diagnostics/1 ]
+        }
+        check the-bricked-workspace-writes-again {
+            statement """
+                A copy of a workspace the deadlock had made unwritable accepts a well-formed record again, reports the faults it inherited rather than charging them to the write, and lets one of them be repaired on its own.
+                """
+            method manual
+            verified_by [ @akr.evidence.repairable-ledger-field-proof/1 ]
+        }
+        check workspace-green {
+            statement """
+                The whole workspace builds and tests clean with default and no-default features, clippy is silent, formatting is clean, and the design set is coherent.
+                """
+            method command
+            command "cargo test && cargo test --no-default-features && cargo clippy --all-targets && cargo fmt --all -- --check && python3 tools/check-design.py"
+            verified_by [ @akr.evidence.repairable-ledger-green/1 ]
+        }
+    }
+}
+
 record akr.work.resolve-collated-papercuts/1 : work {
     title "Resolve newly collated AKR papercuts"
     state completed

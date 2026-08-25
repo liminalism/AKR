@@ -1257,3 +1257,85 @@ fn a_clean_ledger_produces_no_diagnostics_at_all() {
 }
 
 use akr_core::model::Relation;
+
+#[test]
+fn v025_help_offers_the_repair_that_survives_a_prune() {
+    // Both other repairs need the file to still exist. Once `akr scratch prune` has taken
+    // it, dropping the slot is the only one left, and a help line that omits it sends the
+    // reader looking for a way out there isn't.
+    for path in [".agent/scratch/ocr-benchmark/out.txt", ".agent/scratch"] {
+        let found = validate::v025_evidence_artifact_durable(&artifact(path));
+        let help = found[0].help.as_deref().expect("T023 carries a repair");
+        assert!(help.contains("drop the `artifact` slot"), "{path}: {help}");
+    }
+}
+
+#[test]
+fn v020_separates_an_older_commit_from_one_on_another_branch() {
+    use akr_core::model::{Ancestry, Commit};
+    // `filled()` observes evidence at this commit.
+    let observed = Commit::new("3f0a1c9d5b7e2648a0d4f1b8c36e9752ad014b6f").expect("commit");
+    let base = Commit::new("1111111111111111111111111111111111111111").expect("commit");
+    let landed = Commit::new("7c41d0ba92e6f37518a3cd406b5e2f91d8074a63").expect("commit");
+    let claimed = RevisionId::new(key("fx.milestone.claimed"), 1);
+
+    // Genuinely older: the milestone's last change descends from the evidence.
+    let mut older = completed_milestone(&["@fx.evidence.green"]);
+    older
+        .facts
+        .last_change
+        .insert(claimed.clone(), landed.clone());
+    older.facts.ancestry = Ancestry::from_pairs([(landed.clone(), observed.clone())]);
+    let found = validate::v020_acceptance_satisfied(&older);
+    assert_raises(&found, c::R022);
+    assert!(
+        found[0].message.contains("predates"),
+        "an older commit is an age: {}",
+        found[0].message
+    );
+
+    // A rewritten history: neither commit reaches the other. Calling that an age sent one
+    // reader hunting for a stale check that was never stale.
+    let mut diverged = completed_milestone(&["@fx.evidence.green"]);
+    diverged.facts.last_change.insert(claimed, landed.clone());
+    diverged.facts.ancestry = Ancestry::from_pairs([(landed, base.clone()), (observed, base)]);
+    let found = validate::v020_acceptance_satisfied(&diverged);
+    assert_raises(&found, c::R022);
+    assert!(
+        !found[0].message.contains("predates"),
+        "a branch is not an age: {}",
+        found[0].message
+    );
+    assert!(
+        found[0].message.contains("not an ancestor") && found[0].message.contains("AKR-G012"),
+        "and it says which fact it is: {}",
+        found[0].message
+    );
+}
+
+#[test]
+fn v020_believes_the_off_branch_fact_over_the_topological_order() {
+    use akr_core::model::{Ancestry, Commit};
+    // The shape a rewritten history actually produces. `Ancestry` is a topological order,
+    // so it always puts one commit first and would call this an age; the reachability fact
+    // is the one that knows the evidence sits on a branch this history does not contain.
+    let observed = Commit::new("3f0a1c9d5b7e2648a0d4f1b8c36e9752ad014b6f").expect("commit");
+    let landed = Commit::new("7c41d0ba92e6f37518a3cd406b5e2f91d8074a63").expect("commit");
+
+    let mut ledger = completed_milestone(&["@fx.evidence.green"]);
+    ledger.facts.last_change.insert(
+        RevisionId::new(key("fx.milestone.claimed"), 1),
+        landed.clone(),
+    );
+    ledger.facts.ancestry = Ancestry::from_pairs([(landed, observed.clone())]);
+    ledger.facts.off_branch.insert(observed);
+
+    let found = validate::v020_acceptance_satisfied(&ledger);
+    assert_raises(&found, c::R022);
+    assert_eq!(found.len(), 1, "the verdict is unchanged, only the words");
+    assert!(
+        found[0].message.contains("not in this history"),
+        "{}",
+        found[0].message
+    );
+}

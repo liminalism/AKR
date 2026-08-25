@@ -5,7 +5,7 @@
 //! ```text
 //! 1. parse     the current ledger
 //! 2. apply     the requested change, in memory
-//! 3. validate  the RESULTING ledger, strictly
+//! 3. validate  the RESULTING ledger, and refuse what this write introduced (D-039)
 //! 4. format    every touched record canonically
 //! 5. write     touched files, atomically
 //! ```
@@ -48,7 +48,7 @@ use crate::model::{
 };
 use crate::syntax::{cst, emit};
 use crate::validate;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 pub use stage::{LoadError, Staged};
@@ -1213,6 +1213,7 @@ fn apply_inner(
     let project = staged.project.clone();
     let mut touched: Vec<PathBuf> = Vec::new();
     let mut changes: Vec<Change> = Vec::new();
+    let mut before: BTreeMap<PathBuf, Option<String>> = BTreeMap::new();
 
     // Step 2: apply in memory.
     for (file, record, change) in edits {
@@ -1223,6 +1224,9 @@ fn apply_inner(
                 format!("{} could not be rendered as canonical source", record.id),
             ));
         };
+        before
+            .entry(file.clone())
+            .or_insert_with(|| staged.texts.get(file).cloned());
         let mut tree = staged
             .trees
             .get(file)
@@ -1240,22 +1244,30 @@ fn apply_inner(
         });
     }
 
-    // Step 3: validate the result.
+    // Step 3: validate the result, and refuse what this write introduced (D-039).
     staged.reparse();
     let mut diagnostics = staged.diagnostics.clone();
     diagnostics.extend(validate::validate_all(&staged.ledger));
     let errors = Staged::errors(&diagnostics, context.strict);
-    if !errors.is_empty() {
-        let mut refusal = Refused::new(
-            operation,
-            cli::C031,
-            format!(
-                "write aborted: the resulting ledger did not validate ({} diagnostics); \
-                 nothing was written",
-                errors.len()
-            ),
+    let inherited = if errors.is_empty() {
+        Vec::new()
+    } else {
+        inherited_of(staged, &before, context.strict, &errors)
+    };
+    let introduced = introduced_of(&errors, &inherited);
+    if !introduced.is_empty() {
+        let mut message = format!(
+            "write aborted: this write would introduce {} diagnostic(s); nothing was written",
+            introduced.len()
         );
-        refusal.diagnostics = errors;
+        if !inherited.is_empty() {
+            message.push_str(&format!(
+                " ({} the ledger already had are not counted)",
+                inherited.len()
+            ));
+        }
+        let mut refusal = Refused::new(operation, cli::C031, message);
+        refusal.diagnostics = introduced;
         return Err(refusal);
     }
 
@@ -1269,17 +1281,133 @@ fn apply_inner(
     let lock_stale = changes
         .iter()
         .any(|c| !matches!(c.kind, ChangeKind::Edited));
+    let mut notes = Vec::new();
+    if !inherited.is_empty() {
+        notes.push(inherited_note(&inherited));
+    }
+    notes.extend(acceptance_notes(&staged.ledger, operation, edits));
     Ok(Applied {
         operation,
         changes,
         files: touched,
+        // The inherited errors are deliberately not repeated here: this field is rendered
+        // in full, and thirty-five of them on every write would bury what the write did.
+        // The note names the count and the codes, and `akr validate` lists them.
         diagnostics: diagnostics
             .into_iter()
             .filter(|d| d.severity == Severity::Warning)
             .collect(),
-        notes: acceptance_notes(&staged.ledger, operation, edits),
+        notes,
         lock_stale,
     })
+}
+
+/// The errors the ledger already had, before this operation touched it.
+///
+/// Restores the pre-edit text of every touched file, re-derives, and puts the edited text
+/// back — two extra passes, paid only when the result has errors at all, which is the
+/// path that was about to fail anyway.
+fn inherited_of(
+    staged: &mut Staged,
+    before: &BTreeMap<PathBuf, Option<String>>,
+    strict: bool,
+    errors: &[Diagnostic],
+) -> Vec<Diagnostic> {
+    let after = swap_texts(staged, before);
+    let mut diagnostics = staged.diagnostics.clone();
+    diagnostics.extend(validate::validate_all(&staged.ledger));
+    let baseline = Staged::errors(&diagnostics, strict);
+    swap_texts(staged, &after);
+    // Only what survived into the result: a diagnostic the write repaired is not
+    // something the caller is still carrying.
+    let mut standing: BTreeMap<String, usize> = BTreeMap::new();
+    for diagnostic in errors {
+        *standing.entry(fingerprint(diagnostic)).or_default() += 1;
+    }
+    baseline
+        .into_iter()
+        .filter(
+            |diagnostic| match standing.get_mut(&fingerprint(diagnostic)) {
+                Some(count) if *count > 0 => {
+                    *count -= 1;
+                    true
+                }
+                _ => false,
+            },
+        )
+        .collect()
+}
+
+/// The errors in the result that the baseline did not already account for.
+fn introduced_of(errors: &[Diagnostic], inherited: &[Diagnostic]) -> Vec<Diagnostic> {
+    let mut remaining: BTreeMap<String, usize> = BTreeMap::new();
+    for diagnostic in inherited {
+        *remaining.entry(fingerprint(diagnostic)).or_default() += 1;
+    }
+    errors
+        .iter()
+        .filter(
+            |diagnostic| match remaining.get_mut(&fingerprint(diagnostic)) {
+                Some(count) if *count > 0 => {
+                    *count -= 1;
+                    false
+                }
+                _ => true,
+            },
+        )
+        .cloned()
+        .collect()
+}
+
+/// Swaps a set of file texts into the staged workspace, returning what was there.
+///
+/// Only `texts` is swapped: [`Staged::reparse`] rebuilds every tree from the texts, so
+/// restoring both maps by hand would be a second way to say the same thing.
+fn swap_texts(
+    staged: &mut Staged,
+    texts: &BTreeMap<PathBuf, Option<String>>,
+) -> BTreeMap<PathBuf, Option<String>> {
+    let mut previous = BTreeMap::new();
+    for (path, text) in texts {
+        let was = match text {
+            Some(text) => staged.texts.insert(path.clone(), text.clone()),
+            None => staged.texts.remove(path),
+        };
+        previous.insert(path.clone(), was);
+    }
+    staged.reparse();
+    previous
+}
+
+/// What identifies a diagnostic across two derivations of the same ledger.
+///
+/// Not the span: rewriting a file canonically moves every line below the edit, and a
+/// diagnostic about an untouched record is the same diagnostic wherever it now sits.
+fn fingerprint(diagnostic: &Diagnostic) -> String {
+    format!(
+        "{}|{}|{:?}|{}",
+        diagnostic.code,
+        diagnostic.rule.map_or_else(String::new, |r| r.to_string()),
+        diagnostic.primary.subject,
+        diagnostic.message
+    )
+}
+
+/// The advisory line for diagnostics a write inherited rather than caused.
+fn inherited_note(inherited: &[Diagnostic]) -> String {
+    let mut codes: Vec<String> = inherited
+        .iter()
+        .map(|d| d.code.to_string())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    codes.sort();
+    format!(
+        "the ledger still has {} diagnostic(s) this write did not introduce ({}) \u{2014} \
+         `akr validate` lists them",
+        inherited.len(),
+        codes.join(", ")
+    )
 }
 
 /// What a revision of a completed record has just put back in question.

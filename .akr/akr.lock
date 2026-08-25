@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.3"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:c5cafff5de45d9b1e6f80dab50ecfc5322023046df03ef451c7addefd3ffbe07"
+    source_graph "sha256:f383332aba576d7292926636f74a0d16ef141bd3caa867876d9c852a1b170627"
 }
 
 source ".akr/project.akr" {
@@ -19,13 +19,13 @@ source ".akr/records/akr/assessments.akr" {
 }
 
 source ".akr/records/akr/decisions.akr" {
-    hash "sha256:a338ccb446e129535ffbba76da0f5596460735615ff8db69e014ac54b6d39c00"
-    records 25
+    hash "sha256:8665e04792c2ba64646069ecb53a6263c08347cde0bfbc3bf892afb95cdd7e10"
+    records 26
 }
 
 source ".akr/records/akr/evidence.akr" {
-    hash "sha256:c383591f085b148320328d76b1dda35589c399275f4877cfbff516711d693076"
-    records 44
+    hash "sha256:47dd35b1fde10a3f1660b8953e4e9d35e4a0e14edaae042bd85c6ae9a219feda"
+    records 48
 }
 
 source ".akr/records/akr/milestones.akr" {
@@ -39,8 +39,8 @@ source ".akr/records/akr/papercuts.akr" {
 }
 
 source ".akr/records/akr/work.akr" {
-    hash "sha256:e20c40be2e24e9b2b798396a86e73f4117f87767b260c7969f3276ec837b1848"
-    records 31
+    hash "sha256:1c93d878bc7bcf3945df348a1d552dfc07827404073f6be088fde6260acda383"
+    records 32
 }
 
 resolution @akr.decision.completed-planning-work-satisfies-dependency/1 {
@@ -390,6 +390,11 @@ seal @akr.decision.start-collates-session-head/1 {
     hash "sha256:c55c5201b740bb0d7278902dbf2e209f916100eab250bb6143bc81ec0ea8c12d"
 }
 
+seal @akr.decision.write-answers-for-what-it-introduces/1 {
+    state active
+    hash "sha256:9dbef13bafbc1c11f46b32d855f1f3ff842b1be12daf508df09d62170f4e9546"
+}
+
 seal @akr.evidence.client-matrix-accepts-every-response/1 {
     state verified
     hash "sha256:799591f9bd71be9eb7d67b155369b4aaf35cf1e5f4c9c340a1902cee3367a406"
@@ -553,6 +558,26 @@ seal @akr.evidence.papercuts-2026-08-25/1 {
 seal @akr.evidence.post-commit-validation-suite/1 {
     state verified
     hash "sha256:84a2275544ad4ebe6e86e106242fbb73f6a664137b8fb2562f695de21a29d648"
+}
+
+seal @akr.evidence.repairable-ledger-diagnostics/1 {
+    state verified
+    hash "sha256:e092ca8bd9ec71986316c2744bb87d14562ef436d2bcb3736661ae776039f02d"
+}
+
+seal @akr.evidence.repairable-ledger-field-proof/1 {
+    state verified
+    hash "sha256:bfd89aeb4a68f702643a77deeb8f97b3c9807c3a832af12810bc569a7ca511f0"
+}
+
+seal @akr.evidence.repairable-ledger-green/1 {
+    state verified
+    hash "sha256:4825f5c09347b723d215345f7363d333cd27772acc983b52a99def9b133306e9"
+}
+
+seal @akr.evidence.repairable-ledger-write-pipeline/1 {
+    state verified
+    hash "sha256:ab045196163e11b12e9239418065da76f7a85e72cd96cdb5175eba9898835b8d"
 }
 
 seal @akr.evidence.search-auto-refresh-suite/1 {
@@ -1068,6 +1093,11 @@ seal @akr.work.reduce-knowledge-write-latency/1 {
 seal @akr.work.reference-supersession-consistency/1 {
     state completed
     hash "sha256:88f6bc8d52450566a1ab69f334883d15dac98098fe4e6a040737c4a0935ce601"
+}
+
+seal @akr.work.repairable-ledger/1 {
+    state completed
+    hash "sha256:7bf3d87ceae6eedffd59a26948e22414e635c99d7c94caec329b7e557879edf5"
 }
 
 seal @akr.work.resolve-collated-papercuts/1 {

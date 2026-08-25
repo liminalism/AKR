@@ -1484,3 +1484,74 @@ and the ledger.
 `crates/akr-core/src/git/mod.rs` (`hash_at`, `last_change_of`, `last_changes`,
 `definitional_hashes`, `definition_at_or_below`), `docs/10-freshness-and-git.md`,
 `crates/akr-core/tests/git_queries.rs`.
+
+## D-039 — A write answers for what it introduces, not for what it inherits
+
+*Amendment, 2026-08-25.*
+
+**Question.** `docs/07` §4 says every write parses the ledger, applies the change in
+memory, validates the **resulting** ledger, canonically formats, and only then writes.
+"Validates the resulting ledger" was implemented as "the resulting ledger has no errors",
+which is a stronger statement and a different one. It means a ledger that is already
+invalid refuses every write, including the write that would repair it.
+
+That is not hypothetical. V-025 arrived on 2026-08-23 and judges history: raw-autotune
+carries 35 `AKR-T023` errors and Lege-ecosystem 20 more, from evidence recorded before the
+rule existed, citing scratch entries `akr scratch prune` has since taken. Lege-ecosystem
+carries 8 `AKR-R022`s besides. None of them can be repaired, because each repair is itself
+a write and every write must first produce a ledger with none of the other faults in it.
+Hand-editing a `.akr` file is the one escape, and the protocol forbids it. Two workspaces
+were left unable to record anything at all — "`knowledge.propose` refuses to write because
+the ledger does not validate … both pre-existing and unrelated, measured identically at
+session start" — and the agent that hit it wrote its findings into a Markdown file
+instead, which is exactly the outcome the ledger exists to prevent.
+
+**Question behind the question.** What is the write pipeline actually promising? "The
+ledger is always valid" is unenforceable the moment it is false: a rule added later, a bad
+merge, a revert, a rewritten history. A promise that cannot survive its own violation is
+not an invariant, it is a latch. The promise worth keeping is the one a caller can always
+honour: **this write does not make the ledger worse.**
+
+**Resolution.** Step 3 compares. It derives the diagnostics of the resulting ledger, and —
+only when there are any — restores the pre-edit text of every file the operation touched,
+re-derives, and takes the difference as a multiset keyed on code, rule, subject and
+message, never on span. A diagnostic the write introduced refuses it, with nothing
+written and the working tree byte-identical, as before. A diagnostic that was already
+there does not, and is carried back on `Applied.diagnostics` with a note naming the count
+and the codes.
+
+The intake guarantee is unchanged, and this is the point worth checking rather than
+assuming: evidence is born `verified` at revision 1, so a record citing scratch *today* is
+a new subject, absent from the baseline, introduced, and refused — on all four write
+routes, exactly as D-037 intended. What stops is the re-judging of records nobody is
+touching.
+
+**Consequences.** A broken ledger is repairable one record at a time through the sanctioned
+path, which is the difference between a system that fails loudly and one that bricks. A
+write can now land into a ledger that does not build; `akr build`, `akr validate` and
+`akr check` are unmoved and still fail, so nothing about this hides drift — the write says
+what it is leaving behind, and the build still refuses to call it done. The cost is two
+extra derivations, paid only on the path that was about to fail anyway.
+
+`akr_core::evidence`'s `settle` keeps the older reading. It is a pure function over a
+candidate ledger with no notion of "the write", it has no production caller, and the
+deadlock is a property of the pipeline rather than of validation.
+
+**Two diagnostics went with it,** because the reports that surfaced the deadlock were
+also sent the wrong way by the words. `AKR-T023`'s help offered only repairs that need the
+artefact to still exist, when the case that produces it at scale is an entry `akr scratch
+prune` has already taken; it now also names dropping the `artifact` slot, which is the one
+repair left. `AKR-R022` called an off-branch commit an age: `LedgerFacts::ancestry` is a
+topological order rather than the commit graph, so it always puts one of two commits
+first, and a rewritten history reads as stale evidence. A separate reachability fact
+(`LedgerFacts::off_branch`, one `rev-list --not <head>`) now distinguishes them. It moves
+the wording only — never a verdict — so no workspace fails newly for being described
+accurately.
+
+**Honored by.** `crates/akr-core/src/ops/mod.rs` (`apply_inner`, `inherited_of`,
+`introduced_of`, `swap_texts`, `fingerprint`, `inherited_note`),
+`crates/akr-core/src/validate/rules.rs` (`commit_order`, `v025_evidence_artifact_durable`),
+`crates/akr-core/src/git/mod.rs` (`unreachable_from`),
+`crates/akr-core/tests/ops_write.rs`, `crates/akr-core/tests/v_rules.rs`,
+`docs/07-cli.md` §4, `docs/05-validation-rules.md`,
+`spec/diagnostics/codes-runtime.md` (`AKR-C031`).
