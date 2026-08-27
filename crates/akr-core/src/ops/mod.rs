@@ -452,18 +452,30 @@ pub fn revise_with_dispositions(
         // `docs/04` §2.1, which describes the unretired intermediate state.
         let mut record = edited(&head, edits);
         record.id = RevisionId::new(key.clone(), head.id.revision + 1);
-        record.state = head.kind.class().initial()[0];
+        let initial = head.kind.class().initial()[0];
+        record.state = initial;
         if let Some(state) = edits.state {
             record.state = state;
         }
-        return retire_and_replace(
+        let mut applied = retire_and_replace(
             context,
             &mut staged,
             Operation::Revise,
             &head,
             record,
             dispositions,
-        );
+        )?;
+        if edits.state.is_none() {
+            applied.notes.insert(
+                0,
+                format!(
+                    "{} starts {initial} (sealed head was {}); pass --state to keep it live",
+                    RevisionId::new(key.clone(), head.id.revision + 1),
+                    head.state
+                ),
+            );
+        }
+        return Ok(applied);
     }
 
     let mut record = edited(&head, edits);
@@ -538,7 +550,7 @@ fn retire_and_replace(
 
     record.relations.insert(
         Relation::Supersedes,
-        vec![Reference::pinned(key, head.id.revision)],
+        supersedes_targets(staged, &key, head.id.revision),
     );
     if !dispositions.is_empty() {
         record.dispositions = dispositions.iter().map(build_disposition).collect();
@@ -1579,6 +1591,35 @@ fn build_disposition(request: &DispositionRequest) -> Disposition {
         into: request.into.clone().map(Reference::head),
         note: request.note.clone(),
     }
+}
+
+/// The `supersedes` edges a new head of `key` must carry.
+///
+/// Always the revision it is replacing, plus any other same-key revision that has no
+/// incoming `supersedes` edge. A history written without back-edges is otherwise
+/// unambiguous only while a live head exists; the moment every revision is terminal,
+/// V-001 raises `AKR-L002` and names a count instead of the missing edges.
+fn supersedes_targets(staged: &Staged, key: &LogicalKey, head_revision: u32) -> Vec<Reference> {
+    let revisions = staged.ledger.revisions_of(key);
+    let pointed: BTreeSet<u32> = revisions
+        .iter()
+        .flat_map(|record| record.targets(Relation::Supersedes))
+        .filter(|target| &target.key == key)
+        .filter_map(|target| target.revision)
+        .collect();
+    let mut revs: Vec<u32> = revisions
+        .iter()
+        .map(|record| record.id.revision)
+        .filter(|rev| *rev == head_revision || !pointed.contains(rev))
+        .collect();
+    if !revs.contains(&head_revision) {
+        revs.push(head_revision);
+    }
+    revs.sort_unstable();
+    revs.dedup();
+    revs.into_iter()
+        .map(|rev| Reference::pinned(key.clone(), rev))
+        .collect()
 }
 
 /// Live planning records whose `part_of` pins the given revision (D-017, V-017).

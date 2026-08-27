@@ -26,12 +26,13 @@ use crate::session::{EnvError, Exit, Session};
 use akr_core::json::Value;
 use akr_core::model::{
     Commit, ContentSlot, EvidenceResult, Kind, LogicalKey, Outcome as DispositionOutcome, Record,
-    Reference, State,
+    Reference, Relation, State,
 };
 use akr_core::ops::{
     Applied, Change, ChangeKind, DispositionRequest, Edits, Refused, ReviseMode, WriteContext,
     WriteResult,
 };
+use std::collections::BTreeSet;
 use std::path::Path;
 
 fn missing_commit(session: &Session, suggest_flag: bool) -> EnvError {
@@ -72,7 +73,7 @@ pub fn run(session: &Session, command: &Command) -> Result<Output, EnvError> {
         } => {
             let key = parse_key(key)?;
             let kind = parse_kind(kind)?;
-            let template = body_template(session, from.as_deref(), &key, kind)?;
+            let template = body_from(session, from.as_deref(), &key, kind)?.map(|body| body.record);
             render(
                 session,
                 akr_core::ops::propose(
@@ -103,8 +104,25 @@ pub fn run(session: &Session, command: &Command) -> Result<Output, EnvError> {
                 state: state.as_deref().map(parse_state).transpose()?,
                 replace_with: None,
             };
-            if let Some(record) = body_template(session, from.as_deref(), &key, Kind::Work)? {
-                edits.replace_with = Some(Box::new(record));
+            // `--from` is a slot-list overlay onto the head, the same merge
+            // `knowledge.revise` already does. A replacement of the whole record is how
+            // unspecified slots vanish (slice-8 acceptance, phase-4 depends_on, Candidate
+            // D's scope) and how a body that said `state completed` still landed proposed.
+            let kind = session
+                .ledger
+                .head(&key)
+                .map(|head| head.kind)
+                .unwrap_or(Kind::Work);
+            if let Some(body) = body_from(session, from.as_deref(), &key, kind)? {
+                if let Ok(head) = session.ledger.head(&key) {
+                    if edits.state.is_none() && body.mentioned.contains("state") {
+                        edits.state = Some(body.record.state);
+                    }
+                    edits.replace_with =
+                        Some(Box::new(overlay_from(head, &body.record, &body.mentioned)));
+                } else {
+                    edits.replace_with = Some(Box::new(body.record));
+                }
             }
             let dispositions = parse_dispositions(dispositions)?;
             render(
@@ -909,16 +927,26 @@ fn parse_checks(raw: &[String]) -> Result<Vec<(String, Reference)>, EnvError> {
         .collect()
 }
 
+/// A `--from` file: the lowered record, and the slot names the file actually wrote.
+///
+/// The names are the merge mask. A lowered record cannot tell "acceptance was omitted"
+/// from "acceptance is empty", and treating the two as one is how a partial fragment
+/// dropped unspecified slots.
+struct FromBody {
+    record: Record,
+    mentioned: BTreeSet<String>,
+}
+
 /// The record body a `--from` file holds, if one was given.
 ///
 /// There is deliberately no `--edit`: it is refused at parse time by `args::refuse_edit`,
 /// which carries the reasoning.
-fn body_template(
+fn body_from(
     session: &Session,
     from: Option<&Path>,
     key: &LogicalKey,
     kind: Kind,
-) -> Result<Option<Record>, EnvError> {
+) -> Result<Option<FromBody>, EnvError> {
     let Some(path) = from else {
         return Ok(None);
     };
@@ -951,6 +979,7 @@ fn body_template(
             .map_or_else(|| "no records".to_owned(), |d| d.message.clone());
         return Err(refuse(first));
     };
+    let mentioned = mentioned_slots(&tree);
     let (ledger, lowered) = akr_core::syntax::lower::lower_all(&[(display_path, tree)]);
     if let Some(fatal) = parsed
         .diagnostics
@@ -967,7 +996,87 @@ fn body_template(
         .or_else(|| ledger.records().first())
         .cloned()
         .ok_or_else(|| EnvError::new("AKR-C031", format!("{} holds no record", path.display())))?;
-    Ok(Some(record))
+    Ok(Some(FromBody { record, mentioned }))
+}
+
+fn mentioned_slots(tree: &akr_core::syntax::cst::File) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for item in &tree.items {
+        if let akr_core::syntax::cst::Item::Record(record) = item {
+            for body in &record.body {
+                names.insert(body.name().to_owned());
+            }
+        }
+    }
+    names
+}
+
+/// Overlay the slots a `--from` file named onto the live head.
+///
+/// Unmentioned heading slots, content slots, relations, acceptance, claims and
+/// provenance stay. A named slot is replaced, including with emptiness. This is the
+/// CLI form of `akr_mcp::tools::merged`.
+fn overlay_from(head: &Record, fragment: &Record, mentioned: &BTreeSet<String>) -> Record {
+    let mut record = head.clone();
+    if mentioned.contains("title") {
+        record.title.clone_from(&fragment.title);
+    }
+    if mentioned.contains("state") {
+        record.state = fragment.state;
+    }
+    if mentioned.contains("scope") {
+        record.scope.clone_from(&fragment.scope);
+    }
+    if mentioned.contains("topic") {
+        record.topic.clone_from(&fragment.topic);
+    }
+    if mentioned.contains("author") {
+        record.author.clone_from(&fragment.author);
+    }
+    if mentioned.contains("created_at") {
+        record.created_at = fragment.created_at;
+    }
+    if mentioned.contains("acknowledged") {
+        record.acknowledged = fragment.acknowledged;
+    }
+    if mentioned.contains("acceptance") || mentioned.contains("check") {
+        record.acceptance.clone_from(&fragment.acceptance);
+    }
+    if mentioned.contains("claim") || mentioned.contains("claims") {
+        record.claims.clone_from(&fragment.claims);
+    }
+    if mentioned.contains("retired_claims") {
+        record.retired_claims.clone_from(&fragment.retired_claims);
+    }
+    if mentioned.contains("source") || mentioned.contains("sources") {
+        record.sources.clone_from(&fragment.sources);
+    }
+    if mentioned.contains("disposition") {
+        record.dispositions.clone_from(&fragment.dispositions);
+    }
+    for name in mentioned {
+        if let Some(slot) = ContentSlot::from_name(name) {
+            match fragment.content.get(&slot) {
+                Some(value) => {
+                    record.content.insert(slot, value.clone());
+                }
+                None => {
+                    record.content.remove(&slot);
+                }
+            }
+        }
+        if let Some(relation) = Relation::from_name(name) {
+            match fragment.relations.get(&relation) {
+                Some(targets) => {
+                    record.relations.insert(relation, targets.clone());
+                }
+                None => {
+                    record.relations.remove(&relation);
+                }
+            }
+        }
+    }
+    record
 }
 
 /// Wraps a partial `--from` body in whatever it is missing.

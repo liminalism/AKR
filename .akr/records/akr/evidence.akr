@@ -429,6 +429,18 @@ record akr.evidence.papercuts-2026-08-25/1 : evidence {
         """
 }
 
+record akr.evidence.papercuts-2026-08-27/1 : evidence {
+    title "CLI revise --from merge and state tests, L002 fixture and healing, MCP get continuation, ops writes, clippy and design-set checker all passed."
+    state verified
+    result pass
+    method command
+    observed_at git:ffbf6c028a430cef77bcbd907d27f0b2fdb293c1
+    command "cargo test -p akr-cli --test writes; cargo test -p akr-core --test ops_write --test fixture_corpus; cargo test -p akr-mcp budget; cargo clippy -p akr-core -p akr-cli -p akr-mcp --all-targets -- -D warnings; python tools/check-design.py"
+    summary """
+        CLI revise --from merge and state tests, L002 fixture and healing, MCP get continuation, ops writes, clippy and design-set checker all passed.
+        """
+}
+
 record akr.evidence.post-commit-validation-suite/1 : evidence {
     title "The full workspace suite, no-default-features build, projection regeneration, and current-view validation passed with post-commit convergence regressions included."
     state verified

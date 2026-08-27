@@ -173,15 +173,19 @@ pub fn v001_references_resolve(ledger: &Ledger) -> Vec<Diagnostic> {
                     )
                     .note(Label::with_message(subject(record), "referenced here")),
                 ),
-                Err(HeadError::AmbiguousChainEnd(key, revisions)) => out.push(Diagnostic::error(
-                    c::L002,
-                    RULE,
-                    Subject::Key(key.clone()),
-                    format!(
-                        "{key} has no single head; {} revisions are unsuperseded",
-                        revisions.len()
+                Err(HeadError::AmbiguousChainEnd(key, revisions)) => out.push(
+                    Diagnostic::error(
+                        c::L002,
+                        RULE,
+                        Subject::Key(key.clone()),
+                        HeadError::AmbiguousChainEnd(key.clone(), revisions.clone()).to_string(),
+                    )
+                    .help(
+                        "name those revisions in the successor's `supersedes` list; \
+                         `akr revise` adds missing same-key edges when it creates the \
+                         next head",
                     ),
-                )),
+                ),
                 // Two live revisions is V-012's diagnostic, not this rule's.
                 Err(HeadError::MultipleLive(..)) => {}
             }

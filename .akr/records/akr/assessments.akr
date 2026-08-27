@@ -205,3 +205,77 @@ record akr.assessment.papercut-reconciliation-2026-08-25/1 : assessment {
     as_of git:4b3212b16511e2cd2546c26c35271ada3d1cea6a
     supported_by [ @akr.evidence.papercuts-2026-08-25/1 ]
 }
+
+record akr.assessment.papercut-reconciliation-2026-08-27/1 : assessment {
+    title "The 2026-08-27 collated papercuts are four defects, one spec-correct reset, one remaining deadlock and one environment timeout"
+    state verified
+    scope [
+        path "crates/akr-cli/**",
+        path "crates/akr-core/**",
+        path "crates/akr-mcp/**",
+        path "docs/07-cli.md",
+        path "fixtures/validate/err/**",
+        path "spec/diagnostics/codes-lang.md"
+    ]
+    statement """
+        Reconciliation of @akr.papercut.collated-7-papercuts-from-lege-ecosystem-jpegxl/1.
+        Four reports are defects fixed here, one is correct behaviour with a clearer
+        note, one remains as live work, and one is an environment timeout the CLI
+        already covers.
+
+        FIXED HERE — FOUR DEFECTS.
+
+        1 `akr revise --from` with a partial fragment was not a merge. The CLI parsed
+        the file as a whole record and passed it as `Edits.replace_with`, so any slot
+        the fragment did not name vanished: slice-8 lost acceptance, phase-4 lost
+        depends_on/verified_by, Candidate D lost scope/derived_from. `knowledge.revise`
+        already overlays unmentioned slots (and has tests for it). The CLI now takes
+        the same merge: named slots replace, including emptying them; the rest of the
+        head stays. `--from` wrapping uses the head's kind rather than hardcoding
+        `work`. Documented in docs/07-cli.md and in `akr revise --help`.
+
+        2 `akr revise --from` ignored `state` in the body. ops::revise resets a sealed
+        successor to the class initial state unless `Edits.state` is set, and the CLI
+        only filled that from `--state`. A body that said `state completed` landed
+        `proposed`, which is exempt from V-020, so AKR-R022 errors being repaired
+        vanished for the wrong reason. A `state` slot in the `--from` file now sets
+        `Edits.state` unless `--state` is also given.
+
+        3 AKR-L002 said `{n} revisions are unsuperseded` and pointed at a count.
+        Revisions written without `supersedes` back-edges are unambiguous only while a
+        live head exists; the moment a state-only revise makes every revision
+        terminal, head resolution falls through to the chain-end tier and refuses.
+        The diagnostic now names the edge-less revisions, and `akr revise` on a new
+        head adds `supersedes` edges to every same-key revision that lacked one.
+
+        4 `knowledge.get` with `detail: canonical` truncated at the tool budget and
+        the continuation was `detail: summary`, which drops the acceptance block —
+        the reason an agent asked for canonical. Truncation of a canonical get now
+        continues at `body`, which still carries each check's statement, method,
+        command and verified_by.
+
+        CORRECT BEHAVIOUR, CLEARER NOTE — ONE REPORT. `akr revise --from` on an
+        active work head without `--state` creates the successor as `proposed`. That
+        is docs/07: a content change of sealed knowledge must be accepted again.
+        @akr.work.revise-lifecycle-semantics/1 already recorded the policy. The write
+        now prints that the successor starts proposed and that `--state` keeps it
+        live.
+
+        REMAINING — ONE REPORT. Healing an inherited AKR-T023 on evidence that
+        another record pins by revision still deadlocks: the revise introduces
+        AKR-L021 on the referrer, D-039 correctly refuses it as new, and the
+        referrer cannot be moved to n+1 first because n+1 does not exist yet. The
+        three-write dance (float the pin, revise, re-pin) remains the escape.
+        Tracked as @akr.work.revise-repoints-pinned-referrers.
+
+        ENVIRONMENT — ONE REPORT. The AKR MCP server failing to connect at session
+        start is a host timeout on stdio handshake, not a ledger diagnostic. The
+        CLI path (`akr start`, `akr context`, `akr get`) is the supported fallback
+        and worked. Reinstalling with scripts/setup-akr-mcp.sh is what refreshes a
+        stale server binary; `skew` cannot catch it because the vocabulary version
+        did not move.
+        """
+    confidence high
+    as_of git:ffbf6c028a430cef77bcbd907d27f0b2fdb293c1
+    derived_from [ @akr.papercut.collated-7-papercuts-from-lege-ecosystem-jpegxl ]
+}

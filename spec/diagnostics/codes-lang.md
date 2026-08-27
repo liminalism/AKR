@@ -138,7 +138,7 @@ but not the graph's transitive properties.
 | Code | Title | Sev | Rule | Message | Cause and fix |
 | --- | --- | --- | --- | --- | --- |
 | `AKR-L001` | Unresolved reference | error | V-001 | `no record with key {key}; did you mean {suggestion}?` | Suggestion is by edit distance over declared keys. |
-| `AKR-L002` | Key has no resolvable head | error | V-001 | `{key} has no single head; {n} revisions are unsuperseded` | Only raised when the second tier of head resolution is also ambiguous (`docs/04` §3). A key whose head is merely terminal resolves fine; V-019 decides whether that is acceptable. |
+| `AKR-L002` | Key has no resolvable head | error | V-001 | `{key} has no single head; revisions {revs} are unsuperseded (no incoming supersedes edge)` | Only raised when the second tier of head resolution is also ambiguous (`docs/04` §3). A key whose head is merely terminal resolves fine; V-019 decides whether that is acceptable. The diagnostic names the edge-less revisions; `akr revise` adds missing same-key `supersedes` edges when it creates the next head. |
 | `AKR-L003` | Unknown revision | error | V-001 | `{key} has no revision {n}; revisions are 1..{max}` | |
 | `AKR-L004` | Undeclared namespace | error | V-002 | `namespace `{ns}` is not declared in project.akr` | The defence against typo-drift creating a second graph. |
 | `AKR-L005` | Project mismatch | error | V-002 | `file declares project `{a}`, project.akr declares `{b}`` | Usually a file copied between repositories. |

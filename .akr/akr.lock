@@ -2,10 +2,10 @@ akr-lock 0.1
 project akr
 
 build {
-    tool "akr 0.3.3"
+    tool "akr 0.4.0"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:c6849f6812c278088c1c6018d87bb36faf28e7ce5983f7cac5b37fc85bb1638b"
+    source_graph "sha256:b714e5d02319db3acf87f15991c9382b3949456966f7b2cf56c7a05e5cfe4271"
 }
 
 source ".akr/project.akr" {
@@ -14,8 +14,8 @@ source ".akr/project.akr" {
 }
 
 source ".akr/records/akr/assessments.akr" {
-    hash "sha256:7474c1f90950afdd9f048c429a0d66d8cc0bbdc1d88a36e1187d55cf069df5ce"
-    records 3
+    hash "sha256:40b0346a38207e42f68c1eec0720d6f2e398682577e963f30e1af98599a809df"
+    records 4
 }
 
 source ".akr/records/akr/decisions.akr" {
@@ -24,8 +24,8 @@ source ".akr/records/akr/decisions.akr" {
 }
 
 source ".akr/records/akr/evidence.akr" {
-    hash "sha256:95fbf7dcd01cc0fbda56dc3131d1fd8a99415fab95912bcef84da9817d3bd429"
-    records 51
+    hash "sha256:a7bc3e151259db893626050a17942e8f84c21aef2b5b56b5aaed53b90fc9c8a2"
+    records 52
 }
 
 source ".akr/records/akr/milestones.akr" {
@@ -34,13 +34,19 @@ source ".akr/records/akr/milestones.akr" {
 }
 
 source ".akr/records/akr/papercuts.akr" {
-    hash "sha256:63081e506a7d3e5d3409568a14fd76207bcb6bb8c5a8ddc875f9e8d37b597eb3"
-    records 73
+    hash "sha256:b0ef85fe36abc00a65465265fb48e4313b304fb897ed7e9a42ffd04f4253067e"
+    records 74
 }
 
 source ".akr/records/akr/work.akr" {
-    hash "sha256:96ca7c02b3bb547b98575c03712ee508493f21cac75c116184a3bbcce7862e81"
-    records 33
+    hash "sha256:0a1fa00bc438ddda9a28ff537d70c22b997967bb5e58f91c2c86c449bab44414"
+    records 35
+}
+
+resolution @akr.assessment.papercut-reconciliation-2026-08-27/1 {
+    slot derived_from
+    to @akr.papercut.collated-7-papercuts-from-lege-ecosystem-jpegxl/1
+    hash "sha256:6e927a6b431f3e7ccf7a057417a8dc0df489215d829b0e45394c6eee4246ba09"
 }
 
 resolution @akr.decision.completed-planning-work-satisfies-dependency/1 {
@@ -229,6 +235,12 @@ resolution @akr.work.papercut-collation-followthrough/1 {
     hash "sha256:c61b4c012aaeffc5c35cb57b6a3333e4dce3950dcfa40f407a1b025b08f439c5"
 }
 
+resolution @akr.work.papercuts-2026-08-27/1 {
+    slot derived_from
+    to @akr.papercut.collated-7-papercuts-from-lege-ecosystem-jpegxl/1
+    hash "sha256:6e927a6b431f3e7ccf7a057417a8dc0df489215d829b0e45394c6eee4246ba09"
+}
+
 resolution @akr.work.post-commit-validation/1 {
     slot implements
     to @akr.decision.post-commit-validation/1
@@ -239,6 +251,12 @@ resolution @akr.work.post-commit-validation/2 {
     slot implements
     to @akr.decision.post-commit-validation/1
     hash "sha256:52788211fba3a8c58d860e6e3eb46c566468ebc1f4f5c0b663c885e473cc95b7"
+}
+
+resolution @akr.work.revise-repoints-pinned-referrers/1 {
+    slot derived_from
+    to @akr.papercut.collated-7-papercuts-from-lege-ecosystem-jpegxl/1
+    hash "sha256:6e927a6b431f3e7ccf7a057417a8dc0df489215d829b0e45394c6eee4246ba09"
 }
 
 resolution @akr.work.session-head-briefing/1 {
@@ -278,6 +296,11 @@ seal @akr.assessment.papercut-reconciliation-2026-08-11/2 {
 seal @akr.assessment.papercut-reconciliation-2026-08-25/1 {
     state verified
     hash "sha256:591d00a19b64cf3aec7eb9da034fdef5c4971860cd18b4a4955b5130b0be325e"
+}
+
+seal @akr.assessment.papercut-reconciliation-2026-08-27/1 {
+    state verified
+    hash "sha256:1e474c1a4a69649f01639b67761ccf59769bee6f9d7d326217b9377046b5004c"
 }
 
 seal @akr.decision.change-transaction-not-commit-kind/1 {
@@ -570,6 +593,11 @@ seal @akr.evidence.papercuts-2026-08-25/1 {
     hash "sha256:b5357188430d98ca839d6948b0478b7a67ff2a33d5bcde21a8cd4a6e210cee58"
 }
 
+seal @akr.evidence.papercuts-2026-08-27/1 {
+    state verified
+    hash "sha256:356ed3cff04c2758c738cd3b75c48f26d282ef4363573873631fe56f7039de68"
+}
+
 seal @akr.evidence.post-commit-validation-suite/1 {
     state verified
     hash "sha256:84a2275544ad4ebe6e86e106242fbb73f6a664137b8fb2562f695de21a29d648"
@@ -773,6 +801,11 @@ seal @akr.papercut.collated-2-papercuts-from-evidence-intake/1 {
 seal @akr.papercut.collated-20-papercuts-from-kitchen-concept-lege/1 {
     state verified
     hash "sha256:dff334a2668b19052bcb8f7c66aa24848da1765b9546282ba07a0a94c4a5697d"
+}
+
+seal @akr.papercut.collated-7-papercuts-from-lege-ecosystem-jpegxl/1 {
+    state verified
+    hash "sha256:6e927a6b431f3e7ccf7a057417a8dc0df489215d829b0e45394c6eee4246ba09"
 }
 
 seal @akr.papercut.collated-8-papercuts-from-lege-ecosystem/1 {
@@ -1098,6 +1131,11 @@ seal @akr.work.papercut-reconciliation/2 {
 seal @akr.work.papercuts-2026-08-25/1 {
     state completed
     hash "sha256:cb0dc923ce447acdf14046ff4d905790844fdd0ab66df92cbd9b9c05ab67e6c3"
+}
+
+seal @akr.work.papercuts-2026-08-27/1 {
+    state completed
+    hash "sha256:feb9ec539d776567d6388430800f2614bdfbb962337134dd5802f1a2273ccbe2"
 }
 
 seal @akr.work.post-commit-validation/1 {

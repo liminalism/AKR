@@ -129,13 +129,19 @@ pub fn enforce(
 }
 
 /// How to ask this tool for less. Concrete arguments, not "try narrowing your query".
-fn narrowing_advice(tool: &str) -> String {
+fn narrowing_advice(tool: &str, arguments: &Value) -> String {
     match tool {
         "knowledge.search" | "knowledge.source_search" => {
             "Call again with a smaller `limit`, or narrow with `kinds`, `states` or \
              `documents`."
         }
-        "knowledge.get" => "Call again with `detail: \"summary\"`, or with `relations: false`.",
+        "knowledge.get" => match arguments.get("detail").and_then(Value::as_str) {
+            Some("canonical") => {
+                "Call again with `detail: \"body\"`, which still includes acceptance \
+                 checks and their statements. `detail: \"summary\"` drops them."
+            }
+            _ => "Call again with `detail: \"summary\"`, or with `relations: false`.",
+        },
         "knowledge.source_get" => {
             "Call again with `detail: \"snippet\"`, or name a `chunk` instead of a \
              document `id`."
@@ -156,7 +162,13 @@ fn narrowing_advice(tool: &str) -> String {
 /// A ready-made retry, so the next call is a copy rather than a guess.
 fn narrowing_arguments(tool: &str, original: &Value) -> Value {
     let changes = match tool {
-        "knowledge.get" => vec![("detail", Value::string("summary"))],
+        "knowledge.get" => match original.get("detail").and_then(Value::as_str) {
+            Some("canonical") => vec![("detail", Value::string("body"))],
+            _ => vec![
+                ("detail", Value::string("summary")),
+                ("relations", Value::bool(false)),
+            ],
+        },
         "knowledge.source_get" => vec![("detail", Value::string("snippet"))],
         "knowledge.search" | "knowledge.source_search" => vec![("limit", Value::integer(5))],
         "knowledge.start" => vec![("budget_tokens", Value::integer(1_500))],
@@ -186,7 +198,7 @@ fn compact_preview(
     hard_tokens: usize,
     estimated: usize,
 ) -> (String, Value) {
-    let advice = narrowing_advice(tool);
+    let advice = narrowing_advice(tool, arguments);
     let continuation = narrowing_arguments(tool, arguments);
     let mut preview = preview_value(structured, 0);
     let counts = counts_of(structured);
@@ -575,12 +587,48 @@ mod tests {
             Some(&Value::String("summary".to_owned()))
         );
         assert_eq!(
+            continuation
+                .get("arguments")
+                .and_then(|a| a.get("relations")),
+            Some(&Value::Bool(false))
+        );
+        assert_eq!(
             continuation.get("arguments").and_then(|a| a.get("ref")),
             Some(&Value::String("@sys.term.example/1".to_owned()))
         );
         assert!(
             enforced.text.expect("a summary").contains("detail"),
             "the text half has to carry the advice too"
+        );
+    }
+
+    #[test]
+    fn an_oversized_canonical_get_continues_at_body_not_summary() {
+        // `detail: summary` drops the acceptance block, which is the reason an agent
+        // asked for canonical in the first place — to reproduce checks verbatim.
+        let enforced = enforce(
+            "knowledge.get",
+            None,
+            &big(400),
+            None,
+            &Value::object(vec![
+                ("ref", Value::string("@sys.work.example/1")),
+                ("detail", Value::string("canonical")),
+            ]),
+        );
+        let continuation = enforced
+            .structured
+            .get("continuation")
+            .expect("a ready-made retry");
+        assert_eq!(
+            continuation.get("arguments").and_then(|a| a.get("detail")),
+            Some(&Value::String("body".to_owned()))
+        );
+        let text = enforced.text.expect("advice");
+        assert!(text.contains("body"), "{text}");
+        assert!(
+            text.contains("acceptance"),
+            "the advice has to say what summary would lose: {text}"
         );
     }
 

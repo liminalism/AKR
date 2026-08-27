@@ -39,8 +39,9 @@ pub const TOOLS: &[Tool] = &[
     Tool {
         name: "knowledge.get",
         description: "Retrieve one record by reference. `detail` controls the size: \
-                      `summary`, `body` (default), or `canonical` for the raw AKR source \
-                      text. Ask for canonical only when you need the syntax itself.",
+                      `summary`, `body` (default: includes acceptance checks), or \
+                      `canonical` for the raw AKR source text. Ask for canonical only \
+                      when you need the syntax itself; if it truncates, retry with body.",
         writes: false,
     },
     Tool {
@@ -226,9 +227,11 @@ pub fn input_schema(name: &str) -> Option<Value> {
                     "detail",
                     string(
                         "`summary` (identity, state, scope, relation counts, freshness, \
-                         source locators), `body` (the default: adds slots, claims and \
-                         full relations) or `canonical` (adds the raw AKR source text). \
-                         Ask for `canonical` only when you need the syntax itself.",
+                         source locators), `body` (the default: adds slots, claims, \
+                         acceptance checks and full relations) or `canonical` (adds the \
+                         raw AKR source text). Ask for `canonical` only when you need \
+                         the syntax itself; if it truncates, retry with `body` — \
+                         `summary` drops the acceptance block.",
                     ),
                 ),
             ],

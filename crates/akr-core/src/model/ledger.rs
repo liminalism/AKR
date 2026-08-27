@@ -52,10 +52,11 @@ impl fmt::Display for HeadError {
             Self::UnknownKey(k) => write!(f, "no record with key {k}"),
             Self::MultipleLive(k, rs) => write!(f, "{k} has {} live revisions", rs.len()),
             Self::AmbiguousChainEnd(k, rs) => {
+                let list = rs.iter().map(u32::to_string).collect::<Vec<_>>().join(", ");
                 write!(
                     f,
-                    "{k} has no single head; {} revisions are unsuperseded",
-                    rs.len()
+                    "{k} has no single head; revisions {list} are unsuperseded \
+                     (no incoming supersedes edge)"
                 )
             }
         }

@@ -1,0 +1,31 @@
+akr 0.1
+project fixtures
+
+record fx.policy.edgeless/1 : policy {
+    title "Revision 1, withdrawn, no incoming supersedes"
+    state withdrawn
+    scope [ all ]
+    rule """
+        The first rule. Nothing points supersedes at this revision.
+        """
+}
+
+record fx.policy.edgeless/2 : policy {
+    title "Revision 2, also withdrawn, also no incoming supersedes"
+    state withdrawn
+    scope [ all ]
+    rule """
+        The second rule. Completing or withdrawing every revision makes V-001
+        fall through to the chain-end tier, which cannot choose.
+        """
+}
+
+record fx.policy.referrer/1 : policy {
+    title "A live record whose floating reference cannot resolve"
+    state active
+    scope [ all ]
+    rule """
+        The reference is floating, so resolution asks for a head.
+        """
+    depends_on [ @fx.policy.edgeless ]
+}

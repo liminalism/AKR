@@ -455,7 +455,7 @@ pub enum Command {
     Revise {
         /// The key to revise.
         key: String,
-        /// A file holding the replacement body.
+        /// A file holding a slot-list overlay; unmentioned slots stay on the head.
         from: Option<PathBuf>,
         /// A new state for the revision.
         state: Option<String>,
@@ -2240,8 +2240,8 @@ pub fn help_for(name: &str) -> Option<String> {
              every unfinished part_of child, exactly as supersede does (D-017).\n\
              \n\
              FLAGS\n\
-             \x20   --from <file>     a file holding the replacement body\n\
-             \x20   --state <state>   move along the class's lifecycle\n\
+             \x20   --from <file>     a slot-list overlay; unmentioned slots stay on the head\n\
+             \x20   --state <state>   move along the class's lifecycle; also honoured from --from\n\
              \x20   --title <text>    replace the title\n\
              \x20   --in-place        force the in-place path; AKR-C032 on a sealed head\n\
              \x20   --disposition     <child>=<outcome>[:<into>]; repeatable\n"

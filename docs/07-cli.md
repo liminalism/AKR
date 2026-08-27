@@ -653,7 +653,16 @@ a *build* (D-014) and no write operation may invent one.
 
 `--state` moves the new revision along its class's lifecycle. An illegal transition is
 `AKR-T011` (V-007). If `--state` is omitted while changing sealed content, the successor
-starts `proposed` so the changed knowledge must be accepted again.
+starts `proposed` so the changed knowledge must be accepted again. A `state` slot in a
+`--from` file is the same request: it is honoured as `--state` would be. The write
+prints a note when it has reset a sealed head to the class initial state.
+
+`--from` is a slot-list overlay, not a replacement of the record. The successor is the
+head with the named slots applied, which is the same merge `knowledge.revise` already
+does. Unmentioned content slots, relations, scope, acceptance, claims and provenance
+stay; a slot named in the file replaces that slot, including emptying it. A fragment
+that only rewrites `intent` therefore cannot drop an `acceptance` block the author
+never mentioned.
 
 ---
 

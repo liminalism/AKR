@@ -885,6 +885,66 @@ record akr.work.papercuts-2026-08-25/1 : work {
     supported_by [ @akr.assessment.papercut-reconciliation-2026-08-25/1 ]
 }
 
+record akr.work.papercuts-2026-08-27/1 : work {
+    title "Resolve the collated 2026-08-27 AKR papercuts"
+    state completed
+    scope [
+        path "crates/akr-cli/**",
+        path "crates/akr-core/**",
+        path "crates/akr-mcp/**",
+        path "docs/07-cli.md",
+        path "fixtures/validate/err/**",
+        path "spec/diagnostics/codes-lang.md"
+    ]
+    intent """
+        Dispose of @akr.papercut.collated-7-papercuts-from-lege-ecosystem-jpegxl/1.
+        Make `akr revise --from` a slot-list overlay (the merge knowledge.revise already
+        does), honour a `state` slot in that fragment, name AKR-L002's edge-less revisions
+        and heal them on the next revise, and send an oversized knowledge.get of
+        `detail canonical` on to `body` rather than `summary`.
+        """
+    acceptance {
+        check from-honours-state {
+            statement """
+                A `state` slot in a `--from` file lands on the successor of a sealed
+                head; `--state` is not required to stop ops resetting it to proposed.
+                """
+            method command
+            command "cargo test -p akr-cli --test writes revise_from_honours_state_in_the_fragment"
+            verified_by [ @akr.evidence.papercuts-2026-08-27/1 ]
+        }
+        check from-is-a-merge {
+            statement """
+                `akr revise --from` with a partial slot-list keeps unmentioned slots,
+                relations, acceptance, claims and provenance on the head.
+                """
+            method command
+            command "cargo test -p akr-cli --test writes revise_from"
+            verified_by [ @akr.evidence.papercuts-2026-08-27/1 ]
+        }
+        check get-canonical-continues-at-body {
+            statement """
+                An oversized knowledge.get with detail canonical continues at detail body,
+                which still includes acceptance checks, not at summary.
+                """
+            method command
+            command "cargo test -p akr-mcp budget"
+            verified_by [ @akr.evidence.papercuts-2026-08-27/1 ]
+        }
+        check l002-names-and-heals {
+            statement """
+                AKR-L002 names the edge-less revisions, and `akr revise` on a live head
+                whose predecessors lack supersedes back-edges writes those edges on the
+                successor.
+                """
+            method command
+            command "cargo test -p akr-cli --test writes revise_adds_supersedes --test fixture_corpus"
+            verified_by [ @akr.evidence.papercuts-2026-08-27/1 ]
+        }
+    }
+    derived_from [ @akr.papercut.collated-7-papercuts-from-lege-ecosystem-jpegxl ]
+}
+
 record akr.work.post-commit-validation/1 : work {
     title "Make AKR commits validate after Git advances"
     state superseded
@@ -1166,6 +1226,46 @@ record akr.work.revise-lifecycle-semantics/1 : work {
         }
     }
     derived_from [ @akr.papercut.collated-18-papercuts-from-evidence-intake/1 ]
+}
+
+record akr.work.revise-repoints-pinned-referrers/1 : work {
+    title "Repoint pinned referrers in the same write that revises their target"
+    state proposed
+    scope [
+        path "crates/akr-core/src/ops/**",
+        path "crates/akr-core/src/validate/**",
+        path "docs/05-validation-rules.md",
+        path "docs/07-cli.md"
+    ]
+    intent """
+        Revising a record that another live record pins by revision introduces AKR-L021
+        on the referrer, and the write is refused because that diagnostic is new
+        (D-039). The referrer cannot be moved to n+1 first because n+1 does not exist
+        yet. The escape is still a three-write dance: float or drop the pin, revise the
+        target, re-pin. A single write that rewrites non-historical pins of the retired
+        revision onto the successor would close
+        @lege-ecosystem.papercut.healing-an-inherited-akr-t023-on-an-evidence.
+        """
+    acceptance {
+        check historical-pins-stay {
+            statement """
+                A historical pin (`derived_from`, `supersedes`) of the retired revision
+                is left pointing at that revision.
+                """
+            method command
+            command "cargo test -p akr-core --test ops_write"
+        }
+        check same-write-repoint {
+            statement """
+                Revising a sealed record that a live non-historical relation pins by
+                revision updates that pin to the successor in the same atomic write, and
+                does not refuse with AKR-L021 on the referrer.
+                """
+            method command
+            command "cargo test -p akr-core --test ops_write"
+        }
+    }
+    derived_from [ @akr.papercut.collated-7-papercuts-from-lege-ecosystem-jpegxl ]
 }
 
 record akr.work.runtime-hardening/1 : work {

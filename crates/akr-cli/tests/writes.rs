@@ -417,11 +417,174 @@ fn revise_on_a_sealed_head_retires_it_in_the_same_write() {
     let source = example.read_file(".akr/records/sys/terms.akr");
     assert!(source.contains("state superseded"));
     assert!(source.contains("supersedes [ @sys.term.playable-day/1 ]"));
+    assert!(
+        run.stdout.contains("starts proposed"),
+        "a sealed content-only revise must say the successor is unaccepted: {}",
+        run.stdout
+    );
 
     let before_build = example.run(&["check"]);
     assert_eq!(before_build.code, 1, "{}", before_build.output());
     assert!(before_build.output().contains("AKR-R052"));
     assert!(!before_build.output().contains("AKR-R051"));
+}
+
+#[test]
+fn revise_from_a_partial_fragment_keeps_unmentioned_slots() {
+    // CLI `--from` used to replace the record. A fragment that only rewrote `intent`
+    // dropped acceptance, relations and provenance — the merge MCP already did.
+    let example = Example::materialise("write-revise-from-merge");
+    let body = example.root().join("fragment.akr");
+    std::fs::write(
+        &body,
+        "intent \"\"\"\n        Only the intent changed.\n        \"\"\"\n",
+    )
+    .expect("write fragment");
+
+    let run = example.run(&[
+        "revise",
+        "sys.work.legacy-roadmap-import",
+        "--from",
+        body.to_str().expect("utf-8"),
+    ]);
+    assert_eq!(run.code, 0, "{}", run.output());
+    let source = example.read_file(".akr/records/sys/work.akr");
+    assert!(
+        source.contains("Only the intent changed."),
+        "the named slot is applied: {source}"
+    );
+    assert!(
+        source.contains("check lighting-standing-claim"),
+        "acceptance survived the overlay: {source}"
+    );
+    assert!(
+        source.contains("part_of [ @sys.track.tooling-hygiene ]"),
+        "relations survived the overlay: {source}"
+    );
+    assert!(
+        source.contains("docs/legacy/ROADMAP.md"),
+        "provenance survived the overlay: {source}"
+    );
+}
+
+#[test]
+fn revise_from_a_partial_fragment_on_a_sealed_head_keeps_unmentioned_slots() {
+    let example = Example::materialise("write-revise-from-sealed-merge");
+    let body = example.root().join("fragment.akr");
+    std::fs::write(
+        &body,
+        "definition \"\"\"\n        A rewritten definition of the playable day.\n        \"\"\"\n",
+    )
+    .expect("write fragment");
+
+    let run = example.run(&[
+        "revise",
+        "sys.term.playable-day",
+        "--from",
+        body.to_str().expect("utf-8"),
+    ]);
+    assert_eq!(run.code, 0, "{}", run.output());
+    let source = example.read_file(".akr/records/sys/terms.akr");
+    assert!(source.contains("sys.term.playable-day/2"), "{source}");
+    let successor = source
+        .split("record sys.term.playable-day/2")
+        .nth(1)
+        .expect("revision 2");
+    assert!(
+        successor.contains("A rewritten definition of the playable day."),
+        "{successor}"
+    );
+    assert!(
+        successor.contains("aliases [ \"playable day\", \"day-loop build\" ]"),
+        "unmentioned aliases survived: {successor}"
+    );
+    assert!(
+        successor.contains("claim day-boundary"),
+        "unmentioned claims survived: {successor}"
+    );
+}
+
+#[test]
+fn revise_from_honours_state_in_the_fragment() {
+    // A body that said `state completed` used to land `proposed` because only `--state`
+    // filled `Edits.state`, and ops resets a sealed successor to the class initial.
+    let example = Example::materialise("write-revise-from-state");
+    let body = example.root().join("fragment.akr");
+    std::fs::write(
+        &body,
+        "state active\ndefinition \"\"\"\n        Still the playable day, restated.\n        \"\"\"\n",
+    )
+    .expect("write fragment");
+
+    let run = example.run(&[
+        "revise",
+        "sys.term.playable-day",
+        "--from",
+        body.to_str().expect("utf-8"),
+    ]);
+    assert_eq!(run.code, 0, "{}", run.output());
+    let source = example.read_file(".akr/records/sys/terms.akr");
+    assert!(source.contains("sys.term.playable-day/2"), "{source}");
+    assert!(
+        source.contains("aliases [ \"playable day\", \"day-loop build\" ]"),
+        "the overlay still keeps unmentioned slots: {source}"
+    );
+    // The successor is the second record; its state must be the one the fragment named.
+    let successor = source
+        .split("record sys.term.playable-day/2")
+        .nth(1)
+        .expect("revision 2");
+    let successor_state = successor
+        .lines()
+        .find(|line| line.trim_start().starts_with("state "))
+        .expect("a state slot");
+    assert!(
+        successor_state.contains("active"),
+        "the fragment's state lands on the successor: {successor_state}"
+    );
+}
+
+#[test]
+fn revise_adds_supersedes_edges_to_edgeless_same_key_revisions() {
+    let example = Example::materialise("write-revise-edgeless");
+    let path = ".akr/records/sys/work.akr";
+    let existing = example.read_file(path);
+    example.write_file(
+        path,
+        &format!(
+            "{existing}\n\
+             record sys.work.edgeless-chain/1 : work {{\n    \
+             title \"A chain written without back-edges\"\n    \
+             state superseded\n    \
+             intent \"\"\"\n        First revision, never pointed at.\n        \"\"\"\n\
+             }}\n\n\
+             record sys.work.edgeless-chain/2 : work {{\n    \
+             title \"A chain written without back-edges\"\n    \
+             state superseded\n    \
+             intent \"\"\"\n        Second revision, also never pointed at.\n        \"\"\"\n\
+             }}\n\n\
+             record sys.work.edgeless-chain/3 : work {{\n    \
+             title \"A chain written without back-edges\"\n    \
+             state active\n    \
+             intent \"\"\"\n        Live head, no supersedes edge to either predecessor.\n        \"\"\"\n\
+             }}\n"
+        ),
+    );
+
+    let run = example.run(&["revise", "sys.work.edgeless-chain", "--title", "Healed"]);
+    assert_eq!(run.code, 0, "{}", run.output());
+    let source = example.read_file(path);
+    assert!(source.contains("sys.work.edgeless-chain/4"), "{source}");
+    let successor = source
+        .split("record sys.work.edgeless-chain/4")
+        .nth(1)
+        .expect("revision 4");
+    assert!(
+        successor.contains("@sys.work.edgeless-chain/1")
+            && successor.contains("@sys.work.edgeless-chain/2")
+            && successor.contains("@sys.work.edgeless-chain/3"),
+        "the new head points at every edge-less predecessor: {successor}"
+    );
 }
 
 #[test]

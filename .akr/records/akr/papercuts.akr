@@ -1042,6 +1042,47 @@ record akr.papercut.collated-20-papercuts-from-kitchen-concept-lege/1 : papercut
     created_at 2026-08-08
 }
 
+record akr.papercut.collated-7-papercuts-from-lege-ecosystem-jpegxl/1 : papercut {
+    title "Collated 7 papercuts from Lege-ecosystem, jpegXL-rs and raw-autotune"
+    state verified
+    statement """
+        Collated 7 papercuts from /mnt/Samsung980_1TB/Rust-projects on 2026-08-27 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.akr-revise-from-body-on-a-completed-work-record [about akr]
+        `akr revise --from <body>` on a completed work record silently reset it to `proposed` even though the supplied body said `state completed`, and the only signal was the generated commit message reading 'completed -> proposed'. Because a proposed record is exempt from V-020, the AKR-R022 errors I was repairing vanished for the wrong reason. Either honour the state in --from or refuse a body whose state contradicts the lifecycle step.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.healing-an-inherited-akr-t023-on-an-evidence [about akr]
+        Healing an inherited AKR-T023 on an evidence record that another record pins by revision deadlocks: revising the evidence introduces AKR-L021 on the referrer, and the referrer cannot be repointed first because the target revision does not exist yet. The escape is a three-write dance (drop the reference, revise the evidence, re-add it at the new revision); a single write that repoints referrers, or tolerating a superseded pin inside one transaction, would remove it.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.knowledge-get-with-detail-canonical-on-jpegxl [about akr]
+        knowledge.get with detail canonical on jpegxl-rs.work.pqc-usable-efforts-cost/7 truncated at the tool's token cap and the suggested continuation (detail summary) cannot return the acceptance block's source text either, so reproducing checks verbatim for a revision required reading .akr/records/jpegxl-rs/work.akr by hand. A continuation or an acceptance-only detail level would remove the need to touch the records directory.
+
+        ## raw-autotune @raw-autotune.papercut.akr-mcp-server-failed-to-connect-at-session [about akr]
+        AKR MCP server failed to connect at session start (timeout); fell back to akr CLI. knowledge.start/context still work via CLI.
+
+        ## raw-autotune @raw-autotune.papercut.akr-revise-from-on-an-active-work-head-without [about akr]
+        akr revise --from on an active work head, without --state, created rev 2 as proposed and dropped the live head out of active. Had to akr revise --state active to put it back. --from should preserve state unless the fragment sets it.
+
+        ## raw-autotune @raw-autotune.papercut.akr-revise-from-with-a-partial-fragment-dropped [about akr]
+        akr revise --from with a partial fragment dropped unspecified slots: slice-8 lost acceptance+scope, phase-4 lost depends_on+verified_by, Candidate D lost scope+derived_from. Restore by a second --from that lists every slot. Partial --from is not a merge.
+
+        ## raw-autotune @raw-autotune.papercut.state-only-revise-on-sealed-work-head-l002 [about akr 0.3.3 revise --state]
+        akr revise --state completed on raw-autotune.work.train-camsdd-scene-classifier failed with AKR-L002 claiming 3 revisions are unsuperseded although states were consistent (1-3 superseded, head proposed/active). Root cause: revisions 2 and 3 had been written without supersedes back-edges, so edge-based head resolution goes ambiguous the moment every revision is state-terminal. The failure only surfaces on the transition to a terminal state, and the message points at revision count rather than the missing edges, which cost a debugging detour. Fix that worked: give the new head supersedes [ @key/1, @key/2, @key/3 ]. A friendlier diagnostic would name the edge-less revisions.
+        """
+    observed_at git:ffbf6c028a430cef77bcbd907d27f0b2fdb293c1
+    about "akr"
+    collated [
+        "lege-ecosystem.papercut.akr-revise-from-body-on-a-completed-work-record",
+        "lege-ecosystem.papercut.healing-an-inherited-akr-t023-on-an-evidence",
+        "jpegxl-rs.papercut.knowledge-get-with-detail-canonical-on-jpegxl",
+        "raw-autotune.papercut.akr-mcp-server-failed-to-connect-at-session",
+        "raw-autotune.papercut.akr-revise-from-on-an-active-work-head-without",
+        "raw-autotune.papercut.akr-revise-from-with-a-partial-fragment-dropped",
+        "raw-autotune.papercut.state-only-revise-on-sealed-work-head-l002"
+    ]
+    created_at 2026-08-27
+}
+
 record akr.papercut.collated-8-papercuts-from-lege-ecosystem/1 : papercut {
     title "Collated 8 papercuts from Lege-ecosystem and SaveYourSkin"
     state verified
