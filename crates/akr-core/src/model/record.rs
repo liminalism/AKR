@@ -473,4 +473,41 @@ impl Record {
         }
         out
     }
+
+    /// Rewrites every non-historical pinned reference this record makes.
+    ///
+    /// Covers relation slots that are not [`Relation::is_historical`], claim
+    /// `supported_by`, and check `verified_by`. Historical pins (`supersedes`,
+    /// `contradicts`, `derived_from`) stay, and so does `part_of`: V-017's
+    /// dispositions name the children of a *specific* plan revision, and moving
+    /// those pins onto the successor would make every disposition miss.
+    ///
+    /// Returns whether `rewrite` reported a change on any reference.
+    pub fn rewrite_non_historical_pins(
+        &mut self,
+        mut rewrite: impl FnMut(&mut Reference) -> bool,
+    ) -> bool {
+        let mut changed = false;
+        for (relation, targets) in &mut self.relations {
+            if relation.is_historical() || *relation == Relation::PartOf {
+                continue;
+            }
+            for target in targets {
+                changed |= rewrite(target);
+            }
+        }
+        for claim in &mut self.claims {
+            for target in &mut claim.supported_by {
+                changed |= rewrite(target);
+            }
+        }
+        if let Some(acceptance) = &mut self.acceptance {
+            for check in &mut acceptance.checks {
+                for target in &mut check.verified_by {
+                    changed |= rewrite(target);
+                }
+            }
+        }
+        changed
+    }
 }

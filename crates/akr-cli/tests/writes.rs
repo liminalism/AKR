@@ -588,6 +588,71 @@ fn revise_adds_supersedes_edges_to_edgeless_same_key_revisions() {
 }
 
 #[test]
+fn revise_repoints_a_sealed_referrer_as_lock_stale_not_a_body_edit() {
+    let example = Example::materialise("write-revise-pin-follow");
+    let body = example.root().join("pin.akr");
+    std::fs::write(
+        &body,
+        "state active\n\
+         scope [ all ]\n\
+         rule \"\"\"\n        The demo is what this policy stands on.\n        \"\"\"\n\
+         supported_by [ @sys.evidence.playable-day-demo/1 ]\n\
+         derived_from [ @sys.evidence.playable-day-demo/1 ]\n",
+    )
+    .expect("write fragment");
+    let proposed = example.run(&[
+        "propose",
+        "sys.policy.evidence-pin",
+        "--kind",
+        "policy",
+        "--title",
+        "Pins a sealed evidence record",
+        "--from",
+        body.to_str().expect("utf-8"),
+    ]);
+    assert_eq!(proposed.code, 0, "{}", proposed.output());
+    assert_eq!(example.run(&["build"]).code, 0, "seal the pinning policy");
+
+    let run = example.run(&[
+        "revise",
+        "sys.evidence.playable-day-demo",
+        "--title",
+        "Recorded full-day session, restated",
+        "--state",
+        "verified",
+    ]);
+    assert_eq!(run.code, 0, "{}", run.output());
+    assert!(
+        run.stdout.contains("repointed"),
+        "the write names the follow: {}",
+        run.stdout
+    );
+
+    let source = example.read_file(".akr/records/sys/policies.akr");
+    assert!(
+        source.contains("supported_by [ @sys.evidence.playable-day-demo/2 ]"),
+        "the live pin follows: {source}"
+    );
+    assert!(
+        source.contains("derived_from [ @sys.evidence.playable-day-demo/1 ]"),
+        "the historical pin stays: {source}"
+    );
+
+    let check = example.run(&["check"]);
+    assert_eq!(check.code, 1, "{}", check.output());
+    assert!(
+        check.output().contains("AKR-R052"),
+        "pin-follow is lock-stale: {}",
+        check.output()
+    );
+    assert!(
+        !check.output().contains("AKR-R051"),
+        "pin-follow is not a sealed body edit: {}",
+        check.output()
+    );
+}
+
+#[test]
 fn abandon_writes_the_reason_into_the_note_slot() {
     let example = Example::materialise("write-abandon-ok");
     let run = example.run(&[

@@ -563,22 +563,63 @@ fn retire_and_replace(
     let mut retired = head.clone();
     retired.state = State::Superseded;
 
-    apply_many(
-        context,
-        staged,
-        operation,
-        &[
-            (
-                file.clone(),
-                retired,
-                ChangeKind::StateChanged {
-                    from: head.state,
-                    to: State::Superseded,
-                },
+    let successor_rev = record.id.revision;
+    let mut edits = vec![
+        (
+            file.clone(),
+            retired,
+            ChangeKind::StateChanged {
+                from: head.state,
+                to: State::Superseded,
+            },
+        ),
+        (file, record.clone(), ChangeKind::Created),
+    ];
+    // Live non-historical pins of the retired revision would become AKR-L021 the
+    // moment n is superseded, and the referrer cannot be moved to n+1 first because
+    // n+1 does not exist yet. Follow them here, in the same write. Historical pins
+    // stay: they cite that revision for good.
+    let mut followed = Vec::new();
+    for candidate in staged.ledger.records() {
+        if candidate.id.key == key || !candidate.is_live() {
+            continue;
+        }
+        let mut updated = candidate.clone();
+        if updated.rewrite_non_historical_pins(|reference| {
+            follow_pin(reference, &key, head.id.revision, successor_rev)
+        }) {
+            let referrer_file = file_of(staged, &updated.id, operation)?;
+            followed.push(updated.id.clone());
+            edits.push((referrer_file, updated, ChangeKind::Edited));
+        }
+    }
+    followed.sort();
+    edits.sort_by(|left, right| left.1.id.cmp(&right.1.id));
+
+    let mut applied = apply_many(context, staged, operation, &edits)?;
+    if !followed.is_empty() {
+        applied.notes.insert(
+            0,
+            format!(
+                "repointed {} live pin{} of {} onto {}",
+                followed.len(),
+                if followed.len() == 1 { "" } else { "s" },
+                head.id,
+                record.id,
             ),
-            (file, record, ChangeKind::Created),
-        ],
-    )
+        );
+    }
+    Ok(applied)
+}
+
+/// Whether `reference` is a pin of `key` at `old` that should follow onto `new`.
+fn follow_pin(reference: &mut Reference, key: &LogicalKey, old: u32, new: u32) -> bool {
+    if reference.key == *key && reference.revision == Some(old) {
+        reference.revision = Some(new);
+        true
+    } else {
+        false
+    }
 }
 
 /// Creates a revision superseding the head, moving the old head to `superseded`.

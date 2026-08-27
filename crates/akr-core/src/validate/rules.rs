@@ -1479,6 +1479,19 @@ pub fn v024_seals_match(ledger: &Ledger) -> Vec<Diagnostic> {
                         )
                         .help("run `akr build`"),
                     );
+                } else if pin_follow_only_seal_drift(ledger, record, recorded) {
+                    out.push(
+                        Diagnostic::error(
+                            c::R052,
+                            RULE,
+                            subject(record),
+                            format!(
+                                "{} followed a pin onto a successor; akr.lock still records the earlier revision",
+                                record.id
+                            ),
+                        )
+                        .help("run `akr build`"),
+                    );
                 } else {
                     out.push(
                         Diagnostic::error(
@@ -1533,6 +1546,47 @@ fn lifecycle_only_seal_drift(
     before.state = recorded_state;
     crate::hash::content_hash(&crate::syntax::record_text(&before, &ledger.project.name))
         == *recorded_hash
+}
+
+/// Whether a mismatched seal is exactly the pin-follow `akr revise` writes onto live
+/// referrers when it retires a head.
+///
+/// Reverting every non-historical pin from `@key/n` to the same-key revision that `n`
+/// supersedes, then re-hashing, proves that no other hashed content changed. Historical
+/// pins are left alone — they are supposed to stay on the retired revision.
+fn pin_follow_only_seal_drift(
+    ledger: &Ledger,
+    record: &Record,
+    recorded_hash: &crate::model::ContentHash,
+) -> bool {
+    let mut before = record.clone();
+    if !before.rewrite_non_historical_pins(|reference| revert_followed_pin(ledger, reference)) {
+        return false;
+    }
+    crate::hash::content_hash(&crate::syntax::record_text(&before, &ledger.project.name))
+        == *recorded_hash
+}
+
+fn revert_followed_pin(ledger: &Ledger, reference: &mut Reference) -> bool {
+    let Some(revision) = reference.revision else {
+        return false;
+    };
+    let Some(previous) = predecessor_revision(ledger, &reference.key, revision) else {
+        return false;
+    };
+    reference.revision = Some(previous);
+    true
+}
+
+fn predecessor_revision(ledger: &Ledger, key: &LogicalKey, revision: u32) -> Option<u32> {
+    ledger
+        .get(&RevisionId::new(key.clone(), revision))?
+        .targets(Relation::Supersedes)
+        .iter()
+        .filter(|target| &target.key == key)
+        .filter_map(|target| target.revision)
+        .filter(|previous| *previous < revision)
+        .max()
 }
 
 // ---------------------------------------------------------------------------------

@@ -1230,7 +1230,7 @@ record akr.work.revise-lifecycle-semantics/1 : work {
 
 record akr.work.revise-repoints-pinned-referrers/1 : work {
     title "Repoint pinned referrers in the same write that revises their target"
-    state proposed
+    state completed
     scope [
         path "crates/akr-core/src/ops/**",
         path "crates/akr-core/src/validate/**",
@@ -1254,6 +1254,7 @@ record akr.work.revise-repoints-pinned-referrers/1 : work {
                 """
             method command
             command "cargo test -p akr-core --test ops_write"
+            verified_by [ @akr.evidence.revise-repoints-pinned-referrers/1 ]
         }
         check same-write-repoint {
             statement """
@@ -1263,6 +1264,7 @@ record akr.work.revise-repoints-pinned-referrers/1 : work {
                 """
             method command
             command "cargo test -p akr-core --test ops_write"
+            verified_by [ @akr.evidence.revise-repoints-pinned-referrers/1 ]
         }
     }
     derived_from [ @akr.papercut.collated-7-papercuts-from-lege-ecosystem-jpegxl ]

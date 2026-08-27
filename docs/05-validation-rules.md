@@ -224,7 +224,10 @@ derived_from [ @sys.policy.weekly-demo/1 ]
 ```
 
 **Fix.** Point at the live head, or, if the historical fact is what you meant, express it
-with a historical relation and pin the revision.
+with a historical relation and pin the revision. `akr revise` of the target rewrites live
+non-historical pins of the retired revision onto the successor in the same write, so a
+referrer that pinned `@key/n` does not have to be edited first. Historical pins are left
+on *n*.
 
 ---
 

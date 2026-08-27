@@ -500,6 +500,18 @@ record akr.evidence.repairable-ledger-write-pipeline/1 : evidence {
         """
 }
 
+record akr.evidence.revise-repoints-pinned-referrers/1 : evidence {
+    title "Revising sealed evidence that a live policy pins by revision updates supported_by onto the successor in the same write, leaves derived_from on the retired revision, and akr check reports AKR-R052 not AKR-R051. part_of is not followed, so supersede dispositions still match."
+    state verified
+    result pass
+    method command
+    observed_at git:16b26e7d19320b0d43043b1d5a13a85262bf580d
+    command "cargo test -p akr-core --test ops_write; cargo test -p akr-cli --test writes revise_repoints"
+    summary """
+        Revising sealed evidence that a live policy pins by revision updates supported_by onto the successor in the same write, leaves derived_from on the retired revision, and akr check reports AKR-R052 not AKR-R051. part_of is not followed, so supersede dispositions still match.
+        """
+}
+
 record akr.evidence.search-auto-refresh-suite/1 : evidence {
     title "Search auto-refresh and no-rebuild behavior verified"
     state verified

@@ -8,7 +8,7 @@ mod ops_support;
 
 use akr_core::model::{
     Class, Commit, ContentSlot, ContentValue, Kind, Outcome as DispositionOutcome, Record,
-    RecordBuilder, Reference, Segment, State, key,
+    RecordBuilder, Reference, Relation, Segment, State, key,
 };
 use akr_core::ops::{self, DispositionRequest, Edits, ReviseMode, WriteContext, conventional_file};
 use ops_support::Sandbox;
@@ -256,6 +256,87 @@ fn revise_applies_an_explicit_state_to_the_new_revision_of_a_sealed_head() {
         .get(&akr_core::model::RevisionId::new(target, 1))
         .expect("the retired ready revision");
     assert_eq!(first.state, State::Superseded);
+}
+
+fn policy_pinning_evidence(key_text: &str, evidence: &str, revision: u32) -> Record {
+    let mut record = RecordBuilder::new(key_text, 1, Kind::Policy)
+        .title("Pins a sealed evidence record")
+        .all_scope()
+        .build();
+    record.state = State::Active;
+    record.content.insert(
+        ContentSlot::Rule,
+        ContentValue::prose("The demo is what this policy stands on."),
+    );
+    record.relations.insert(
+        Relation::SupportedBy,
+        vec![Reference::pinned(key(evidence), revision)],
+    );
+    record.relations.insert(
+        Relation::DerivedFrom,
+        vec![Reference::pinned(key(evidence), revision)],
+    );
+    record
+}
+
+#[test]
+fn revise_repoints_non_historical_pins_and_leaves_historical_ones() {
+    let sandbox = Sandbox::save_your_skin();
+    let context = WriteContext::new(sandbox.akr_dir()).with_author("tester");
+    let evidence = key("sys.evidence.playable-day-demo");
+    let pin = key("sys.policy.evidence-pin");
+
+    ops::propose(
+        &context,
+        &pin,
+        Kind::Policy,
+        "Pins a sealed evidence record",
+        Some(policy_pinning_evidence(
+            "sys.policy.evidence-pin",
+            "sys.evidence.playable-day-demo",
+            1,
+        )),
+    )
+    .expect("a well-formed pinning policy is accepted");
+
+    let applied = ops::revise(
+        &context,
+        &evidence,
+        ReviseMode::Auto,
+        &Edits {
+            title: Some("Recorded full-day session, restated".to_owned()),
+            state: Some(State::Verified),
+            ..Edits::default()
+        },
+    )
+    .expect("the pin must follow in the same write rather than refuse with AKR-L021");
+
+    assert!(
+        applied
+            .notes
+            .iter()
+            .any(|note| note.contains("repointed")
+                && note.contains("sys.evidence.playable-day-demo/1")),
+        "the write names the follow: {:?}",
+        applied.notes
+    );
+
+    let after = sandbox.ledger();
+    let referrer = after.head(&pin).expect("the pinning policy");
+    assert_eq!(
+        referrer.id.revision, 1,
+        "the referrer is not itself revised"
+    );
+    assert_eq!(
+        referrer.targets(Relation::SupportedBy),
+        &[Reference::pinned(evidence.clone(), 2)],
+        "the live non-historical pin follows onto the successor"
+    );
+    assert_eq!(
+        referrer.targets(Relation::DerivedFrom),
+        &[Reference::pinned(evidence, 1)],
+        "the historical pin stays on the retired revision"
+    );
 }
 
 #[test]

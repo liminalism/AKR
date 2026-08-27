@@ -629,6 +629,17 @@ created, it gains a `supersedes` edge to *n*, and *n* moves to `superseded` — 
 write, not two. The old revision's *body* is untouched and its `supersedes` chain is
 exactly what `akr supersede` would have produced; only its `state` slot changes.
 
+**Live non-historical pins of *n* follow onto *n+1* in that same write.** A `supported_by`,
+`depends_on`, `implements`, `verified_by` or other non-historical pin of `@key/n` would
+become `AKR-L021` the moment *n* is superseded, and the referrer cannot be moved to *n+1*
+first because *n+1* does not exist yet. The write rewrites those pins onto the successor
+and does not create a revision of the referrer: it is the same accompanying graph
+maintenance that retires the old head's state. Historical pins (`supersedes`,
+`contradicts`, `derived_from`) stay on *n* — they cite that revision for good. So does
+`part_of`: V-017 dispositions name the children of that plan revision, and moving the pin
+would make every disposition miss. The lock then records the earlier pin as `AKR-R052`
+until the next `akr build`, not as a sealed body edit (`AKR-R051`).
+
 This is not a convenience. Two live revisions of one key is `AKR-R012` (V-012), and §4
 refuses to write a ledger that does not validate — so a revise that created *n+1* and left
 *n* live would have to be refused, and the "intermediate state" in which the old head is
