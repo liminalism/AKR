@@ -945,6 +945,169 @@ record akr.work.papercuts-2026-08-27/1 : work {
     derived_from [ @akr.papercut.collated-7-papercuts-from-lege-ecosystem-jpegxl ]
 }
 
+record akr.work.papercuts-2026-08-29/1 : work {
+    title "Resolve the 2026-08-29 AKR papercuts"
+    state superseded
+    scope [
+        path "crates/akr-cli/**",
+        path "crates/akr-core/**",
+        path "crates/akr-mcp/**",
+        path "docs/**"
+    ]
+    intent """
+        Reconcile @akr.papercut.collated-1-papercuts-from-saveyourskin/1 and the reported Git-wrapper friction: make strict warning promotion explicit and make the AKR Git bridge honor an explicit commit-message override without losing generated protocol trailers.
+        """
+    acceptance {
+        check effective-severity-visible {
+            statement """
+                Strictly promoted warnings are visibly distinguishable from intrinsic errors in both human validation output and structured CLI/MCP diagnostics.
+                """
+            method command
+            command "cargo test -p akr-cli -p akr-mcp"
+        }
+        check git-message-override {
+            statement """
+                `akr git commit -m <message>` completes the prepared commit, uses the explicit subject/body, and preserves AKR's generated protocol trailers.
+                """
+            method command
+            command "cargo test -p akr-cli --test change_protocol"
+        }
+        check workspace-regression {
+            statement """
+                The workspace test suite and AKR validation pass after the fixes.
+                """
+            method command
+            command "cargo test --workspace && akr check"
+        }
+    }
+}
+
+record akr.work.papercuts-2026-08-29/2 : work {
+    title "Resolve the 2026-08-29 AKR papercuts"
+    state superseded
+    scope [
+        path "crates/akr-cli/**",
+        path "crates/akr-core/**",
+        path "crates/akr-mcp/**",
+        path "docs/**"
+    ]
+    intent """
+        Reconcile @akr.papercut.collated-1-papercuts-from-saveyourskin/1 and the reported Git-wrapper friction: make strict warning promotion explicit and make the AKR Git bridge honor an explicit commit-message override without losing generated protocol trailers.
+        """
+    acceptance {
+        check effective-severity-visible {
+            statement """
+                Strictly promoted warnings are visibly distinguishable from intrinsic errors in both human validation output and structured CLI/MCP diagnostics.
+                """
+            method command
+            command "cargo test -p akr-cli -p akr-mcp"
+        }
+        check git-message-override {
+            statement """
+                `akr git commit -m <message>` completes the prepared commit, uses the explicit subject/body, and preserves AKR's generated protocol trailers.
+                """
+            method command
+            command "cargo test -p akr-cli --test change_protocol"
+        }
+        check workspace-regression {
+            statement """
+                The workspace test suite and AKR validation pass after the fixes.
+                """
+            method command
+            command "cargo test --workspace && akr check"
+        }
+    }
+    supersedes [ @akr.work.papercuts-2026-08-29/1 ]
+}
+
+record akr.work.papercuts-2026-08-29/3 : work {
+    title "Resolve the 2026-08-29 AKR papercuts"
+    state superseded
+    scope [
+        path "crates/akr-cli/**",
+        path "crates/akr-core/**",
+        path "crates/akr-mcp/**",
+        path "docs/**"
+    ]
+    intent """
+        Reconcile @akr.papercut.collated-1-papercuts-from-saveyourskin/1 and the reported Git-wrapper friction: make strict warning promotion explicit and make the AKR Git bridge honor an explicit commit-message override without losing generated protocol trailers.
+        """
+    acceptance {
+        check effective-severity-visible {
+            statement """
+                Strictly promoted warnings are visibly distinguishable from intrinsic errors in both human validation output and structured CLI/MCP diagnostics.
+                """
+            method command
+            command "cargo test -p akr-cli -p akr-mcp"
+        }
+        check git-message-override {
+            statement """
+                `akr git commit -m <message>` completes the prepared commit, uses the explicit subject/body, and preserves AKR's generated protocol trailers.
+                """
+            method command
+            command "cargo test -p akr-cli --test change_protocol"
+        }
+        check workspace-regression {
+            statement """
+                The workspace test suite and AKR validation pass after the fixes.
+                """
+            method command
+            command "cargo test --workspace && akr check"
+        }
+    }
+    derived_from [
+        @akr.papercut.collated-1-papercuts-from-saveyourskin/1,
+        @akr.papercut.while-creating-work-to-fix-a-collated-papercut/1
+    ]
+    supersedes [ @akr.work.papercuts-2026-08-29/2 ]
+}
+
+record akr.work.papercuts-2026-08-29/4 : work {
+    title "Resolve the 2026-08-29 AKR papercuts"
+    state completed
+    scope [
+        path "crates/akr-cli/**",
+        path "crates/akr-core/**",
+        path "crates/akr-mcp/**",
+        path "docs/**"
+    ]
+    intent """
+        Reconcile @akr.papercut.collated-1-papercuts-from-saveyourskin/1 and the reported Git-wrapper friction: make strict warning promotion explicit and make the AKR Git bridge honor an explicit commit-message override without losing generated protocol trailers.
+        """
+    acceptance {
+        check effective-severity-visible {
+            statement """
+                Strictly promoted warnings are visibly distinguishable from intrinsic errors in both human validation output and structured CLI/MCP diagnostics.
+                """
+            method command
+            command "cargo test -p akr-cli -p akr-mcp"
+            verified_by [ @akr.evidence.papercuts-2026-08-29-effective-severity/1 ]
+        }
+        check git-message-override {
+            statement """
+                `akr git commit -m <message>` completes the prepared commit, uses the explicit subject/body, and preserves AKR's generated protocol trailers.
+                """
+            method command
+            command "cargo test -p akr-cli --test change_protocol"
+            verified_by [ @akr.evidence.papercuts-2026-08-29-git-message/1 ]
+        }
+        check workspace-regression {
+            statement """
+                The workspace test suite and AKR validation pass after the fixes.
+                """
+            method command
+            command "cargo test --workspace && akr check"
+            verified_by [ @akr.evidence.papercuts-2026-08-29-workspace/1 ]
+        }
+    }
+    derived_from [
+        @akr.papercut.akr-git-commit-m-message-accepted-the-flag-but/1,
+        @akr.papercut.collated-1-papercuts-from-saveyourskin/1,
+        @akr.papercut.while-creating-work-to-fix-a-collated-papercut/2
+    ]
+    supersedes [ @akr.work.papercuts-2026-08-29/3 ]
+}
+
 record akr.work.post-commit-validation/1 : work {
     title "Make AKR commits validate after Git advances"
     state superseded

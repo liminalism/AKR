@@ -174,6 +174,17 @@ record akr.papercut.akr-change-prepare-staged-reports-code-n-files/1 : papercut 
     created_at 2026-08-25
 }
 
+record akr.papercut.akr-git-commit-m-message-accepted-the-flag-but/1 : papercut {
+    title "`akr git commit -m <message>` accepted the flag but silently ignored…"
+    state verified
+    statement """
+        `akr git commit -m <message>` accepted the flag but silently ignored it, committing the generated prose instead. The wrapper should honor Git-style repeated `-m` paragraphs while retaining AKR's canonical trailers.
+        """
+    observed_at git:ccb4ae57f1c55bb765fd81b3c2c99cfa64d3beb3
+    author "codex"
+    created_at 2026-08-29
+}
+
 record akr.papercut.bug-needs-a-decision-d-028-is-incomplete/1 : papercut {
     title "BUG (needs a decision, D-028 is incomplete): completing a COMMITTED…"
     state superseded
@@ -274,6 +285,21 @@ record akr.papercut.collated-1-papercuts-from-evidence-intake-2/1 : papercut {
     collated [ "evidence-intake-project.papercut.knowledge-revise-on-a-proposed-decision-in" ]
     author "GitHub Uploader"
     created_at 2026-08-19
+}
+
+record akr.papercut.collated-1-papercuts-from-saveyourskin/1 : papercut {
+    title "Collated 1 papercut from SaveYourSkin"
+    state verified
+    statement """
+        Collated 1 papercut from /mnt/Samsung980_1TB/Rust-projects on 2026-08-29 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
+
+        ## SaveYourSkin @saveyourskin.papercut.akr-check-and-akr-validate-0-3-3-exit-1-and [about akr]
+        `akr check` and `akr validate` (0.3.3) exit 1 and report `ok: false` with a trailing "1 error" summary line, while emitting zero error-severity diagnostics: `akr --format json check` returns 24 diagnostics, all `warning`, and the MCP `knowledge.validate` agrees (24 total, none error). The count in the summary has no diagnostic behind it, so there is nothing to act on and no way to tell a real failure from this one. Confirmed pre-existing rather than caused by this session's writes by stashing the ledger changes and re-running: identical output at the unmodified HEAD. Guess: the error counter and the diagnostic emitter disagree about a rule that is being suppressed from the report — possibly AKR-T023 (evidence artifact under .agent/scratch), which the same binary DOES print, 14 of them, when run against a fresh worktree where the cited scratch paths are absent.
+        """
+    observed_at git:ccb4ae57f1c55bb765fd81b3c2c99cfa64d3beb3
+    about "akr"
+    collated [ "saveyourskin.papercut.akr-check-and-akr-validate-0-3-3-exit-1-and" ]
+    created_at 2026-08-29
 }
 
 record akr.papercut.collated-10-papercuts-from-evidence-intake/1 : papercut {
@@ -1749,6 +1775,27 @@ record akr.papercut.while-checking-akr-mcp-without-default-features/2 : papercut
     supersedes [ @akr.papercut.while-checking-akr-mcp-without-default-features/1 ]
     author "codex"
     created_at 2026-08-12
+}
+
+record akr.papercut.while-creating-work-to-fix-a-collated-papercut/1 : papercut {
+    title "While creating work to fix a collated papercut, `resolves` rejected a…"
+    state superseded
+    statement """
+        While creating work to fix a collated papercut, `resolves` rejected a papercut target (AKR-L031), leaving no typed relation from remediation work to the friction report it addresses. The provenance must be buried in prose instead.
+        """
+    observed_at git:ccb4ae57f1c55bb765fd81b3c2c99cfa64d3beb3
+    author "codex"
+    created_at 2026-08-29
+}
+
+record akr.papercut.while-creating-work-to-fix-a-collated-papercut/2 : papercut {
+    title "While creating work to fix a collated papercut, `resolves` rejected a…"
+    state verified
+    statement """
+        While creating work to fix a collated papercut, `resolves` rejected a papercut target (AKR-L031) without naming the valid provenance relation. Retrying with `derived_from` worked; the rejection should suggest that relation so the remediation link is not buried in prose.
+        """
+    observed_at git:ccb4ae57f1c55bb765fd81b3c2c99cfa64d3beb3
+    supersedes [ @akr.papercut.while-creating-work-to-fix-a-collated-papercut/1 ]
 }
 
 record akr.papercut.while-locating-the-non-fts-start-and/1 : papercut {

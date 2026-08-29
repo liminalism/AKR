@@ -161,6 +161,7 @@ A diagnostic object:
 {
   "code": "AKR-R001",
   "severity": "error",
+  "effective_severity": "error",
   "stage": "resolve",
   "rule": "V-012",
   "message": "two live revisions of one key",
@@ -171,6 +172,10 @@ A diagnostic object:
   "help": "supersede revision 1, or withdraw it (see V-012)"
 }
 ```
+
+`severity` is the diagnostic's declared severity. `effective_severity` applies the active
+profile: under the default `--strict` profile a declared warning can therefore have an
+effective severity of `error`, while intrinsic errors remain visibly distinct.
 
 Rules for JSON output, which exist so that a script can rely on it:
 

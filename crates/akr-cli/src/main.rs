@@ -43,7 +43,13 @@ fn run(argv: &[String]) -> Exit {
                 let outcome = commands::run(&mut session, &command);
                 let diagnostics = outcome.as_ref().map_or_else(
                     |_| Vec::new(),
-                    |output| commands::diagnostics_json(&output.diagnostics, &session.sources),
+                    |output| {
+                        commands::diagnostics_json(
+                            &output.diagnostics,
+                            &session.sources,
+                            session.global.profile,
+                        )
+                    },
                 );
                 (outcome, diagnostics)
             }

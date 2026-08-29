@@ -356,12 +356,15 @@ pub fn message(session: &Session) -> Result<Output, EnvError> {
 }
 
 /// `akr git commit` — generate the message and hand the index to git.
-pub fn commit(session: &Session) -> Result<Output, EnvError> {
+pub fn commit(session: &Session, message_override: Option<&str>) -> Result<Output, EnvError> {
     let repository = repository(session)?;
     let (intent, delta, staged, tree) = prepared(session)?;
     let graph = session.resolve().source_graph.to_string();
-    let message =
+    let generated =
         akr_core::change::commit_message(&intent, &delta, Some(&staged), Some(&tree), Some(&graph));
+    let message = message_override.map_or(generated.clone(), |prose| {
+        replace_generated_prose(&generated, prose)
+    });
     let commit = repository
         .commit(&message)
         .map_err(|e| EnvError::new("AKR-G001", e.to_string()))?;
@@ -378,6 +381,19 @@ pub fn commit(session: &Session) -> Result<Output, EnvError> {
             ("change", Value::string(intent.id)),
         ]),
     ))
+}
+
+/// Replaces the human prose while retaining the canonical, machine-readable trailers.
+fn replace_generated_prose(generated: &str, prose: &str) -> String {
+    let trailers = generated
+        .find("\nAKR-Change: ")
+        .map_or("", |start| generated[start..].trim());
+    let prose = prose.trim();
+    if trailers.is_empty() {
+        format!("{prose}\n")
+    } else {
+        format!("{prose}\n\n{trailers}\n")
+    }
 }
 
 /// `akr git log <record>` — the commits whose trailers name a record.

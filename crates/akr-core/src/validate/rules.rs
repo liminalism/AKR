@@ -351,12 +351,28 @@ pub fn v005_targets_kind_correct(ledger: &Ledger) -> Vec<Diagnostic> {
                         Range::SameKind => format!("`{relation}` replaces like with like"),
                         _ => format!("`{relation}` may not target a {}", target.kind),
                     };
-                    out.push(Diagnostic::error(
+                    let alternatives = Relation::ALL
+                        .iter()
+                        .filter(|candidate| {
+                            candidate.domain().accepts(record.kind)
+                                && candidate.range().accepts(record.kind, target.kind)
+                        })
+                        .map(|candidate| candidate.name())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let mut diagnostic = Diagnostic::error(
                         c::L031,
                         RULE,
                         slot_subject(record, SlotRef::Relation(*relation)),
                         detail,
-                    ));
+                    );
+                    if !alternatives.is_empty() {
+                        diagnostic = diagnostic.help(format!(
+                            "relations from {} that may target {}: {alternatives}",
+                            record.kind, target.kind
+                        ));
+                    }
+                    out.push(diagnostic);
                 }
             }
         }

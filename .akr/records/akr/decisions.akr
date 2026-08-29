@@ -3,7 +3,7 @@ project akr
 
 record akr.decision.change-transaction-not-commit-kind/1 : decision {
     title "AKR leads intent, git seals the snapshot, and the bridge is a change transaction"
-    state active
+    state superseded
     scope [
         path "crates/akr-cli/src/change.rs",
         path "crates/akr-core/src/change/**",
@@ -46,6 +46,73 @@ record akr.decision.change-transaction-not-commit-kind/1 : decision {
         remains the final authority.
         """
     supported_by [ @akr.evidence.p11-change-protocol-suite/1 ]
+}
+
+record akr.decision.change-transaction-not-commit-kind/2 : decision {
+    title "AKR leads intent, git seals the snapshot, and the bridge is a change transaction"
+    state superseded
+    scope [
+        path "crates/akr-cli/src/change.rs",
+        path "crates/akr-core/src/change/**",
+        path "crates/akr-core/src/git/**",
+        path "docs/16-change-protocol.md"
+    ]
+    decision """
+        No new record kind. The bridge is AKR work record -> local change transaction -> staged git tree -> generated or explicitly reworded commit prose -> canonical trailers. The transaction lives at `$(git rev-parse --git-path akr/current-change.akr)`: local to the worktree, safe to discard, absent from search and context, never committed. The staged tree, not the working tree, is the synchronisation boundary. `akr diff --staged` computes a semantic delta by parsing the HEAD ledger and the index ledger and comparing them, never `git diff` text, so a reformat or reorder is not a semantic change. `akr change prepare --staged` refuses a material code change that names neither a work record nor an explicit `--untracked-reason`, and records the staged tree id so a tree that moves afterwards invalidates the preparation. `akr git commit` generates the message and hands the index to git; repeated `-m`/`--message` values may replace the human subject and body, but the bridge always retains its canonical trailers. AKR does not implement an object store. The durable link is commit trailers -- AKR-Change, AKR-Work, AKR-Evidence, AKR-Decision, AKR-Graph, AKR-Tree -- which point from the commit to the records, survive rebases and cherry-picks, and can be rebuilt by walking history. Evidence names the code it verified through an implementation digest over the staged tree's sorted (path, mode, blob) triples, excluding `.akr/**` and `docs/generated/**`, which breaks the cycle of the digest changing when the digest is written down. A commit still never completes work; the transaction consumes AKR state transitions and never invents them.
+        """
+    context """
+        An agent finished and verified a substantial change while every corresponding work
+        record still said proposed. A later check caught the divergence, but only because
+        someone ran it. Tooling should make the synchronised path easier than the unsynchronised
+        one -- the question was whether that needs a `commit` record kind.
+        """
+    consequences """
+        A durable `commit` kind was rejected: one work record takes many commits, one commit
+        advances several work records, rebasing changes every object id, and a commit hash
+        cannot be written into a file contained in that same commit without an amendment loop.
+        Hooks were considered as the primary mechanism and rejected as the primary mechanism
+        too, since they are bypassable; `akr git install-hooks` writes thin wrappers around
+        `akr git-hook`, which runs the same verification an author can run by hand, and CI
+        remains the final authority.
+        """
+    derived_from [ @akr.papercut.akr-git-commit-m-message-accepted-the-flag-but/1 ]
+    supersedes [ @akr.decision.change-transaction-not-commit-kind/1 ]
+    supported_by [ @akr.evidence.p11-change-protocol-suite/1 ]
+}
+
+record akr.decision.change-transaction-not-commit-kind/3 : decision {
+    title "AKR leads intent, git seals the snapshot, and the bridge is a change transaction"
+    state active
+    scope [
+        path "crates/akr-cli/src/change.rs",
+        path "crates/akr-core/src/change/**",
+        path "crates/akr-core/src/git/**",
+        path "docs/16-change-protocol.md"
+    ]
+    decision """
+        No new record kind. The bridge is AKR work record -> local change transaction -> staged git tree -> generated or explicitly reworded commit prose -> canonical trailers. The transaction lives at `$(git rev-parse --git-path akr/current-change.akr)`: local to the worktree, safe to discard, absent from search and context, never committed. The staged tree, not the working tree, is the synchronisation boundary. `akr diff --staged` computes a semantic delta by parsing the HEAD ledger and the index ledger and comparing them, never `git diff` text, so a reformat or reorder is not a semantic change. `akr change prepare --staged` refuses a material code change that names neither a work record nor an explicit `--untracked-reason`, and records the staged tree id so a tree that moves afterwards invalidates the preparation. `akr git commit` generates the message and hands the index to git; repeated `-m`/`--message` values may replace the human subject and body, but the bridge always retains its canonical trailers. AKR does not implement an object store. The durable link is commit trailers -- AKR-Change, AKR-Work, AKR-Evidence, AKR-Decision, AKR-Graph, AKR-Tree -- which point from the commit to the records, survive rebases and cherry-picks, and can be rebuilt by walking history. Evidence names the code it verified through an implementation digest over the staged tree's sorted (path, mode, blob) triples, excluding `.akr/**` and `docs/generated/**`, which breaks the cycle of the digest changing when the digest is written down. A commit still never completes work; the transaction consumes AKR state transitions and never invents them.
+        """
+    context """
+        An agent finished and verified a substantial change while every corresponding work
+        record still said proposed. A later check caught the divergence, but only because
+        someone ran it. Tooling should make the synchronised path easier than the unsynchronised
+        one -- the question was whether that needs a `commit` record kind.
+        """
+    consequences """
+        A durable `commit` kind was rejected: one work record takes many commits, one commit
+        advances several work records, rebasing changes every object id, and a commit hash
+        cannot be written into a file contained in that same commit without an amendment loop.
+        Hooks were considered as the primary mechanism and rejected as the primary mechanism
+        too, since they are bypassable; `akr git install-hooks` writes thin wrappers around
+        `akr git-hook`, which runs the same verification an author can run by hand, and CI
+        remains the final authority.
+        """
+    derived_from [ @akr.papercut.akr-git-commit-m-message-accepted-the-flag-but/1 ]
+    supersedes [ @akr.decision.change-transaction-not-commit-kind/2 ]
+    supported_by [
+        @akr.evidence.p11-change-protocol-suite/1,
+        @akr.evidence.papercuts-2026-08-29-git-message/1
+    ]
 }
 
 record akr.decision.completed-planning-work-satisfies-dependency/1 : decision {

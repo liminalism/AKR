@@ -426,8 +426,11 @@ pub enum Command {
     },
     /// `akr git message`.
     GitMessage,
-    /// `akr git commit`.
-    GitCommit,
+    /// `akr git commit [-m <message>]`.
+    GitCommit {
+        /// Human-authored prose replacing the generated subject and body.
+        message: Option<String>,
+    },
     /// `akr git log <record>`.
     GitLog {
         /// The record whose commits to list.
@@ -607,9 +610,10 @@ impl Command {
             | Self::ChangeShow
             | Self::ChangeAbort
             | Self::ChangePrepare { .. } => "change".to_owned(),
-            Self::GitMessage | Self::GitCommit | Self::GitLog { .. } | Self::GitInstallHooks => {
-                "git".to_owned()
-            }
+            Self::GitMessage
+            | Self::GitCommit { .. }
+            | Self::GitLog { .. }
+            | Self::GitInstallHooks => "git".to_owned(),
             Self::GitHook { .. } => "git-hook".to_owned(),
             Self::SourceAdd { .. }
             | Self::SourceList { .. }
@@ -1789,7 +1793,7 @@ fn parse_change(
 }
 
 /// `akr git <subcommand>`.
-fn parse_git(name: &str, positional: &[&String], _tail: &[String]) -> Result<Command, UsageError> {
+fn parse_git(name: &str, positional: &[&String], tail: &[String]) -> Result<Command, UsageError> {
     let sub = positional.first().map(|s| s.as_str()).ok_or_else(|| {
         UsageError::new(
             "AKR-C003",
@@ -1798,7 +1802,55 @@ fn parse_git(name: &str, positional: &[&String], _tail: &[String]) -> Result<Com
     })?;
     Ok(match sub {
         "message" => Command::GitMessage,
-        "commit" => Command::GitCommit,
+        "commit" => {
+            for arg in tail.iter().filter(|arg| arg.starts_with('-')) {
+                let base = arg.split('=').next().unwrap_or(arg);
+                if !matches!(base, "-m" | "--message") {
+                    return Err(UsageError::new(
+                        "AKR-C002",
+                        format!("unknown flag {base:?} for command \"git commit\""),
+                    ));
+                }
+            }
+            let mut messages = Vec::new();
+            let mut index = 1;
+            while index < tail.len() {
+                let argument = &tail[index];
+                if matches!(argument.as_str(), "-m" | "--message") {
+                    let Some(value) = tail.get(index + 1) else {
+                        return Err(UsageError::new(
+                            "AKR-C003",
+                            "git commit -m/--message requires a value",
+                        ));
+                    };
+                    if value.starts_with('-') {
+                        return Err(UsageError::new(
+                            "AKR-C003",
+                            "git commit -m/--message requires a value",
+                        ));
+                    }
+                    messages.push(value.clone());
+                    index += 2;
+                    continue;
+                }
+                if let Some(value) = argument
+                    .strip_prefix("-m=")
+                    .or_else(|| argument.strip_prefix("--message="))
+                {
+                    messages.push(value.to_owned());
+                }
+                index += 1;
+            }
+            if messages.iter().any(|message| message.trim().is_empty()) {
+                return Err(UsageError::new(
+                    "AKR-C004",
+                    "git commit -m/--message may not be empty",
+                ));
+            }
+            Command::GitCommit {
+                message: (!messages.is_empty()).then(|| messages.join("\n\n")),
+            }
+        }
         "install-hooks" => Command::GitInstallHooks,
         "log" => Command::GitLog {
             reference: positional
@@ -2161,7 +2213,7 @@ pub fn help_for(name: &str) -> Option<String> {
         }
         "git" => {
             "akr git message\n\
-             akr git commit\n\
+             akr git commit [-m <message>]\n\
              akr git log <record>\n\
              akr git install-hooks\n\
              \n\
@@ -2172,7 +2224,9 @@ pub fn help_for(name: &str) -> Option<String> {
              cherry-picks and which `git log` finds. Generated views embed AKR-Graph\n\
              rather than an unknowable future commit hash. Evidence and verified work\n\
              that land in the same prepared commit are current together; genuinely\n\
-             older evidence remains too old.\n\
+             older evidence remains too old. `commit -m/--message` replaces the human\n\
+             subject and body while retaining those generated trailers; repeat `-m`\n\
+             to create separate paragraphs, as with Git.\n\
              \n\
              `install-hooks` writes two-line wrappers around `akr git-hook`, so the\n\
              checks stay in the binary rather than becoming a second implementation.\n\

@@ -209,6 +209,25 @@ fn v005_fails_when_a_relation_target_is_out_of_range() {
 }
 
 #[test]
+fn v005_names_relations_that_accept_the_target_kind() {
+    let l = ledger(vec![
+        rec("fx.papercut.friction", 1, Kind::Papercut).build(),
+        rec("fx.work.remediation", 1, Kind::Work)
+            .rel(Relation::Resolves, "@fx.papercut.friction")
+            .build(),
+    ]);
+    let found = validate::v005_targets_kind_correct(&l);
+    let diagnostic = found
+        .iter()
+        .find(|diagnostic| diagnostic.code == c::L031)
+        .expect("the invalid relation is diagnosed");
+    assert_eq!(
+        diagnostic.help.as_deref(),
+        Some("relations from work that may target papercut: contradicts, derived_from")
+    );
+}
+
+#[test]
 fn v005_fails_when_a_kind_is_out_of_domain() {
     let l = ledger(vec![
         rec("fx.req.something", 1, Kind::Requirement).build(),

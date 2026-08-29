@@ -5,7 +5,7 @@ build {
     tool "akr 0.4.0"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:29e5f91dbd80ae00ebcae2c33369520f64f03f37226053441f97dbbc31d33aa4"
+    source_graph "sha256:8753dc20f2648a6541a6142b4e13eaca0ab382a77c809042b5943fb5d6d7c764"
 }
 
 source ".akr/project.akr" {
@@ -14,18 +14,18 @@ source ".akr/project.akr" {
 }
 
 source ".akr/records/akr/assessments.akr" {
-    hash "sha256:40b0346a38207e42f68c1eec0720d6f2e398682577e963f30e1af98599a809df"
-    records 4
+    hash "sha256:7f55790e8f4483d293071ae3b16db0d019e29b9f920d47f9744f8ea4bdb56456"
+    records 6
 }
 
 source ".akr/records/akr/decisions.akr" {
-    hash "sha256:8665e04792c2ba64646069ecb53a6263c08347cde0bfbc3bf892afb95cdd7e10"
-    records 26
+    hash "sha256:cd00d29ec1ad8a4161d097119c13652dde34b84d93d9edd6146f7459d4d26e1c"
+    records 28
 }
 
 source ".akr/records/akr/evidence.akr" {
-    hash "sha256:35c6118ae89770e670fff3da5c5ae96fd785e7ff0f94b18853c7d80188a9e95a"
-    records 53
+    hash "sha256:349275b2e59335004edcf8d950391b6c1bab025e604bfff206a29e9e908b4fb3"
+    records 56
 }
 
 source ".akr/records/akr/milestones.akr" {
@@ -34,13 +34,13 @@ source ".akr/records/akr/milestones.akr" {
 }
 
 source ".akr/records/akr/papercuts.akr" {
-    hash "sha256:b0ef85fe36abc00a65465265fb48e4313b304fb897ed7e9a42ffd04f4253067e"
-    records 74
+    hash "sha256:06a0a0a0a1c0f73ee44d426132fdaabb998bab74a222a9e9c14c4c19128da407"
+    records 78
 }
 
 source ".akr/records/akr/work.akr" {
-    hash "sha256:22fe742ac380955b6799c50bdc219ad4d746a6166ce313036808884334f885d2"
-    records 35
+    hash "sha256:f952498b0441c33abd1f7b569a9ae306e9f2cb451f39a243319d659ca0e904a8"
+    records 39
 }
 
 resolution @akr.assessment.papercut-reconciliation-2026-08-27/1 {
@@ -207,8 +207,8 @@ resolution @akr.work.p10-external-sources/1 {
 
 resolution @akr.work.p11-change-protocol/1 {
     slot implements
-    to @akr.decision.change-transaction-not-commit-kind/1
-    hash "sha256:879bd3c794aac65ee656bf369d14a6f5042849087e3e820f1d5ca221b6c69eba"
+    to @akr.decision.change-transaction-not-commit-kind/3
+    hash "sha256:90173e16902d08905e8b504eef0f25fe1f968b6b60457f3f496e76ffd5992175"
 }
 
 resolution @akr.work.p11-change-protocol/1 {
@@ -303,9 +303,29 @@ seal @akr.assessment.papercut-reconciliation-2026-08-27/1 {
     hash "sha256:1e474c1a4a69649f01639b67761ccf59769bee6f9d7d326217b9377046b5004c"
 }
 
+seal @akr.assessment.papercut-reconciliation-2026-08-29/1 {
+    state superseded
+    hash "sha256:d82193534222a23181ccdad4da825bd4b865d8ae619d3a334e08271838703c13"
+}
+
+seal @akr.assessment.papercut-reconciliation-2026-08-29/2 {
+    state verified
+    hash "sha256:70c4a03d3f1a24e105e5dd2853899d2aa998ca6454b5cffa4138ce2272cdac27"
+}
+
 seal @akr.decision.change-transaction-not-commit-kind/1 {
+    state superseded
+    hash "sha256:65629fa98c4ae5bcca85d3a3cdac87bb7c5b96fd9c9b84d9ba453ff2f9f187d6"
+}
+
+seal @akr.decision.change-transaction-not-commit-kind/2 {
+    state superseded
+    hash "sha256:da045b5f0d440dff21fc139b5f839e3bd19740bc7e25b8fd9a924f15606742a2"
+}
+
+seal @akr.decision.change-transaction-not-commit-kind/3 {
     state active
-    hash "sha256:879bd3c794aac65ee656bf369d14a6f5042849087e3e820f1d5ca221b6c69eba"
+    hash "sha256:90173e16902d08905e8b504eef0f25fe1f968b6b60457f3f496e76ffd5992175"
 }
 
 seal @akr.decision.completed-planning-work-satisfies-dependency/1 {
@@ -598,6 +618,21 @@ seal @akr.evidence.papercuts-2026-08-27/1 {
     hash "sha256:356ed3cff04c2758c738cd3b75c48f26d282ef4363573873631fe56f7039de68"
 }
 
+seal @akr.evidence.papercuts-2026-08-29-effective-severity/1 {
+    state verified
+    hash "sha256:c2b11ac7f1479f8a4e34d7fd9a35042db6be91f6ea4d3e923114d6d15542beda"
+}
+
+seal @akr.evidence.papercuts-2026-08-29-git-message/1 {
+    state verified
+    hash "sha256:a51f14eaf749e432c4be930c21f9c94e60dda90fe1f427fa8db5bc33883e1739"
+}
+
+seal @akr.evidence.papercuts-2026-08-29-workspace/1 {
+    state verified
+    hash "sha256:c7a60411fabec902c1f3b91128e7b627ba3524de823f9d81c503d5ca6a122616"
+}
+
 seal @akr.evidence.post-commit-validation-suite/1 {
     state verified
     hash "sha256:84a2275544ad4ebe6e86e106242fbb73f6a664137b8fb2562f695de21a29d648"
@@ -708,6 +743,11 @@ seal @akr.papercut.akr-change-prepare-staged-reports-code-n-files/1 {
     hash "sha256:c9e863839579982103856a02552b9270ead8e5f9021156f1c3989816af830fa3"
 }
 
+seal @akr.papercut.akr-git-commit-m-message-accepted-the-flag-but/1 {
+    state verified
+    hash "sha256:4eb88175609562a16a99924fa2f6023775dbda3f7815a1940eb9e21d1fdb3855"
+}
+
 seal @akr.papercut.bug-needs-a-decision-d-028-is-incomplete/1 {
     state superseded
     hash "sha256:553da3c0776804b81386d742fe24c9f2a720e9eadf0988b9242d71315e76eaac"
@@ -746,6 +786,11 @@ seal @akr.papercut.collated-1-papercuts-from-evidence-intake/1 {
 seal @akr.papercut.collated-1-papercuts-from-evidence-intake-2/1 {
     state verified
     hash "sha256:17daab91c36f30c353328095a16ed4e1026e15f775853a8982b0fe31fc6425ee"
+}
+
+seal @akr.papercut.collated-1-papercuts-from-saveyourskin/1 {
+    state verified
+    hash "sha256:4bc29f83188330f60c72552dc4a1195aedfcc87e4fd031b3eb5c7f32556875d7"
 }
 
 seal @akr.papercut.collated-10-papercuts-from-evidence-intake/1 {
@@ -1018,6 +1063,16 @@ seal @akr.papercut.while-checking-akr-mcp-without-default-features/2 {
     hash "sha256:8dc6942aa11e7db4f32238c4ac5f9c73f7e61575d42860d3bc853f0c35899df8"
 }
 
+seal @akr.papercut.while-creating-work-to-fix-a-collated-papercut/1 {
+    state superseded
+    hash "sha256:5960f0522a3cbdfa16ee30f33abac21edec471fca84540a03c8921ddc53279db"
+}
+
+seal @akr.papercut.while-creating-work-to-fix-a-collated-papercut/2 {
+    state verified
+    hash "sha256:1b44e6d5472f8e96ce885e22614b31d70cae51ef6d8dda7a5f9be9d2b7f3ecd0"
+}
+
 seal @akr.papercut.while-locating-the-non-fts-start-and/1 {
     state verified
     hash "sha256:c3300f371bd5b01ea0ddf9efa26236dbfe9fa5b7e3c9d6ea6aeedce3ca7745f8"
@@ -1141,6 +1196,26 @@ seal @akr.work.papercuts-2026-08-25/1 {
 seal @akr.work.papercuts-2026-08-27/1 {
     state completed
     hash "sha256:feb9ec539d776567d6388430800f2614bdfbb962337134dd5802f1a2273ccbe2"
+}
+
+seal @akr.work.papercuts-2026-08-29/1 {
+    state superseded
+    hash "sha256:ebf6157466d8a0b379a3e9ef5a68d9cba0b9c89306ca591101a285fa31996b5d"
+}
+
+seal @akr.work.papercuts-2026-08-29/2 {
+    state superseded
+    hash "sha256:e1eacde8718248070f5226b495e9e36aac5d87d602056ff326d4844748fd02f1"
+}
+
+seal @akr.work.papercuts-2026-08-29/3 {
+    state superseded
+    hash "sha256:d8c9c7e50d5a2dbf5f5641acaf01aba921eaeb3e61bff2dc82a4d171d6535249"
+}
+
+seal @akr.work.papercuts-2026-08-29/4 {
+    state completed
+    hash "sha256:3d0a75a959dede7497c1650be6dc17629f7352214b0f6637666f4d368a4f6fa7"
 }
 
 seal @akr.work.post-commit-validation/1 {

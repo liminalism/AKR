@@ -138,6 +138,17 @@ is a second thing that goes stale.
 Generation is deterministic: the same transaction and staged tree produce the same bytes. A
 message an author cannot predict is a message nobody reviews.
 
+When the transaction's summary is too generic, the correction can happen before the commit:
+
+```bash
+akr git commit -m "fix(tone): explain the actual change" \
+  -m "The body can carry implementation context."
+```
+
+As with Git, repeated `-m` values form paragraphs. The explicit message replaces only the
+human subject and body; AKR still appends the canonical trailers for the prepared transaction
+and staged tree. Passing `-m` through the wrapper therefore cannot discard the durable link.
+
 ## 7. Trailers, not stored commit hashes
 
 `AKR-Change`, `AKR-Work`, `AKR-Evidence`, `AKR-Decision`, `AKR-Graph`, `AKR-Tree` — all

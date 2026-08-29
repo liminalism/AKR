@@ -4,7 +4,7 @@
 //! the envelope belong to `main`, so a command never has to know which form was asked for
 //! until the last moment.
 
-use crate::args::Command;
+use crate::args::{Command, Profile};
 use crate::session::{
     EnvError, Exit, GRAMMAR_VERSION, Session, TOOL_VERSION, VOCABULARY_VERSION, diagnostic_json,
     is_fatal, report,
@@ -304,7 +304,7 @@ fn dispatch(session: &mut Session, command: &Command) -> Result<Output, EnvError
         Command::ChangeAbort => crate::change::abort(session),
         Command::ChangePrepare { write } => crate::change::prepare(session, *write),
         Command::GitMessage => crate::change::message(session),
-        Command::GitCommit => crate::change::commit(session),
+        Command::GitCommit { message } => crate::change::commit(session, message.as_deref()),
         Command::GitLog { reference } => crate::change::log(session, reference),
         Command::GitInstallHooks => crate::change::install_hooks(session),
         Command::GitHook { name } => crate::change::git_hook(session, name),
@@ -3514,9 +3514,10 @@ fn explain_kind(kind: akr_core::model::Kind) -> Output {
 pub fn diagnostics_json(
     diagnostics: &[Diagnostic],
     sources: &akr_core::diagnostics::SourceMap,
+    profile: Profile,
 ) -> Vec<Value> {
     diagnostics
         .iter()
-        .map(|d| diagnostic_json(d, sources))
+        .map(|d| diagnostic_json(d, sources, profile))
         .collect()
 }

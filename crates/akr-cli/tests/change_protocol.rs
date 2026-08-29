@@ -391,6 +391,54 @@ fn committing_through_the_bridge_leaves_the_trailers_in_history() {
 }
 
 #[test]
+fn an_explicit_commit_message_replaces_prose_and_keeps_generated_trailers() {
+    let example = Example::materialise("change-commit-message-override");
+    stage_code(&example);
+    example.run(&[
+        "change",
+        "begin",
+        "--kind",
+        "fix",
+        "--summary",
+        "generic generated subject",
+        "--primary",
+        "@sys.work.m3-plan/2",
+    ]);
+    assert_eq!(example.run(&["change", "prepare", "--staged"]).code, 0);
+
+    let commit = example.run(&[
+        "git",
+        "commit",
+        "-m",
+        "fix(tone): explain the actual change",
+        "-m",
+        "The explicit body explains the implementation.",
+    ]);
+    assert_eq!(commit.code, 0, "{}", commit.output());
+
+    let output = std::process::Command::new("git")
+        .args(["log", "-1", "--format=%B"])
+        .current_dir(example.root())
+        .output()
+        .expect("git log runs");
+    assert!(output.status.success());
+    let message = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        message.starts_with(
+            "fix(tone): explain the actual change\n\nThe explicit body explains the implementation."
+        ),
+        "{message}"
+    );
+    assert!(!message.contains("generic generated subject"), "{message}");
+    for trailer in ["AKR-Change:", "AKR-Work:", "AKR-Graph:", "AKR-Tree:"] {
+        assert!(
+            message.contains(trailer),
+            "missing {trailer} in:\n{message}"
+        );
+    }
+}
+
+#[test]
 fn evidence_and_completed_work_can_land_in_the_same_commit() {
     let example = Example::materialise("change-co-committed-evidence");
     baseline(&example);

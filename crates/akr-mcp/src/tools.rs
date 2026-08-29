@@ -658,7 +658,11 @@ fn validate(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
         views_current: false,
     };
     let output = commands::run(&mut session, &command).map_err(environment)?;
-    let diagnostics = commands::diagnostics_json(&output.diagnostics, &session.sources);
+    let diagnostics = commands::diagnostics_json(
+        &output.diagnostics,
+        &session.sources,
+        session.global.profile,
+    );
     let diagnostics_total = diagnostics.len();
     let offset = arguments
         .get("offset")
@@ -1313,7 +1317,7 @@ fn finish(sources: &akr_core::diagnostics::SourceMap, output: Output) -> Result<
     if output.exit == Exit::Ok {
         return Ok(output.result);
     }
-    let diagnostics = commands::diagnostics_json(&output.diagnostics, sources);
+    let diagnostics = commands::diagnostics_json(&output.diagnostics, sources, Profile::Strict);
     let code = first_error_code(&diagnostics)
         .unwrap_or("AKR-R001")
         .to_owned();

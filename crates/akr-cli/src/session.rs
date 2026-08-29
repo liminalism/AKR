@@ -450,17 +450,29 @@ pub fn report(
 ) -> (String, usize) {
     let mut out = String::new();
     let mut fatal = 0;
+    let mut promoted = 0;
     for diagnostic in diagnostics {
         out.push_str(&render(diagnostic, sources));
         out.push('\n');
         if is_fatal(diagnostic, profile) {
             fatal += 1;
+            if diagnostic.severity == Severity::Warning {
+                promoted += 1;
+            }
         }
     }
     if fatal > 0 {
         out.push_str(&format!(
-            "{fatal} error{}\n",
-            if fatal == 1 { "" } else { "s" }
+            "{fatal} error{}{}\n",
+            if fatal == 1 { "" } else { "s" },
+            if promoted == 0 {
+                String::new()
+            } else {
+                format!(
+                    " under --strict ({promoted} warning{} promoted)",
+                    if promoted == 1 { "" } else { "s" }
+                )
+            }
         ));
     }
     (out, fatal)
@@ -468,7 +480,7 @@ pub fn report(
 
 /// The JSON form of a diagnostic (`docs/07-cli.md` §5).
 #[must_use]
-pub fn diagnostic_json(diagnostic: &Diagnostic, sources: &SourceMap) -> Value {
+pub fn diagnostic_json(diagnostic: &Diagnostic, sources: &SourceMap, profile: Profile) -> Value {
     let mut fields = vec![
         ("code", Value::string(diagnostic.code.as_str())),
         (
@@ -476,6 +488,14 @@ pub fn diagnostic_json(diagnostic: &Diagnostic, sources: &SourceMap) -> Value {
             Value::string(match diagnostic.severity {
                 Severity::Error => "error",
                 Severity::Warning => "warning",
+            }),
+        ),
+        (
+            "effective_severity",
+            Value::string(if is_fatal(diagnostic, profile) {
+                "error"
+            } else {
+                "warning"
             }),
         ),
     ];
@@ -557,4 +577,45 @@ fn civil_from_days(days: i64) -> Date {
         u8::try_from(d).unwrap_or(1),
     )
     .unwrap_or_else(|_| Date::new(2026, 1, 1).expect("a valid fallback date"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akr_core::diagnostics::{Code, Label, Subject};
+
+    fn warning() -> Diagnostic {
+        Diagnostic {
+            code: Code::new("AKR-G022"),
+            severity: Severity::Warning,
+            rule: None,
+            message: "a watched path disappeared".to_owned(),
+            primary: Label::new(Subject::Ledger),
+            notes: Vec::new(),
+            help: None,
+        }
+    }
+
+    #[test]
+    fn strict_report_names_promoted_warnings() {
+        let (text, fatal) = report(&[warning()], &SourceMap::new(), Profile::Strict);
+        assert_eq!(fatal, 1);
+        assert!(
+            text.ends_with("1 error under --strict (1 warning promoted)\n"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn structured_diagnostic_carries_declared_and_effective_severity() {
+        let json = diagnostic_json(&warning(), &SourceMap::new(), Profile::Strict);
+        assert_eq!(
+            json.get("severity").and_then(Value::as_str),
+            Some("warning")
+        );
+        assert_eq!(
+            json.get("effective_severity").and_then(Value::as_str),
+            Some("error")
+        );
+    }
 }
