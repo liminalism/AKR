@@ -167,6 +167,26 @@ pub fn load_workspace(root: &Path, akr_dir: &Path) -> io::Result<Workspace> {
     })
 }
 
+/// A one-record file carrying `file`'s header, without cloning the records beside it.
+///
+/// The three projections below all render one record through the real formatter, and each
+/// used to start from `file.clone()` and then throw every other record away. That made
+/// loading a workspace quadratic in the records per file: the 78-record papercut ledger
+/// deep-cloned 78 records seventy-eight times. Only the header fields are needed, and they
+/// are four small values.
+fn header_of(file: &File) -> File {
+    File {
+        leading: Vec::new(),
+        keyword: file.keyword.clone(),
+        version: file.version.clone(),
+        blank_before_header: false,
+        project: file.project.clone(),
+        items: Vec::new(),
+        trailing: Vec::new(),
+        span: file.span,
+    }
+}
+
 /// The canonical text of one record: from the `record` keyword through its closing brace,
 /// with LF endings, no leading indentation, and a single trailing newline.
 ///
@@ -181,10 +201,7 @@ pub fn canonical_record_text(file: &File, index: usize) -> Option<String> {
     if !matches!(file.items.get(index), Some(Item::Record(_))) {
         return None;
     }
-    let mut single = file.clone();
-    single.leading = Vec::new();
-    single.trailing = Vec::new();
-    single.blank_before_header = false;
+    let mut single = header_of(file);
     single.items = vec![file.items[index].clone()];
 
     let rendered = format(&single);
@@ -209,10 +226,7 @@ pub fn definitional_record_text(file: &File, index: usize) -> Option<String> {
     if !matches!(file.items.get(index), Some(Item::Record(_))) {
         return None;
     }
-    let mut single = file.clone();
-    single.leading = Vec::new();
-    single.trailing = Vec::new();
-    single.blank_before_header = false;
+    let mut single = header_of(file);
     let mut item = file.items[index].clone();
     if let Item::Record(record) = &mut item {
         strip_bookkeeping(&mut record.body);
@@ -251,10 +265,7 @@ pub fn revision_independent_definitional_text(file: &File, index: usize) -> Opti
         return None;
     };
     let self_reference = format!("{}/", subject.key);
-    let mut single = file.clone();
-    single.leading = Vec::new();
-    single.trailing = Vec::new();
-    single.blank_before_header = false;
+    let mut single = header_of(file);
     let mut item = file.items[index].clone();
     if let Item::Record(record) = &mut item {
         strip_bookkeeping(&mut record.body);

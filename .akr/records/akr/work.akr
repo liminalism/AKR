@@ -84,6 +84,22 @@ record akr.work.change-delta-counts-the-index/1 : work {
     }
 }
 
+record akr.work.concurrent-ledger-speed/1 : work {
+    title "Cut per-call latency for concurrent agent access to the ledger"
+    state completed
+    scope [
+        path "crates/akr-core/src/git/**",
+        path "crates/akr-core/src/model/**",
+        path "crates/akr-core/src/resolve/**"
+    ]
+    intent """
+        Reduce the wall clock of a knowledge.* call, above all where several agent hosts each run their own akr-mcp against one workspace. Measurement on this repo (208 revisions, 6 ledger files, repository on a fuseblk mount) puts ~95% of a knowledge.validate / knowledge.context / knowledge.start call in git subprocess spawns, not in parsing, resolution or validation: a warm session still spawns git 7-8 times, and each spawn costs 130-420ms here because Command::new("git") re-walks a 38-entry PATH on every call. Trading memory for spawns is explicitly in scope.
+        """
+    note """
+        Baseline, debug-release, one long-lived akr-mcp answering repeated identical calls: knowledge.get 1-5ms, knowledge.impact 8-13ms, knowledge.validate 4.4-36s, knowledge.context 2.2-21s, knowledge.start 8-29s. Phase split of a warm session: open_ledger 65-92ms, ensure_git_facts 2.2-4.7s, resolve 11-15ms, diagnostics 0.3ms, review_queue 5.8ms. Inside load_workspace: parse 2.9ms, canonical text for 208 records 29.5ms of which 19.2ms is a discarded whole-file CST clone per record.
+        """
+}
+
 record akr.work.context-import-provenance-hardening/1 : work {
     title "Harden context budgets, plan import, and build provenance"
     state completed

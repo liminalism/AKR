@@ -496,9 +496,11 @@ pub mod codes {
         pub const C032: Code = Code::new("AKR-C032");
         /// The write target is not the head revision.
         pub const C033: Code = Code::new("AKR-C033");
+        /// A source file changed on disk while the write was being prepared.
+        pub const C034: Code = Code::new("AKR-C034");
 
         /// Every CLI-stage code this crate raises.
-        pub const ALL: &[Code] = &[C012, C031, C032, C033];
+        pub const ALL: &[Code] = &[C012, C031, C032, C033, C034];
     }
 
     /// Codes stage E raises (`docs/06-compiler-pipeline.md` §7).

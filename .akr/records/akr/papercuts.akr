@@ -1304,6 +1304,17 @@ record akr.papercut.crates-akr-cli-tests-commands-rs-is-the-only/2 : papercut {
     created_at 2026-08-18
 }
 
+record akr.papercut.crates-akr-core-src-git-mod-rs-file-versions/1 : papercut {
+    title "crates/akr-core/src/git/mod.rs file_versions() rebound `let mut out =…"
+    state verified
+    statement """
+        crates/akr-core/src/git/mod.rs file_versions() rebound `let mut out = BTreeMap::new()` after the memo-hit loop, shadowing the map that already held every version the memo answered. A partially warm call therefore returned only the freshly fetched versions, and last_changes() reads a missing entry as "the file did not exist at that commit" — so a warm memo could move a record's last definitional change. Fixed by collecting fetched versions separately and extending.
+        """
+    observed_at git:968ac272d86cf36888f22f557aa4ba06d5156f85
+    author "claude"
+    created_at 2026-09-03
+}
+
 record akr.papercut.every-akr-c0nn-usage-refusal-raised-through/1 : papercut {
     title "Every AKR-C0nn usage refusal raised through EnvError exits 3…"
     state verified

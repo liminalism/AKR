@@ -492,6 +492,22 @@ record akr.decision.mcp-envelope-verified-against-real-clients/1 : decision {
         """
 }
 
+record akr.decision.one-writer-at-a-time/1 : decision {
+    title "The write pipeline claims the workspace, and refuses a source that moved under it"
+    state proposed
+    scope [ path "crates/akr-core/src/ops/**", path "docs/07-cli.md" ]
+    decision """
+        Step 0 of the write pipeline takes an advisory lock on `.akr/cache/write.lock` through the operating system's own file locking, held from before the ledger is read until every touched file has been renamed into place. Writers therefore queue and all of them succeed. Immediately before the renames, every file about to be replaced is re-read and must still hold the bytes step 1 read; a disagreement is `AKR-C034` and writes nothing.
+        """
+    context """
+        The pipeline is a read-modify-write and only its renames were atomic, so two processes that both read before either wrote each held a ledger that did not know about the other's record, and the second rename discarded the first while both reported success. Six concurrent `akr papercut` processes landed two records (@akr.observation.concurrent-writes-are-silently-lost). Several agent hosts against one workspace is the normal way this ledger is used. `base_rev` did not cover it: that is optimistic concurrency over one key's head revision, and a newly proposed key engages it nowhere.
+        """
+    consequences """
+        Two mechanisms rather than one, because a lock binds only the processes that take it. The lock lives on an open file handle, so the kernel releases it when a process ends however it ends — no stale lock to reap, no timeout to tune — and it costs no dependency, `std::fs::File::lock` being stable. The re-read is the backstop for what the lock cannot cover: an editor, a `git checkout`, or a filesystem whose locking does not work, where the guarantee degrades from `writers queue` to `a racing writer is told` rather than back to silent loss. The critical section holds no git and no index work, so a queue of agents moves through it in milliseconds each. Measured: sixteen concurrent proposals of distinct keys, sixteen landed; with the lock disabled, three landed and the other thirteen were refused rather than lost.
+        """
+    supported_by [ @akr.observation.concurrent-writes-are-silently-lost ]
+}
+
 record akr.decision.papercut-subject-and-collation/1 : decision {
     title "A papercut says what it was about"
     state superseded

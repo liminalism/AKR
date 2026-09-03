@@ -1,0 +1,14 @@
+akr 0.1
+project akr
+
+record akr.observation.concurrent-writes-are-silently-lost/1 : observation {
+    title "Simultaneous writers silently lose records, each reporting success"
+    state verified
+    scope [ path "crates/akr-cli/src/write.rs", path "crates/akr-core/src/ops/**" ]
+    statement """
+        The write pipeline has no cross-process concurrency control for a write that adds a new key, so simultaneous writers clobber one another and every one of them reports success. Six `akr papercut` processes started together against one workspace: all six printed `wrote .akr/records/akr/papercuts.akr` and exited 0, and two records landed. The mechanism is the read-modify-write in crates/akr-core/src/ops: `Staged::load` reads every source, the operation edits the ledger in memory, and `Staged::commit` writes each touched file whole through a temporary and a rename. The rename is atomic per file, which is what docs/07-cli.md section 4 promises, but nothing detects that the file changed between the read and the write, so the last writer's copy — built from a snapshot that predates the others — wins. `base_rev` (docs/08-mcp.md) is optimistic concurrency for `revise`, and guards a same-key conflict only; a new key appended to a shared records file passes no such check. Reproduced identically on the unmodified tree at 968ac27 and on the current working tree, so it is not a consequence of the speed work.
+        """
+    observed_at git:968ac272d86cf36888f22f557aa4ba06d5156f85
+    method command
+    watches [ "crates/akr-core/src/ops/**", "crates/akr-cli/src/write.rs" ]
+}

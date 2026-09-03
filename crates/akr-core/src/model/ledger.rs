@@ -221,13 +221,42 @@ impl PartOfIndex {
 ///
 /// Head resolution lives here because the validation rules need it and P3's resolver
 /// builds on it rather than replacing it.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Clone, Default)]
 pub struct Ledger {
     /// The project declaration.
     pub project: Project,
     /// Facts supplied by later phases.
     pub facts: LedgerFacts,
     records: Vec<Record>,
+    /// Key -> the positions in `records` that carry it, in insertion order.
+    ///
+    /// Every lookup here used to be a linear scan of the whole record list, and
+    /// [`Ledger::head`] and [`Ledger::resolve`] are called once per relation target by the
+    /// resolver and again by the rules — so a ledger of *n* revisions with *r* references
+    /// cost O(n·r) key comparisons, each one a `Vec<String>` compare. This index makes the
+    /// same questions O(log n) plus the revisions of the one key. It is derived from
+    /// `records` and carries no information of its own, which is why it takes no part in
+    /// equality or in the debug rendering.
+    by_key: BTreeMap<LogicalKey, Vec<usize>>,
+}
+
+/// Equality is over the records, never the derived index.
+impl PartialEq for Ledger {
+    fn eq(&self, other: &Self) -> bool {
+        self.project == other.project && self.facts == other.facts && self.records == other.records
+    }
+}
+
+impl Eq for Ledger {}
+
+impl std::fmt::Debug for Ledger {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Ledger")
+            .field("project", &self.project)
+            .field("facts", &self.facts)
+            .field("records", &self.records)
+            .finish()
+    }
 }
 
 impl Ledger {
@@ -238,18 +267,25 @@ impl Ledger {
             project,
             facts: LedgerFacts::default(),
             records: Vec::new(),
+            by_key: BTreeMap::new(),
         }
     }
 
     /// Adds a record. Duplicate revision identifiers are kept, so that V-001 can report
     /// them (`AKR-L041`) rather than the ledger silently dropping one.
     pub fn insert(&mut self, record: Record) {
+        self.by_key
+            .entry(record.id.key.clone())
+            .or_default()
+            .push(self.records.len());
         self.records.push(record);
     }
 
     /// Adds several records.
     pub fn extend(&mut self, records: impl IntoIterator<Item = Record>) {
-        self.records.extend(records);
+        for record in records {
+            self.insert(record);
+        }
     }
 
     /// Every record revision, in insertion order.
@@ -261,16 +297,16 @@ impl Ledger {
     /// Every key present, sorted.
     #[must_use]
     pub fn keys(&self) -> Vec<&LogicalKey> {
-        let mut keys: Vec<_> = self.records.iter().map(|r| &r.id.key).collect();
-        keys.sort();
-        keys.dedup();
-        keys
+        self.by_key.keys().collect()
     }
 
     /// Every revision of one key, sorted by revision number.
     #[must_use]
     pub fn revisions_of(&self, key: &LogicalKey) -> Vec<&Record> {
-        let mut rs: Vec<_> = self.records.iter().filter(|r| &r.id.key == key).collect();
+        let Some(positions) = self.by_key.get(key) else {
+            return Vec::new();
+        };
+        let mut rs: Vec<&Record> = positions.iter().map(|at| &self.records[*at]).collect();
         rs.sort_by_key(|r| r.id.revision);
         rs
     }
@@ -278,7 +314,11 @@ impl Ledger {
     /// One revision by identifier.
     #[must_use]
     pub fn get(&self, id: &RevisionId) -> Option<&Record> {
-        self.records.iter().find(|r| &r.id == id)
+        self.by_key
+            .get(&id.key)?
+            .iter()
+            .map(|at| &self.records[*at])
+            .find(|r| r.id.revision == id.revision)
     }
 
     /// The head of a key, by the two-tier algorithm of `docs/04` §3.

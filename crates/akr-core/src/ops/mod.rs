@@ -38,6 +38,7 @@
 // operations, not an error case to be made cheap.
 #![allow(clippy::result_large_err)]
 
+mod exclusion;
 mod stage;
 
 use crate::diagnostics::codes::cli;
@@ -51,6 +52,7 @@ use crate::validate;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+pub use exclusion::{WriteLock, verify_unchanged};
 pub use stage::{LoadError, Staged};
 
 // -------------------------------------------------------------------------------------
@@ -302,7 +304,7 @@ pub fn propose(
     title: &str,
     template: Option<Record>,
 ) -> WriteResult {
-    let mut staged = load(context, Operation::Propose)?;
+    let (mut staged, _write_lock) = load_locked(context, Operation::Propose)?;
     if !staged.ledger.revisions_of(key).is_empty() {
         return Err(Refused::new(
             Operation::Propose,
@@ -349,7 +351,7 @@ pub fn propose(
 /// # Errors
 /// Refuses an empty batch, an existing or repeated key, or an invalid resulting ledger.
 pub fn propose_many(context: &WriteContext, templates: &[Record]) -> WriteResult {
-    let mut staged = load(context, Operation::Propose)?;
+    let (mut staged, _write_lock) = load_locked(context, Operation::Propose)?;
     if templates.is_empty() {
         return Err(Refused::new(
             Operation::Propose,
@@ -422,7 +424,7 @@ pub fn revise_with_dispositions(
     edits: &Edits,
     dispositions: &[DispositionRequest],
 ) -> WriteResult {
-    let mut staged = load(context, Operation::Revise)?;
+    let (mut staged, _write_lock) = load_locked(context, Operation::Revise)?;
     let head = head_of(&staged, key, Operation::Revise)?.clone();
     let file = file_of(&staged, &head.id, Operation::Revise)?;
 
@@ -637,7 +639,7 @@ pub fn supersede(
     key: &LogicalKey,
     dispositions: &[DispositionRequest],
 ) -> WriteResult {
-    let mut staged = load(context, Operation::Supersede)?;
+    let (mut staged, _write_lock) = load_locked(context, Operation::Supersede)?;
     let head = head_of(&staged, key, Operation::Supersede)?.clone();
 
     let mut record = head.clone();
@@ -674,7 +676,7 @@ pub fn supersede_with(
         return supersede(context, old_key, dispositions);
     }
 
-    let mut staged = load(context, Operation::Supersede)?;
+    let (mut staged, _write_lock) = load_locked(context, Operation::Supersede)?;
     let old = head_of(&staged, old_key, Operation::Supersede)?.clone();
     let mut replacement = head_of(&staged, new_key, Operation::Supersede)?.clone();
 
@@ -767,7 +769,7 @@ pub fn complete(
     key: &LogicalKey,
     check_evidence: &[(String, Reference)],
 ) -> WriteResult {
-    let mut staged = load(context, Operation::Complete)?;
+    let (mut staged, _write_lock) = load_locked(context, Operation::Complete)?;
     let head = head_of(&staged, key, Operation::Complete)?.clone();
     let file = file_of(&staged, &head.id, Operation::Complete)?;
 
@@ -860,7 +862,7 @@ pub fn abandon(
     reason: &str,
     dispositions: &[DispositionRequest],
 ) -> WriteResult {
-    let mut staged = load(context, Operation::Abandon)?;
+    let (mut staged, _write_lock) = load_locked(context, Operation::Abandon)?;
     let head = head_of(&staged, key, Operation::Abandon)?.clone();
     let file = file_of(&staged, &head.id, Operation::Abandon)?;
 
@@ -983,7 +985,7 @@ pub fn import(context: &WriteContext, request: &ImportRequest) -> WriteResult {
     use crate::diagnostics::codes::migration;
     use crate::model::{Acceptance, Check, CheckMethod, Source, SourceKind};
 
-    let mut staged = load(context, Operation::Import)?;
+    let (mut staged, _write_lock) = load_locked(context, Operation::Import)?;
     let namespaces = &staged.ledger.project.namespaces;
 
     for key in request
@@ -1202,9 +1204,20 @@ pub fn import(context: &WriteContext, request: &ImportRequest) -> WriteResult {
 // pipeline
 // -------------------------------------------------------------------------------------
 
-fn load(context: &WriteContext, operation: Operation) -> Result<Staged, Refused> {
-    Staged::load(&context.akr_dir)
-        .map_err(|error| Refused::new(operation, cli::C012, error.to_string()))
+/// Step 1 of `docs/07` §4, with the exclusive claim taken before the ledger is read.
+///
+/// The claim must outlive the whole operation: it is taken *before* step 1 so that the
+/// bytes the ledger is built from cannot change under it, and released only once step 5
+/// has renamed every file into place. Callers hold it in a binding that lives to the end
+/// of the operation; dropping it early reopens exactly the window it exists to close.
+fn load_locked(
+    context: &WriteContext,
+    operation: Operation,
+) -> Result<(Staged, WriteLock), Refused> {
+    let lock = WriteLock::acquire(&context.akr_dir);
+    let staged = Staged::load(&context.akr_dir)
+        .map_err(|error| Refused::new(operation, cli::C012, error.to_string()))?;
+    Ok((staged, lock))
 }
 
 fn staged_mut(staged: &mut Staged) -> &mut Staged {
@@ -1325,6 +1338,26 @@ fn apply_inner(
     }
 
     // Steps 4 and 5: the text is already canonical; write it.
+    //
+    // Last, immediately before the renames: every file this is about to replace must
+    // still hold the bytes step 1 read. `WriteLock` keeps AKR's own writers out of this
+    // window, so a disagreement here means something the lock does not cover changed a
+    // source mid-operation — an editor, a `git checkout`, or a filesystem that could not
+    // lock. Refusing is the same promise the rest of the pipeline makes; overwriting
+    // would discard a change nobody asked to discard.
+    if let Some(clobbered) = exclusion::verify_unchanged(&context.akr_dir, before.iter()) {
+        return Err(Refused::new(
+            operation,
+            cli::C034,
+            format!(
+                "write aborted: {} changed on disk while this write was being prepared; \
+                 nothing was written",
+                clobbered.display()
+            ),
+        )
+        .with_help("re-read the ledger and retry; another writer or an editor got there first"));
+    }
+
     touched.sort();
     staged
         .commit(&touched)

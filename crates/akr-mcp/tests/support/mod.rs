@@ -376,6 +376,14 @@ impl Example {
             };
             for entry in entries {
                 let path = entry.expect("entry").path();
+                // The disposable cache is not a source. D-019 makes it never
+                // authoritative, always rebuildable and read by nothing outside
+                // `akr-core`, so a refused write that left an index rebuild or the write
+                // pipeline's lock file behind has still left every *source* byte-identical
+                // — which is the promise docs/07 §4 makes and this helper exists to check.
+                if path.file_name().is_some_and(|name| name == "cache") && path.is_dir() {
+                    continue;
+                }
                 if path.is_dir() {
                     walk(&path, base, out);
                 } else if let Ok(bytes) = std::fs::read(&path) {

@@ -96,6 +96,30 @@ record akr.evidence.collated-papercut-reconciliation-2026-08-23/1 : evidence {
         """
 }
 
+record akr.evidence.concurrent-ledger-speed-measurement/1 : evidence {
+    title "Four successive knowledge.start calls to one server: git subprocess spawns per warm call fell from 10 to 3 and total execve syscalls from 1945 to 48; interleaved A/B wall clock on the same workspace put warm-median knowledge.validate at 1339/681ms before against 369/345ms after, knowledge.context at 1408/596 against 434/277, knowledge.start at 1439/992 against 771/500."
+    state verified
+    result pass
+    method command
+    observed_at git:968ac272d86cf36888f22f557aa4ba06d5156f85
+    command "strace -f -e trace=execve akr-mcp --dir . driven with four successive knowledge.start calls, HEAD build vs working tree, same workspace"
+    summary """
+        Four successive knowledge.start calls to one server: git subprocess spawns per warm call fell from 10 to 3 and total execve syscalls from 1945 to 48; interleaved A/B wall clock on the same workspace put warm-median knowledge.validate at 1339/681ms before against 369/345ms after, knowledge.context at 1408/596 against 434/277, knowledge.start at 1439/992 against 771/500.
+        """
+}
+
+record akr.evidence.concurrent-ledger-speed-suite/1 : evidence {
+    title "The full workspace suite passed (738 tests, 0 failures) and clippy was clean over all targets with the git spawn reductions, the ledger key index and the one-record header projection in place."
+    state verified
+    result pass
+    method command
+    observed_at git:968ac272d86cf36888f22f557aa4ba06d5156f85
+    command "cargo test --profile debug-release --workspace && cargo clippy --all-targets --profile debug-release"
+    summary """
+        The full workspace suite passed (738 tests, 0 failures) and clippy was clean over all targets with the git spawn reductions, the ledger key index and the one-record header projection in place.
+        """
+}
+
 record akr.evidence.design-coherence-clean/1 : evidence {
     title "links, codes, vocabulary, manifest, references, grammar, fixtures and terminology checks all pass."
     state verified
@@ -316,6 +340,18 @@ record akr.evidence.non-fts-start-recovery-suite/1 : evidence {
     command "cargo test -p akr-mcp --no-default-features --test differential knowledge_start"
     summary """
         Both non-FTS knowledge.start recovery tests passed, including explicit user-supplied plan paths.
+        """
+}
+
+record akr.evidence.one-writer-at-a-time-suite/1 : evidence {
+    title "The full workspace suite passed (742 tests, 0 failures) with the write-pipeline lock, the pre-rename verification and AKR-C034 in place; clippy, rustfmt and the design-set checker were all clean. tests/ops_concurrency.rs pins the claim: sixteen concurrent proposals of distinct keys all landed, and with the lock disabled only three did while the other thirteen were refused rather than lost."
+    state verified
+    result pass
+    method command
+    observed_at git:968ac272d86cf36888f22f557aa4ba06d5156f85
+    command "cargo test --profile debug-release --workspace && cargo clippy --all-targets --profile debug-release && cargo fmt --all -- --check && python3 tools/check-design.py"
+    summary """
+        The full workspace suite passed (742 tests, 0 failures) with the write-pipeline lock, the pre-rename verification and AKR-C034 in place; clippy, rustfmt and the design-set checker were all clean. tests/ops_concurrency.rs pins the claim: sixteen concurrent proposals of distinct keys all landed, and with the lock disabled only three did while the other thirteen were refused rather than lost.
         """
 }
 

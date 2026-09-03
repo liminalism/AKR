@@ -27,7 +27,7 @@ use std::ffi::OsStr;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// The freshness diagnostics this module raises.
 ///
@@ -197,6 +197,10 @@ struct Memo {
     worktree: Option<BTreeSet<String>>,
     /// Path -> is it ignored.
     ignored: BTreeMap<String, bool>,
+    /// Revision argument -> the commit it names. `HEAD` is asked for once per session.
+    revisions: BTreeMap<String, Commit>,
+    /// `HEAD` and the newest commit naming project work, for the handoff briefing.
+    session: Option<(CommitBrief, Option<CommitBrief>)>,
 }
 
 /// How many `merge-base` calls about one commit are worth paying before walking its
@@ -254,8 +258,8 @@ impl Repository {
     /// # Errors
     /// As [`Repository::open`].
     pub fn shared(path: &Path) -> Result<Self, GitError> {
-        let probe = Self::open(path)?;
-        let key = probe.worktree_key();
+        let (probe, head) = Self::open_with_head(path)?;
+        let (key, status) = probe.worktree_key(head);
         let mut registry = SHARED.lock().unwrap_or_else(|error| error.into_inner());
         let entry = registry
             .entry(probe.root.clone())
@@ -267,10 +271,20 @@ impl Repository {
             entry.key = key;
             entry.memo = Arc::default();
         }
-        Ok(Self {
+        let repository = Self {
             root: probe.root,
             memo: entry.memo.clone(),
-        })
+        };
+        drop(registry);
+        // The fingerprint was read from the very status this memo describes, so seeding it
+        // is not a guess: it is the answer, already paid for.
+        if let Some(text) = status {
+            repository.memo(|memo| {
+                memo.worktree
+                    .get_or_insert_with(|| Self::parse_status(&text));
+            });
+        }
+        Ok(repository)
     }
 
     /// A fingerprint of everything a memoised answer could depend on: the commit being
@@ -278,17 +292,36 @@ impl Repository {
     ///
     /// An unreadable answer fingerprints as unknown, which never compares equal to a
     /// previous one, so a repository git cannot describe is never served from a memo.
-    fn worktree_key(&self) -> String {
-        let head = self
-            .run(&["rev-parse", "HEAD"])
-            .map_or_else(|_| "?".to_owned(), |text| text.trim().to_owned());
-        let status = self
-            .run(&["status", "--porcelain", "--untracked-files=all"])
-            .map_or_else(
-                |_| "?".to_owned(),
-                |text| crate::hash::content_hash(&text).to_string(),
-            );
-        format!("{head} {status}")
+    ///
+    /// `head` is passed in rather than asked for: [`Self::open_with_head`] already read it
+    /// in the same `rev-parse` that located the root, and on a slow filesystem a redundant
+    /// spawn costs more than everything this fingerprint protects.
+    fn worktree_key(&self, head: Option<String>) -> (String, Option<String>) {
+        let head = head.unwrap_or_else(|| "?".to_owned());
+        // The NUL-separated form, because this is the same question
+        // [`Self::working_tree_changes`] asks. Running it in one format to fingerprint the
+        // memo and again in another to read the paths meant walking the tree twice, and on
+        // this repository one `git status` costs 300ms against 19ms for everything else a
+        // session opens with. The raw text is handed back so the memo it validates can be
+        // seeded from it.
+        match self.run(&["status", "--porcelain", "-z", "--untracked-files=all"]) {
+            Ok(text) => {
+                let digest = crate::hash::content_hash(&text).to_string();
+                (format!("{head} {digest}"), Some(text))
+            }
+            Err(_) => (format!("{head} ?"), None),
+        }
+    }
+
+    /// Parses `git status --porcelain -z` into the changed-path set.
+    fn parse_status(text: &str) -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        for entry in text.split('\0').filter(|e| e.len() > 3) {
+            // `XY <path>`; rename entries carry the origin in the following NUL field,
+            // which this loop sees as a short entry and skips.
+            out.insert(entry[3..].trim().to_owned());
+        }
+        out
     }
 }
 
@@ -322,21 +355,58 @@ impl Repository {
     /// [`GitError::ShallowHistory`] when the clone is `--depth`-limited: a truncated
     /// history cannot answer the descendant question that D-016 and D-024 depend on.
     pub fn open(path: &Path) -> Result<Self, GitError> {
-        let root = run_in(path, &["rev-parse", "--show-toplevel"])
-            .map_err(|_| GitError::NotARepository(path.to_path_buf()))?;
-        let root = PathBuf::from(root.trim());
-        let repository = Self {
-            root,
-            memo: Arc::default(),
-        };
-        if repository
-            .run(&["rev-parse", "--is-shallow-repository"])?
-            .trim()
-            == "true"
-        {
+        Self::open_with_head(path).map(|(repository, _)| repository)
+    }
+
+    /// [`Self::open`], also returning `HEAD` when the repository has one.
+    ///
+    /// `git rev-parse` answers several questions per invocation, one line each. Asking the
+    /// three that every session needs — the root, whether the clone is shallow, and the
+    /// commit being resolved against — in one spawn rather than three is worth doing
+    /// because a session pays this on every open, and the MCP server opens a session per
+    /// tool call. `HEAD` is optional: a repository with no commits yet answers the first
+    /// two questions and fails the third, which is not an error here.
+    ///
+    /// # Errors
+    /// As [`Self::open`].
+    fn open_with_head(path: &Path) -> Result<(Self, Option<String>), GitError> {
+        let text = run_in(
+            path,
+            &[
+                "rev-parse",
+                "--show-toplevel",
+                "--is-shallow-repository",
+                "HEAD",
+            ],
+        )
+        .or_else(|_| {
+            run_in(
+                path,
+                &["rev-parse", "--show-toplevel", "--is-shallow-repository"],
+            )
+        })
+        .map_err(|_| GitError::NotARepository(path.to_path_buf()))?;
+
+        let mut lines = text.lines();
+        let root = lines
+            .next()
+            .ok_or_else(|| GitError::NotARepository(path.to_path_buf()))?;
+        let shallow = lines.next().unwrap_or("false").trim() == "true";
+        let head = lines
+            .next()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned);
+        if shallow {
             return Err(GitError::ShallowHistory);
         }
-        Ok(repository)
+        Ok((
+            Self {
+                root: PathBuf::from(root.trim()),
+                memo: Arc::default(),
+            },
+            head,
+        ))
     }
 
     /// The repository root.
@@ -350,10 +420,19 @@ impl Repository {
     /// # Errors
     /// [`GitError::UnknownRevision`] when the revision does not name a commit.
     pub fn rev_parse(&self, revision: &str) -> Result<Commit, GitError> {
+        // A revision name resolves to one commit for as long as this memo lives: the
+        // shared memo is thrown away the moment `HEAD` or the working tree moves, so a
+        // second answer here could not differ from the first. `HEAD` is the one every
+        // session asks for, and a session per MCP tool call made that a spawn per call.
+        if let Some(known) = self.memo(|memo| memo.revisions.get(revision).cloned()) {
+            return Ok(known);
+        }
         let text = self
             .run(&["rev-parse", "--verify", &format!("{revision}^{{commit}}")])
             .map_err(|_| GitError::UnknownRevision(revision.to_owned()))?;
-        Commit::new(text.trim()).map_err(GitError::from)
+        let commit = Commit::new(text.trim()).map_err(GitError::from)?;
+        self.memo(|memo| memo.revisions.insert(revision.to_owned(), commit.clone()));
+        Ok(commit)
     }
 
     /// The current `HEAD` commit.
@@ -374,6 +453,12 @@ impl Repository {
     /// # Errors
     /// [`GitError::CommandFailed`] when Git cannot read the history.
     pub fn session_head(&self) -> Result<(CommitBrief, Option<CommitBrief>), GitError> {
+        // Two spawns, both pure functions of `HEAD` — which is half of what this memo is
+        // keyed on. `knowledge.start` opens every handoff with this question, and it was
+        // the slowest tool on the surface.
+        if let Some(known) = self.memo(|memo| memo.session.clone()) {
+            return Ok(known);
+        }
         let latest = self.commit_brief(&["show", "-s", "--format=%H%x1f%s%x1f%B", "HEAD"])?;
         let linked_text = self.run(&[
             "log",
@@ -388,6 +473,7 @@ impl Repository {
         } else {
             Some(self.parse_commit_brief(&linked_text)?)
         };
+        self.memo(|memo| memo.session = Some((latest.clone(), linked.clone())));
         Ok((latest, linked))
     }
 
@@ -618,12 +704,7 @@ impl Repository {
             return Ok(known);
         }
         let text = self.run(&["status", "--porcelain", "-z", "--untracked-files=all"])?;
-        let mut out = BTreeSet::new();
-        for entry in text.split('\0').filter(|e| e.len() > 3) {
-            // `XY <path>`; rename entries carry the origin in the following NUL field,
-            // which this loop sees as a short entry and skips.
-            out.insert(entry[3..].trim().to_owned());
-        }
+        let out = Self::parse_status(&text);
         self.memo(|memo| memo.worktree = Some(out.clone()));
         Ok(out)
     }
@@ -693,7 +774,11 @@ impl Repository {
             .collect::<String>();
         let bytes = self.run_bytes_with_stdin(&["cat-file", "--batch"], &input)?;
         let mut cursor = 0usize;
-        let mut out = BTreeMap::new();
+        // `out` already holds every version the memo answered; the fetched ones are added
+        // to it. Rebinding it here instead dropped the memo hits, so a partially warm call
+        // returned fewer versions than it was asked for — and the caller reads a missing
+        // version as "the file did not exist at that commit".
+        let mut fetched = BTreeMap::new();
         for commit in commits {
             let Some(relative_end) = bytes[cursor..].iter().position(|byte| *byte == b'\n') else {
                 return Err(GitError::MalformedOutput(
@@ -704,7 +789,7 @@ impl Repository {
             let header = String::from_utf8_lossy(&bytes[cursor..header_end]);
             cursor = header_end + 1;
             if header.ends_with(" missing") {
-                out.insert(commit.clone(), None);
+                fetched.insert(commit.clone(), None);
                 continue;
             }
             let size = header
@@ -723,16 +808,17 @@ impl Repository {
             if bytes.get(cursor) == Some(&b'\n') {
                 cursor += 1;
             }
-            out.insert(commit.clone(), Some(text));
+            fetched.insert(commit.clone(), Some(text));
         }
         self.memo(|memo| {
-            for (commit, content) in &out {
+            for (commit, content) in &fetched {
                 memo.blobs.insert(
                     (commit.as_str().to_owned(), path.to_owned()),
                     content.clone(),
                 );
             }
         });
+        out.extend(fetched);
         Ok(out)
     }
 
@@ -979,8 +1065,26 @@ impl Repository {
         if commits.is_empty() {
             return Ok(BTreeSet::new());
         }
-        let mut input = String::new();
+        // Whether an object name resolves is exactly what `memo.exists` records, and git's
+        // object graph only grows, so a commit known to be present stays present. Asking
+        // only about the names this memo has not seen turns a repeated call — one per
+        // session, and a session per MCP tool call — into no spawn at all.
+        let mut out = BTreeSet::new();
+        let mut wanted = Vec::new();
         for commit in commits {
+            match self.memo(|memo| memo.exists.get(commit.as_str()).copied()) {
+                Some(true) => {
+                    out.insert(commit.clone());
+                }
+                Some(false) => {}
+                None => wanted.push(commit.clone()),
+            }
+        }
+        if wanted.is_empty() {
+            return Ok(out);
+        }
+        let mut input = String::new();
+        for commit in &wanted {
             input.push_str(commit.as_str());
             input.push('\n');
         }
@@ -988,7 +1092,7 @@ impl Repository {
             &["cat-file", "--batch-check=%(objectname) %(objecttype)"],
             &input,
         )?;
-        let mut out = BTreeSet::new();
+        let mut present = BTreeSet::new();
         for line in text.lines() {
             let mut fields = line.split_whitespace();
             let (Some(oid), Some(kind)) = (fields.next(), fields.next()) else {
@@ -997,9 +1101,16 @@ impl Repository {
             if kind == "commit"
                 && let Ok(commit) = Commit::new(oid)
             {
-                out.insert(commit);
+                present.insert(commit);
             }
         }
+        self.memo(|memo| {
+            for commit in &wanted {
+                memo.exists
+                    .insert(commit.as_str().to_owned(), present.contains(commit));
+            }
+        });
+        out.extend(present);
         Ok(out)
     }
 
@@ -1218,6 +1329,32 @@ impl Repository {
     }
 }
 
+/// The `git` executable, resolved through `PATH` exactly once per process.
+///
+/// [`Command::new`] with a bare program name re-walks every `PATH` entry on every spawn,
+/// and a build asks git tens of times. On a long `PATH` — 38 entries is ordinary — that
+/// is tens of failed `execve` per spawn, each one a filesystem lookup; over a network or
+/// FUSE mount it measured as more than half the cost of a trivial `git rev-parse HEAD`.
+/// The answer cannot change while the process runs, so it is found once and kept.
+///
+/// Falls back to the bare name when `PATH` holds no `git`, so that a missing git still
+/// fails where it did before, with the same error.
+fn program() -> &'static OsStr {
+    static PROGRAM: OnceLock<PathBuf> = OnceLock::new();
+    PROGRAM
+        .get_or_init(|| {
+            let Some(path) = std::env::var_os("PATH") else {
+                return PathBuf::from("git");
+            };
+            let name = if cfg!(windows) { "git.exe" } else { "git" };
+            std::env::split_paths(&path)
+                .map(|dir| dir.join(name))
+                .find(|candidate| candidate.is_file())
+                .unwrap_or_else(|| PathBuf::from("git"))
+        })
+        .as_os_str()
+}
+
 /// A `git` command, configured so it never steals the foreground.
 ///
 /// Every git invocation in the workspace goes through here. On Windows a child
@@ -1226,9 +1363,9 @@ impl Repository {
 /// its own, which flashes a console window on screen and takes focus away from
 /// whatever the user was typing into. `CREATE_NO_WINDOW` suppresses that; it
 /// changes nothing about the command's output, which is captured through pipes
-/// either way. On other platforms this is a plain `Command::new("git")`.
+/// either way. On other platforms this is a plain [`Command`] over [`program`].
 pub fn command() -> Command {
-    let command = Command::new("git");
+    let command = Command::new(program());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt as _;

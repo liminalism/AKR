@@ -3,7 +3,9 @@
 //! Exit criterion 3 of P6 — a refused write leaves the working tree byte-identical — is
 //! proved at library level in `akr-core/tests/ops_atomicity.rs`. This is the same claim
 //! made where a user can observe it: one refusing path per command, run as a process,
-//! with every file under `.akr/` hashed either side of the call.
+//! with every source under `.akr/` hashed either side of the call. The disposable cache
+//! is excluded: D-019 makes it rebuildable and non-authoritative, so an index rebuild or
+//! the write pipeline's lock file is not a change to the working tree.
 //!
 //! The refusal *shapes* are checked here too, against the structured fields of
 //! `ops::Refused` rather than against message text — the point of the structure being

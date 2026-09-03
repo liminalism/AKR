@@ -86,6 +86,7 @@ Every command in the write group performs exactly this sequence, and none of the
 performs a partial version of it:
 
 ```
+   0. claim        exclusive access to this workspace
    1. parse        the current ledger                    (stage A)
    2. apply        the requested change, in memory
    3. validate     the RESULTING ledger                  (stages A-D)
@@ -113,6 +114,22 @@ Consequences, all of them load-bearing:
   are indistinguishable, and `akr fmt` on a freshly written ledger is a no-op.
 - **Writes are per-file atomic**: write to a temporary file in the same directory, fsync,
   rename. A crash leaves either the old file or the new one.
+- **One writer at a time, and a racing edit is refused rather than overwritten.** Steps 1
+  to 5 are a read-modify-write: step 1 reads every source and step 5 writes each touched
+  file whole. Per-file atomicity says nothing about two writers, so step 0 takes an
+  advisory lock on `.akr/cache/write.lock` — through the operating system's file locking,
+  released when the process ends however it ends, so there is no stale lock to reap.
+  Writers therefore queue instead of colliding, and all of them succeed. Without it, two
+  processes that both read before either wrote each held a ledger that did not know about
+  the other's record, and the second rename silently discarded the first while both
+  reported success; six concurrent `akr papercut` processes landed two records.
+
+  A lock binds only the processes that take it, so immediately before the renames every
+  file about to be replaced is re-read and must still hold the bytes step 1 read. A
+  disagreement is `AKR-C034` and writes nothing: that catches an editor, a `git checkout`,
+  or a filesystem whose locking does not work, none of which the lock can cover. `base_rev`
+  (`docs/08-mcp.md`) is a separate and narrower control — optimistic concurrency over one
+  key's head revision, which a newly proposed key does not engage at all.
 - **Sealed revisions are refused up front.** Attempting to modify a non-`proposed`
   revision is `AKR-C032`, with the fix named in the message (`akr revise`). The
   build-time equivalent is `AKR-R051` (D-015). Attempting to write a revision that is not
