@@ -84,6 +84,102 @@ record akr.work.change-delta-counts-the-index/1 : work {
     }
 }
 
+record akr.work.commit-rewrite-equivalence/1 : work {
+    title "Preserve freshness across declared Git history rewrites"
+    state superseded
+    scope [
+        path "crates/akr-cli/src/session.rs",
+        path "crates/akr-core/src/git/**",
+        path "crates/akr-core/tests/**",
+        path "docs/10-freshness-and-git.md"
+    ]
+    intent """
+        Let a repository explicitly map an unreachable pre-rewrite commit to its reviewed replacement. Git validation remains strict: the replacement must exist and be reachable from the resolved head, and freshness and acceptance calculations continue from that replacement rather than suppressing ancestry diagnostics.
+        """
+    acceptance {
+        check mapped-commit-remains-validated {
+            statement """
+                A declared replacement removes G012 only when the replacement exists and is an ancestor of the resolved head.
+                """
+            method command
+            command "cargo test -p akr-core git_queries freshness"
+        }
+        check unmapped-divergence-still-reported {
+            statement """
+                An undeclared divergent observed_at commit still produces AKR-G012.
+                """
+            method command
+            command "cargo test -p akr-core git_queries freshness"
+        }
+    }
+}
+
+record akr.work.commit-rewrite-equivalence/2 : work {
+    title "Preserve freshness across declared Git history rewrites"
+    state superseded
+    scope [
+        path "crates/akr-cli/src/session.rs",
+        path "crates/akr-core/src/git/**",
+        path "crates/akr-core/tests/**",
+        path "docs/10-freshness-and-git.md"
+    ]
+    intent """
+        Let a repository explicitly map an unreachable pre-rewrite commit to its reviewed replacement. Git validation remains strict: the replacement must exist and be reachable from the resolved head, and freshness and acceptance calculations continue from that replacement rather than suppressing ancestry diagnostics.
+        """
+    acceptance {
+        check mapped-commit-remains-validated {
+            statement """
+                A declared replacement removes G012 only when the replacement exists and is an ancestor of the resolved head.
+                """
+            method command
+            command "cargo test -p akr-core --test git_queries --test freshness"
+        }
+        check unmapped-divergence-still-reported {
+            statement """
+                An undeclared divergent observed_at commit still produces AKR-G012.
+                """
+            method command
+            command "cargo test -p akr-core --test git_queries --test freshness"
+        }
+    }
+    supersedes [ @akr.work.commit-rewrite-equivalence/1 ]
+}
+
+record akr.work.commit-rewrite-equivalence/3 : work {
+    title "Preserve freshness across declared Git history rewrites"
+    state completed
+    scope [
+        path "crates/akr-cli/src/session.rs",
+        path "crates/akr-cli/tests/**",
+        path "crates/akr-core/src/git/**",
+        path "crates/akr-core/tests/**",
+        path "docs/10-freshness-and-git.md",
+        path "spec/diagnostics/**"
+    ]
+    intent """
+        Let a repository explicitly map an unreachable pre-rewrite commit to its reviewed replacement. Git validation remains strict: the replacement must exist and be reachable from the resolved head, and freshness and acceptance calculations continue from that replacement rather than suppressing ancestry diagnostics.
+        """
+    acceptance {
+        check mapped-commit-remains-validated {
+            statement """
+                A declared replacement removes G012 only when the replacement exists and is an ancestor of the resolved head.
+                """
+            method command
+            command "cargo test -p akr-core --test git_queries --test freshness"
+            verified_by [ @akr.evidence.commit-rewrite-tests/1 ]
+        }
+        check unmapped-divergence-still-reported {
+            statement """
+                An undeclared divergent observed_at commit still produces AKR-G012.
+                """
+            method command
+            command "cargo test -p akr-core --test git_queries --test freshness"
+            verified_by [ @akr.evidence.commit-rewrite-tests/1 ]
+        }
+    }
+    supersedes [ @akr.work.commit-rewrite-equivalence/2 ]
+}
+
 record akr.work.concurrent-ledger-speed/1 : work {
     title "Cut per-call latency for concurrent agent access to the ledger"
     state completed

@@ -152,6 +152,17 @@ record akr.papercut.after-an-immediate-akr-check-akr-77-records-88/2 : papercut 
     created_at 2026-08-11
 }
 
+record akr.papercut.agents-md-maps-knowledge-propose-to-akr-propose/1 : papercut {
+    title "AGENTS.md maps knowledge.propose to 'akr propose <key> --from <file>',…"
+    state verified
+    statement """
+        AGENTS.md maps knowledge.propose to 'akr propose <key> --from <file>', but that documented form fails AKR-C003 because the CLI additionally requires --kind even when the canonical input declares ': work'.
+        """
+    observed_at git:f418e73ed37887f47c3d4156f4c72081e2670dcf
+    author "codex"
+    created_at 2026-09-04
+}
+
 record akr.papercut.agents-write-working-files-to-agent-scratch/1 : papercut {
     title "Agents write working files to .agent/scratch/ because the protocol…"
     state verified

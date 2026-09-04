@@ -226,6 +226,11 @@ impl Session {
                 )
                 .help("fetch the full history"));
             }
+            Err(error @ akr_core::git::GitError::InvalidRewriteMap { .. }) => {
+                return Err(EnvError::new("AKR-G014", error.to_string()).help(
+                    "use one `<old-commit> <replacement-commit>` pair per line; both must be full lowercase commit ids",
+                ));
+            }
             Err(_) => None,
         };
         let commit = match (&self.global.at, &repository) {

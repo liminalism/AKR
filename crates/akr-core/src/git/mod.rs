@@ -51,6 +51,8 @@ pub mod codes {
     pub const G012: Code = Code::new("AKR-G012");
     /// An unknown revision argument.
     pub const G013: Code = Code::new("AKR-G013");
+    /// A malformed explicit commit-rewrite map.
+    pub const G014: Code = Code::new("AKR-G014");
     /// A malformed watch glob.
     pub const G021: Code = Code::new("AKR-G021");
     /// A watch glob that matches nothing.
@@ -64,7 +66,7 @@ pub mod codes {
 
     /// Every freshness code this crate can raise.
     pub const ALL: &[Code] = &[
-        G001, G002, G003, G004, G011, G012, G013, G021, G022, G023, G031, G041,
+        G001, G002, G003, G004, G011, G012, G013, G014, G021, G022, G023, G031, G041,
     ];
 }
 
@@ -94,6 +96,13 @@ pub enum GitError {
     ShallowHistory,
     /// A revision argument does not name a commit (`AKR-G013`).
     UnknownRevision(String),
+    /// `.akr-commit-map` does not contain valid old/replacement pairs (`AKR-G014`).
+    InvalidRewriteMap {
+        /// One-based source line, or zero for a file-level error.
+        line: usize,
+        /// What was wrong.
+        message: String,
+    },
     /// Git returned something this module could not read as a commit.
     MalformedOutput(String),
 }
@@ -109,6 +118,12 @@ impl fmt::Display for GitError {
             }
             Self::ShallowHistory => f.write_str("repository history is shallow"),
             Self::UnknownRevision(rev) => write!(f, "{rev} is not a commit in this repository"),
+            Self::InvalidRewriteMap { line, message } if *line > 0 => {
+                write!(f, ".akr-commit-map line {line}: {message}")
+            }
+            Self::InvalidRewriteMap { message, .. } => {
+                write!(f, ".akr-commit-map: {message}")
+            }
             Self::MalformedOutput(text) => write!(f, "unreadable git output: {text}"),
         }
     }
@@ -130,6 +145,7 @@ impl GitError {
             Self::NotARepository(_) => (codes::G001, V101),
             Self::ShallowHistory => (codes::G003, V101),
             Self::UnknownRevision(_) => (codes::G013, V101),
+            Self::InvalidRewriteMap { .. } => (codes::G014, V101),
             Self::CommandFailed { .. } | Self::MalformedOutput(_) => (codes::G002, V101),
         };
         Diagnostic::error(code, rule, Subject::Ledger, self.to_string())
@@ -158,6 +174,73 @@ pub struct Touch {
 pub struct Repository {
     root: PathBuf,
     memo: Arc<Mutex<Memo>>,
+    /// Pre-rewrite commit -> reviewed reachable replacement.
+    rewrites: Arc<BTreeMap<String, Commit>>,
+}
+
+/// Read the repository-owned history-rewrite declarations. Each non-comment
+/// line is `<old-commit> <replacement-commit>`. The map is deliberately
+/// explicit: AKR never guesses equivalence from a matching subject or patch.
+fn load_rewrites(root: &Path) -> Result<BTreeMap<String, Commit>, GitError> {
+    let path = root.join(".akr-commit-map");
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+        Err(error) => {
+            return Err(GitError::InvalidRewriteMap {
+                line: 0,
+                message: error.to_string(),
+            });
+        }
+    };
+    let mut out = BTreeMap::new();
+    for (offset, raw) in text.lines().enumerate() {
+        let line = raw.split_once('#').map_or(raw, |(before, _)| before).trim();
+        if line.is_empty() {
+            continue;
+        }
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() != 2 {
+            return Err(GitError::InvalidRewriteMap {
+                line: offset + 1,
+                message: "expected `<old-commit> <replacement-commit>`".to_owned(),
+            });
+        }
+        let old = Commit::new(fields[0]).map_err(|error| GitError::InvalidRewriteMap {
+            line: offset + 1,
+            message: format!("invalid old commit: {error}"),
+        })?;
+        let replacement = Commit::new(fields[1]).map_err(|error| GitError::InvalidRewriteMap {
+            line: offset + 1,
+            message: format!("invalid replacement commit: {error}"),
+        })?;
+        if old == replacement {
+            return Err(GitError::InvalidRewriteMap {
+                line: offset + 1,
+                message: "old and replacement commits are identical".to_owned(),
+            });
+        }
+        if let Some(previous) = out.insert(old.as_str().to_owned(), replacement.clone())
+            && previous != replacement
+        {
+            return Err(GitError::InvalidRewriteMap {
+                line: offset + 1,
+                message: format!("{} already maps to {previous}", old.as_str()),
+            });
+        }
+    }
+    if let Some((old, replacement)) = out
+        .iter()
+        .find(|(_, replacement)| out.contains_key(replacement.as_str()))
+    {
+        return Err(GitError::InvalidRewriteMap {
+            line: 0,
+            message: format!(
+                "rewrite chains are not allowed: {old} maps to {replacement}, which is also replaced"
+            ),
+        });
+    }
+    Ok(out)
 }
 
 /// The memo behind [`Repository`].
@@ -218,6 +301,7 @@ impl Clone for Repository {
         Self {
             root: self.root.clone(),
             memo: Arc::default(),
+            rewrites: self.rewrites.clone(),
         }
     }
 }
@@ -274,6 +358,7 @@ impl Repository {
         let repository = Self {
             root: probe.root,
             memo: entry.memo.clone(),
+            rewrites: probe.rewrites,
         };
         drop(registry);
         // The fingerprint was read from the very status this memo describes, so seeding it
@@ -404,9 +489,18 @@ impl Repository {
             Self {
                 root: PathBuf::from(root.trim()),
                 memo: Arc::default(),
+                rewrites: Arc::new(load_rewrites(Path::new(root.trim()))?),
             },
             head,
         ))
+    }
+
+    /// The reviewed post-rewrite identity of `commit`, or the commit itself.
+    fn canonical_commit(&self, commit: &Commit) -> Commit {
+        self.rewrites
+            .get(commit.as_str())
+            .cloned()
+            .unwrap_or_else(|| commit.clone())
     }
 
     /// The repository root.
@@ -510,7 +604,8 @@ impl Repository {
         if let Some(known) = self.memo(|memo| memo.exists.get(commit.as_str()).copied()) {
             return known;
         }
-        let exists = self.rev_parse(commit.as_str()).is_ok();
+        let canonical = self.canonical_commit(commit);
+        let exists = self.rev_parse(canonical.as_str()).is_ok();
         self.memo(|memo| memo.exists.insert(commit.as_str().to_owned(), exists));
         exists
     }
@@ -525,7 +620,9 @@ impl Repository {
     /// # Errors
     /// [`GitError::UnknownRevision`] when either commit is absent.
     pub fn is_descendant(&self, descendant: &Commit, ancestor: &Commit) -> Result<bool, GitError> {
-        if descendant == ancestor {
+        let canonical_descendant = self.canonical_commit(descendant);
+        let canonical_ancestor = self.canonical_commit(ancestor);
+        if canonical_descendant == canonical_ancestor {
             return Ok(true);
         }
         let key = (descendant.as_str().to_owned(), ancestor.as_str().to_owned());
@@ -543,20 +640,21 @@ impl Repository {
             *probes
         });
         if probes > REACHABILITY_PROBE_LIMIT {
-            self.walk_reachable(descendant);
+            self.walk_reachable(&canonical_descendant);
         }
-        if let Some(reachable) = self.memo(|memo| memo.reachable.get(descendant.as_str()).cloned())
+        if let Some(reachable) =
+            self.memo(|memo| memo.reachable.get(canonical_descendant.as_str()).cloned())
         {
             // Reachable is definitive for yes. For no, the commit may be absent rather
             // than merely unreachable, and those are different answers.
-            let verdict = reachable.contains(ancestor.as_str());
+            let verdict = reachable.contains(canonical_ancestor.as_str());
             if !verdict && !self.contains(ancestor) {
                 return Err(GitError::UnknownRevision(ancestor.as_str().to_owned()));
             }
             self.memo(|memo| memo.ancestry.insert(key, verdict));
             return Ok(verdict);
         }
-        for commit in [descendant, ancestor] {
+        for commit in [&canonical_descendant, &canonical_ancestor] {
             if !self.contains(commit) {
                 return Err(GitError::UnknownRevision(commit.as_str().to_owned()));
             }
@@ -565,8 +663,8 @@ impl Repository {
         let verdict = match self.status(&[
             "merge-base",
             "--is-ancestor",
-            ancestor.as_str(),
-            descendant.as_str(),
+            canonical_ancestor.as_str(),
+            canonical_descendant.as_str(),
         ]) {
             Ok(0) => true,
             Ok(_) => false,
@@ -582,7 +680,7 @@ impl Repository {
     /// that already knows it is about to ask one question per record — freshness, about
     /// `HEAD` — can skip the pairwise calls entirely by saying so.
     pub fn prime_reachable(&self, commit: &Commit) {
-        self.walk_reachable(commit);
+        self.walk_reachable(&self.canonical_commit(commit));
     }
 
     /// Records everything reachable from `commit`, in one `rev-list`.
@@ -617,7 +715,9 @@ impl Repository {
     /// # Errors
     /// [`GitError::CommandFailed`] if git cannot walk the range.
     pub fn commits_in(&self, from: Option<&Commit>, to: &Commit) -> Result<Vec<Commit>, GitError> {
-        let range = match from {
+        let from = from.map(|commit| self.canonical_commit(commit));
+        let to = self.canonical_commit(to);
+        let range = match &from {
             Some(from) => format!("{}..{}", from.as_str(), to.as_str()),
             None => to.as_str().to_owned(),
         };
@@ -641,9 +741,11 @@ impl Repository {
     /// # Errors
     /// [`GitError::CommandFailed`] if git cannot walk the range.
     pub fn touches_in(&self, from: Option<&Commit>, to: &Commit) -> Result<Vec<Touch>, GitError> {
-        let range = match from {
-            Some(from) => format!("{}..{}", from.as_str(), to.as_str()),
-            None => to.as_str().to_owned(),
+        let canonical_from = from.map(|commit| self.canonical_commit(commit));
+        let canonical_to = self.canonical_commit(to);
+        let range = match &canonical_from {
+            Some(from) => format!("{}..{}", from.as_str(), canonical_to.as_str()),
+            None => canonical_to.as_str().to_owned(),
         };
         let key = (
             from.map(|c| c.as_str().to_owned()).unwrap_or_default(),
@@ -736,7 +838,8 @@ impl Repository {
         if let Some(known) = self.memo(|memo| memo.blobs.get(&key).cloned()) {
             return Ok(known);
         }
-        let content = match self.run(&["show", &format!("{}:{path}", commit.as_str())]) {
+        let canonical = self.canonical_commit(commit);
+        let content = match self.run(&["show", &format!("{}:{path}", canonical.as_str())]) {
             Ok(text) => Some(text),
             Err(GitError::CommandFailed { .. }) => None,
             Err(other) => return Err(other),
@@ -833,7 +936,8 @@ impl Repository {
         if let Some(known) = self.memo(|memo| memo.trees.get(commit.as_str()).cloned()) {
             return Ok(known);
         }
-        let text = self.run(&["ls-tree", "-r", "--name-only", commit.as_str()])?;
+        let canonical = self.canonical_commit(commit);
+        let text = self.run(&["ls-tree", "-r", "--name-only", canonical.as_str()])?;
         let listing: BTreeSet<String> = text
             .lines()
             .map(str::trim)
@@ -1083,8 +1187,12 @@ impl Repository {
         if wanted.is_empty() {
             return Ok(out);
         }
+        let canonical: Vec<Commit> = wanted
+            .iter()
+            .map(|commit| self.canonical_commit(commit))
+            .collect();
         let mut input = String::new();
-        for commit in &wanted {
+        for commit in &canonical {
             input.push_str(commit.as_str());
             input.push('\n');
         }
@@ -1105,12 +1213,14 @@ impl Repository {
             }
         }
         self.memo(|memo| {
-            for commit in &wanted {
-                memo.exists
-                    .insert(commit.as_str().to_owned(), present.contains(commit));
+            for (commit, canonical) in wanted.iter().zip(&canonical) {
+                let exists = present.contains(canonical);
+                memo.exists.insert(commit.as_str().to_owned(), exists);
+                if exists {
+                    out.insert(commit.clone());
+                }
             }
         });
-        out.extend(present);
         Ok(out)
     }
 
@@ -1138,16 +1248,26 @@ impl Repository {
         if let Some(known) = self.memo(|memo| memo.topological.get(&key).cloned()) {
             return Ok(known);
         }
+        let mut originals_by_canonical: BTreeMap<String, Vec<Commit>> = BTreeMap::new();
+        for commit in commits {
+            originals_by_canonical
+                .entry(self.canonical_commit(commit).as_str().to_owned())
+                .or_default()
+                .push(commit.clone());
+        }
+        for originals in originals_by_canonical.values_mut() {
+            originals.sort();
+            originals.dedup();
+        }
         let mut args: Vec<String> = vec!["rev-list".to_owned(), "--topo-order".to_owned()];
-        args.extend(commits.iter().map(|c| c.as_str().to_owned()));
+        args.extend(originals_by_canonical.keys().cloned());
         let text = self.run(&args)?;
-        let wanted: BTreeSet<&str> = commits.iter().map(Commit::as_str).collect();
-        let ordered: Vec<Commit> = text
-            .lines()
-            .map(str::trim)
-            .filter(|line| wanted.contains(line))
-            .filter_map(|line| Commit::new(line).ok())
-            .collect();
+        let mut ordered = Vec::with_capacity(commits.len());
+        for line in text.lines().map(str::trim) {
+            if let Some(originals) = originals_by_canonical.get(line) {
+                ordered.extend(originals.iter().cloned());
+            }
+        }
         self.memo(|memo| memo.topological.insert(key, ordered.clone()));
         Ok(ordered)
     }
@@ -1184,17 +1304,22 @@ impl Repository {
         if let Some(known) = self.memo(|memo| memo.unreachable.get(&key).cloned()) {
             return Ok(known);
         }
+        let canonical_head = self.canonical_commit(head);
+        let canonical: Vec<Commit> = commits
+            .iter()
+            .map(|commit| self.canonical_commit(commit))
+            .collect();
         let mut args: Vec<String> = vec!["rev-list".to_owned()];
-        args.extend(commits.iter().map(|c| c.as_str().to_owned()));
+        args.extend(canonical.iter().map(|c| c.as_str().to_owned()));
         args.push("--not".to_owned());
-        args.push(head.as_str().to_owned());
+        args.push(canonical_head.as_str().to_owned());
         let text = self.run(&args)?;
-        let wanted: BTreeSet<&str> = commits.iter().map(Commit::as_str).collect();
-        let out: BTreeSet<Commit> = text
-            .lines()
-            .map(str::trim)
-            .filter(|line| wanted.contains(line))
-            .filter_map(|line| Commit::new(line).ok())
+        let unreachable: BTreeSet<&str> = text.lines().map(str::trim).collect();
+        let out: BTreeSet<Commit> = commits
+            .iter()
+            .zip(&canonical)
+            .filter(|(_, canonical)| unreachable.contains(canonical.as_str()))
+            .map(|(original, _)| original.clone())
             .collect();
         self.memo(|memo| memo.unreachable.insert(key, out.clone()));
         Ok(out)

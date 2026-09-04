@@ -45,6 +45,22 @@ A commit that exists but is not an ancestor of HEAD is `AKR-G012`, a warning: th
 observation was made on a branch this one does not contain, so its freshness is not
 computable and it is reported rather than guessed at.
 
+When repository history is deliberately rewritten, the repository may carry a tracked
+`.akr-commit-map` at its root. Each non-comment line names an operator-reviewed pair of
+full commit ids:
+
+```text
+<pre-rewrite-commit> <reachable-replacement-commit>
+```
+
+For Git-backed AKR queries, the old identity then resolves to the replacement. This lets
+existing `observed_at` values retain their meaning after a filter, rebase, or import while
+freshness continues from the replacement's position and tree. AKR does not infer pairs
+from subjects, timestamps, or patch ids: an unmapped divergent commit still raises
+`AKR-G012`, and a mapped replacement that is absent or not reachable still raises the
+ordinary `AKR-G011` or `AKR-G012`. Conflicting pairs, chains, identical endpoints, and
+malformed ids are `AKR-G014`; the map is never silently ignored.
+
 `observed_at` is also what the acceptance rule of D-016 tests against: a check is
 satisfied only by evidence whose `observed_at` **descends from** the last commit that
 changed the verified record's **definition** (D-029: the canonical record minus the
@@ -422,7 +438,7 @@ that nobody is misled by a clean queue on a dirty tree.
 | **V-103** | `review_after` is not earlier than `created_at`. | `AKR-G031` (warning) |
 | **V-104** | Under `akr check --review-clean`, the review queue is empty. | `AKR-G041` (error) |
 
-`AKR-G001`, `AKR-G002`, `AKR-G003`, `AKR-G004` and `AKR-G013` implement no rule: they
+`AKR-G001`, `AKR-G002`, `AKR-G003`, `AKR-G004`, `AKR-G013` and `AKR-G014` implement no rule: they
 report that the repository or the invocation is unusable, not that an invariant was
 broken.
 

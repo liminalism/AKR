@@ -285,7 +285,9 @@ fn explain_covers_both_diagnostic_registries() {
     let example = Example::materialise("explain");
     // `C` codes are this crate's, `L` codes are the language half: `akr explain` reads both
     // registries so an agent never has to know which half a code came from.
-    for code in ["AKR-C011", "AKR-G013", "AKR-E011", "AKR-L001", "AKR-R051"] {
+    for code in [
+        "AKR-C011", "AKR-G013", "AKR-G014", "AKR-E011", "AKR-L001", "AKR-R051",
+    ] {
         let run = example.run(&["explain", code]);
         assert_eq!(run.code, 0, "{code}: {}", run.output());
         assert!(run.stdout.contains(code), "{code}: {}", run.stdout);

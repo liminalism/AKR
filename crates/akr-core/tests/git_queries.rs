@@ -41,6 +41,17 @@ fn an_unknown_revision_is_reported_as_such() {
 }
 
 #[test]
+fn malformed_rewrite_maps_are_reported_instead_of_ignored() {
+    let mut repo = TempRepo::new("bad-rewrite-map");
+    repo.commit_file("a.txt", "one\n", "first");
+    repo.write(".akr-commit-map", "not-a-commit also-not-a-commit\n");
+
+    let error = Repository::open(repo.root()).expect_err("the map is invalid");
+    assert!(matches!(error, GitError::InvalidRewriteMap { line: 1, .. }));
+    assert_eq!(error.to_diagnostic().code, akr_core::git::codes::G014);
+}
+
+#[test]
 fn head_resolves_to_the_latest_commit() {
     let mut repo = TempRepo::new("head");
     repo.commit_file("a.txt", "one\n", "first");
@@ -88,6 +99,55 @@ fn ancestry_across_a_merge_is_answered_by_git() {
     assert!(git.is_descendant(&merged, &main).expect("q"));
     assert!(!git.is_descendant(&side, &main).expect("q"), "siblings");
     assert!(!git.is_descendant(&main, &side).expect("q"), "siblings");
+}
+
+#[test]
+fn reviewed_rewrite_pairs_resolve_git_queries_to_the_replacement() {
+    let mut repo = TempRepo::new("rewrite-map");
+    repo.commit_file("base.txt", "base\n", "base");
+    repo.branch("pre-rewrite");
+    let old = commit(&repo.commit_file("old.txt", "old branch\n", "old identity"));
+    repo.checkout("main");
+    let replacement = commit(&repo.commit_file(
+        "replacement.txt",
+        "replacement tree\n",
+        "replacement identity",
+    ));
+    let head = commit(&repo.commit_file("after.txt", "after\n", "after replacement"));
+    repo.write(
+        ".akr-commit-map",
+        &format!("{} {} # reviewed during the rewrite\n", old, replacement),
+    );
+
+    let git = Repository::open(repo.root()).expect("opens");
+    assert!(git.contains(&old));
+    assert!(git.is_descendant(&head, &old).expect("mapped ancestry"));
+    assert_eq!(
+        git.file_at(&old, "replacement.txt").expect("mapped tree"),
+        Some("replacement tree\n".to_owned())
+    );
+    assert!(
+        git.run_ls_tree(&old)
+            .expect("mapped listing")
+            .contains("replacement.txt")
+    );
+    assert_eq!(
+        git.touches_in(Some(&old), &head).expect("mapped range"),
+        vec![akr_core::git::Touch {
+            commit: head.clone(),
+            path: "after.txt".to_owned(),
+        }]
+    );
+    assert!(
+        git.unreachable_from(&head, std::slice::from_ref(&old))
+            .expect("mapped reachability")
+            .is_empty()
+    );
+    assert_eq!(
+        git.topological_order(&[old.clone(), head.clone()])
+            .expect("mapped order"),
+        vec![head, old]
+    );
 }
 
 #[test]

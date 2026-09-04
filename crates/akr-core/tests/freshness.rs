@@ -328,6 +328,80 @@ fn an_observed_at_on_a_divergent_branch_is_g012_and_not_a_failure() {
 }
 
 #[test]
+fn a_reviewed_rewrite_keeps_the_observation_reachable_and_freshness_computable() {
+    let mut repo = TempRepo::new("g012-rewrite-map");
+    repo.commit_file("base.txt", "base\n", "base");
+    repo.branch("pre-rewrite");
+    let old = repo.commit_file("watched.txt", "old\n", "old observation identity");
+    repo.checkout("main");
+    let replacement = repo.commit_file(
+        "watched.txt",
+        "rewritten\n",
+        "replacement observation identity",
+    );
+    let head = repo.commit_file("watched.txt", "changed\n", "change after observation");
+    repo.write(
+        ".akr-commit-map",
+        &format!("{old} {replacement} # explicitly reviewed\n"),
+    );
+    let git = Repository::open(repo.root()).expect("opens");
+
+    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
+    ledger.insert(observation("fx.obs.rewritten", &old, &["watched.txt"]));
+    let queue = derive(&ledger, &git, &commit(&head), today(3)).expect("derives");
+
+    assert!(
+        !queue
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == codes::G011 || diagnostic.code == codes::G012),
+        "a reachable reviewed replacement is neither absent nor divergent"
+    );
+    assert_eq!(queue.stale.len(), 1);
+    assert_eq!(queue.stale[0].id, id("fx.obs.rewritten", 1));
+}
+
+#[test]
+fn a_rewrite_target_that_is_still_divergent_remains_g012() {
+    let mut repo = TempRepo::new("g012-rewrite-target-divergent");
+    repo.commit_file("base.txt", "base\n", "base");
+    repo.branch("pre-rewrite");
+    let old = repo.commit_file("watched.txt", "old\n", "old identity");
+    let replacement = repo.commit_file("watched.txt", "replacement\n", "replacement identity");
+    repo.checkout("main");
+    let head = repo.commit_file("main.txt", "main\n", "main");
+    repo.write(".akr-commit-map", &format!("{old} {replacement}\n"));
+    let git = Repository::open(repo.root()).expect("opens");
+
+    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
+    ledger.insert(observation("fx.obs.side", &old, &["watched.txt"]));
+    let queue = derive(&ledger, &git, &commit(&head), today(3)).expect("derives");
+
+    assert!(queue.diagnostics.iter().any(|d| d.code == codes::G012));
+}
+
+#[test]
+fn a_rewrite_target_the_repository_lacks_is_g011() {
+    let mut repo = TempRepo::new("g011-rewrite-target-absent");
+    repo.commit_file("base.txt", "base\n", "base");
+    repo.branch("pre-rewrite");
+    let old = repo.commit_file("watched.txt", "old\n", "old identity");
+    repo.checkout("main");
+    let head = repo.commit_file("main.txt", "main\n", "main");
+    repo.write(
+        ".akr-commit-map",
+        &format!("{old} 0123456789abcdef0123456789abcdef01234567\n"),
+    );
+    let git = Repository::open(repo.root()).expect("opens");
+
+    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
+    ledger.insert(observation("fx.obs.absent", &old, &["watched.txt"]));
+    let queue = derive(&ledger, &git, &commit(&head), today(3)).expect("derives");
+
+    assert!(queue.diagnostics.iter().any(|d| d.code == codes::G011));
+}
+
+#[test]
 fn a_malformed_watch_glob_is_g021() {
     let mut repo = TempRepo::new("g021");
     let head = repo.commit_file("a.txt", "1\n", "base");

@@ -96,6 +96,18 @@ record akr.evidence.collated-papercut-reconciliation-2026-08-23/1 : evidence {
         """
 }
 
+record akr.evidence.commit-rewrite-tests/1 : evidence {
+    title "72 Git and freshness tests passed, including reachable, divergent, absent, unmapped, and malformed rewrite-map cases."
+    state verified
+    result pass
+    method command
+    observed_at git:f418e73ed37887f47c3d4156f4c72081e2670dcf
+    command "cargo test -p akr-core --test git_queries --test freshness"
+    summary """
+        72 Git and freshness tests passed, including reachable, divergent, absent, unmapped, and malformed rewrite-map cases.
+        """
+}
+
 record akr.evidence.concurrent-ledger-speed-measurement/1 : evidence {
     title "Four successive knowledge.start calls to one server: git subprocess spawns per warm call fell from 10 to 3 and total execve syscalls from 1945 to 48; interleaved A/B wall clock on the same workspace put warm-median knowledge.validate at 1339/681ms before against 369/345ms after, knowledge.context at 1408/596 against 434/277, knowledge.start at 1439/992 against 771/500."
     state verified
