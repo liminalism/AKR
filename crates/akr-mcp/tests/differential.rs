@@ -883,7 +883,11 @@ fn an_advisor_packet_opens_the_same_way_from_either_surface() {
         created.to_pretty()
     );
 
-    let tool = call(&example, "knowledge.handoff_open", &format!(r#"{{"packet":"{id}"}}"#));
+    let tool = call(
+        &example,
+        "knowledge.handoff_open",
+        &format!(r#"{{"packet":"{id}"}}"#),
+    );
     let cli = cli_result(&example, &["handoff", "open", &id]);
     assert_eq!(tool.to_pretty(), cli.to_pretty());
 
@@ -923,7 +927,11 @@ fn an_advisor_packet_opens_the_same_way_from_either_surface() {
         "knowledge.handoff_reveal",
         &format!(r#"{{"packet":"{id}"}}"#),
     );
-    assert!(revealed.to_pretty().contains("chroma"), "{}", revealed.to_pretty());
+    assert!(
+        revealed.to_pretty().contains("chroma"),
+        "{}",
+        revealed.to_pretty()
+    );
     assert!(
         revealed.to_pretty().contains("src/luma.rs"),
         "what the worker did not examine is part of the notes:\n{}",

@@ -5,8 +5,7 @@ build {
     tool "akr 0.5.0"
     grammar "0.1"
     vocabulary "0.2"
-    commit git:77369a0287dabdc4e0dc91551dd80ced3c46f051
-    source_graph "sha256:400edda99f4e93f86cb1b5296ef199ec1e9a0e299598bc7bfb35d19111efced9"
+    source_graph "sha256:6bdfb86ca96c019b1fe02a713f5d3e646729f555b9753a1b9cffe011b9d7c900"
 }
 
 source ".akr/project.akr" {
@@ -20,13 +19,13 @@ source ".akr/records/akr/assessments.akr" {
 }
 
 source ".akr/records/akr/decisions.akr" {
-    hash "sha256:74851fcaa86e7e0073055f5242013b6cf3ae7f4eb1dd40de73a6f0ad73c282c6"
-    records 29
+    hash "sha256:acb8b582e7d2551b2b28e28ef39ee878602d5edb45b496f74e1544d60aecbe05"
+    records 30
 }
 
 source ".akr/records/akr/evidence.akr" {
-    hash "sha256:0c2b18902885c886ddb92b0fd1324a47dc11098af12bf4992af83b754be08492"
-    records 60
+    hash "sha256:77328767bd8df62784adf94cccbd2ca8756946262123c5a5cd1dc8c034d0bc11"
+    records 62
 }
 
 source ".akr/records/akr/milestones.akr" {
@@ -45,8 +44,8 @@ source ".akr/records/akr/papercuts.akr" {
 }
 
 source ".akr/records/akr/work.akr" {
-    hash "sha256:91f5d1ea7a938d446ef53140910f5d74d6b0e64355a9a7fd9fc79e048e1e4c6b"
-    records 43
+    hash "sha256:f05ba6ce4487fc3fdb39a6d8e4d0abfe176ec7a8a5903afe118338e24f362a39"
+    records 44
 }
 
 resolution @akr.assessment.papercut-reconciliation-2026-08-27/1 {
@@ -448,6 +447,16 @@ seal @akr.decision.start-collates-session-head/1 {
 seal @akr.decision.write-answers-for-what-it-introduces/1 {
     state active
     hash "sha256:9dbef13bafbc1c11f46b32d855f1f3ff842b1be12daf508df09d62170f4e9546"
+}
+
+seal @akr.evidence.advisor-packet-design-set/1 {
+    state verified
+    hash "sha256:5d349c46846181ba39f44af64780489c05cc3610fbbb461a4fc933ec80dc2121"
+}
+
+seal @akr.evidence.advisor-packet-suite/1 {
+    state verified
+    hash "sha256:89230d0a5faed796ecd9b3798fdacf0daadf25c50a024936ba12c12434355a98"
 }
 
 seal @akr.evidence.change-delta-green/1 {
@@ -1153,6 +1162,11 @@ seal @akr.papercut.writing-several-evidence-and-lifecycle-records/1 {
 seal @akr.papercut.writing-several-evidence-and-lifecycle-records/2 {
     state withdrawn
     hash "sha256:ba9f963520ee7cd0b9a8c5693c5540f5843770e2580a666e4fe097f3dc4edac6"
+}
+
+seal @akr.work.advisor-packet-handoff/1 {
+    state completed
+    hash "sha256:53c802bee3497f0e4a85d12e46eb401b217a743de20080cfacd8d33e217541de"
 }
 
 seal @akr.work.authoring-contracts/1 {

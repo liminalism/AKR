@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 AKR (Agent Knowledge Records) is a versioned project-knowledge ledger: a typed record language (`.akr` files), a deterministic compiler (`akr build`: parse → type-check → link → resolve → index → emit), and generated Markdown views. It is framed as **a compiler and build system for project knowledge, not a retrieval store** — the build fails on contradictions, output is byte-reproducible, and no language model participates in any pipeline stage.
 
-Note: `README.md` still says "design only"; the implementation actually exists through roadmap phase P8, plus P10 (the immutable source library and its chunk index) and P11 (the AKR ↔ git change protocol). See `docs/13-implementation-roadmap.md`.
+Note: `README.md` still says "design only"; the implementation actually exists through roadmap phase P8, plus P10 (the immutable source library and its chunk index), P11 (the AKR ↔ git change protocol) and P12 (advisor packets). See `docs/13-implementation-roadmap.md`.
 
 Two adjacent systems share the repo and are deliberately *not* the ledger:
 

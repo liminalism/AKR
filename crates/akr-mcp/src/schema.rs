@@ -718,34 +718,21 @@ pub fn input_schema(name: &str) -> Option<Value> {
     Some(schema)
 }
 
-/// The output schema for each tool.
+/// The output schema for each tool, or `None` for a name that is not one.
+///
+/// Every tool answers with a JSON object, so this is one shape rather than twenty-nine.
+/// It used to be a `match` naming each tool and returning that same shape from every arm
+/// — a list carrying no information, and one that a new tool silently fell off: the seven
+/// `knowledge.handoff_*` tools were declared, implemented and schema'd, and still failed
+/// `no_tool_can_reach_the_sqlite_cache` for want of a line here. Deriving it from the
+/// catalogue removes the drift rather than adding seven more lines to it. `input_schema`
+/// stays a per-tool `match`, because there the arms actually differ.
+#[must_use]
 pub fn output_schema(name: &str) -> Option<Value> {
-    match name {
-        "knowledge.search"
-        | "knowledge.start"
-        | "knowledge.explain"
-        | "knowledge.get"
-        | "knowledge.context"
-        | "knowledge.source_list"
-        | "knowledge.source_add"
-        | "knowledge.source_search"
-        | "knowledge.source_get"
-        | "knowledge.source_verify"
-        | "knowledge.source_supersede"
-        | "knowledge.source_status"
-        | "knowledge.source_dependents"
-        | "knowledge.source_finalize"
-        | "knowledge.impact"
-        | "knowledge.validate"
-        | "knowledge.propose"
-        | "knowledge.revise"
-        | "knowledge.supersede"
-        | "knowledge.complete"
-        | "knowledge.evidence_add"
-        | "knowledge.evidence_add_many"
-        | "knowledge.papercut" => Some(Value::object(vec![("type", Value::string("object"))])),
-        _ => None,
-    }
+    TOOLS
+        .iter()
+        .any(|tool| tool.name == name)
+        .then(|| Value::object(vec![("type", Value::string("object"))]))
 }
 
 fn evidence_schema() -> Value {

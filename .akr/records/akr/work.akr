@@ -3,7 +3,7 @@ project akr
 
 record akr.work.advisor-packet-handoff/1 : work {
     title "Give AKR a formal worker-to-advisor handoff"
-    state proposed
+    state completed
     scope [
         path "crates/akr-cli/src/handoff/**",
         path "crates/akr-mcp/src/**",
@@ -23,6 +23,7 @@ record akr.work.advisor-packet-handoff/1 : work {
                 """
             method command
             command "cargo test -p akr-cli --test advisor_packet"
+            verified_by [ @akr.evidence.advisor-packet-suite/1 ]
         }
         check design-set-coherent {
             statement """
@@ -30,6 +31,7 @@ record akr.work.advisor-packet-handoff/1 : work {
                 """
             method command
             command "python tools/check-design.py && cargo test"
+            verified_by [ @akr.evidence.advisor-packet-design-set/1 ]
         }
         check drift-is-reported-not-fatal {
             statement """
@@ -37,6 +39,7 @@ record akr.work.advisor-packet-handoff/1 : work {
                 """
             method command
             command "cargo test -p akr-cli --test advisor_packet a_fresh_packet_is_exact_and_an_edited_tree_drifts"
+            verified_by [ @akr.evidence.advisor-packet-suite/1 ]
         }
         check envelope-stays-project-wide {
             statement """
@@ -44,6 +47,7 @@ record akr.work.advisor-packet-handoff/1 : work {
                 """
             method command
             command "cargo test -p akr-cli --test advisor_packet the_envelope_defaults_to_the_whole_project"
+            verified_by [ @akr.evidence.advisor-packet-suite/1 ]
         }
         check surfaces-agree {
             statement """
@@ -51,6 +55,7 @@ record akr.work.advisor-packet-handoff/1 : work {
                 """
             method command
             command "cargo test -p akr-mcp --test differential an_advisor_packet"
+            verified_by [ @akr.evidence.advisor-packet-suite/1 ]
         }
     }
     author "GitHub Uploader"

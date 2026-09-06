@@ -18,8 +18,8 @@
 //! them for the problem, because an advisor hired for what the first agent did not notice
 //! cannot be handed the first agent's noticing as the definition of the task.
 //!
-//! [`AdvisorPacket`] keeps them in different fields, [`AdvisorPacket::open`] renders only
-//! the first, and [`AdvisorPacket::reveal`] is a separate, recorded act. The point of
+//! [`AdvisorPacket`] keeps them in different fields, [`super::advisor::open`] renders only
+//! the first, and [`super::advisor::reveal`] is a separate, recorded act. The point of
 //! recording it is comparison: once you know an advisor read blind and then saw the notes,
 //! "what did either side miss?" is a question with an answer.
 //!
@@ -121,7 +121,7 @@ pub struct AdvisorPacket {
     pub evidence: Vec<String>,
     /// Artefacts already produced, by repository path.
     pub artifacts: Vec<String>,
-    /// Layer B. Withheld from [`Self::open`] until revealed.
+    /// Layer B. Withheld by [`super::advisor::open`] until revealed.
     pub worker_notes: WorkerNotes,
     /// When the notes were revealed, if they have been.
     pub revealed_at: Option<String>,

@@ -1,6 +1,32 @@
 akr 0.1
 project akr
 
+record akr.evidence.advisor-packet-design-set/1 : evidence {
+    title "The design set still coheres with D-040, docs/17 and AKR-C043 in it"
+    state verified
+    result pass
+    method command
+    observed_at git:e4c86724f2ab6147fffe71e5ad1aeb66f722af00
+    command "python tools/check-design.py"
+    summary """
+        All eight checks pass — links, codes, vocabulary, manifest, references, grammar, fixtures, terminology — with the new decision, the new specification document, the new diagnostic code and the new roadmap phase P12 in place. cargo clippy --all-targets is also clean across the workspace, and cargo doc -p akr-cli --no-deps resolves every intra-doc link in the new handoff module.
+        """
+    author "GitHub Uploader"
+}
+
+record akr.evidence.advisor-packet-suite/1 : evidence {
+    title "757 tests passed across 55 binaries, including the nine advisor-packet cases and the MCP differential"
+    state verified
+    result pass
+    method command
+    observed_at git:e4c86724f2ab6147fffe71e5ad1aeb66f722af00
+    command "cargo test"
+    summary """
+        The whole suite ran at the feature commit. 756 of 757 passed on the first run; the one failure was no_tool_can_reach_the_sqlite_cache, which asserts every declared MCP tool has an output schema and which the seven knowledge.handoff_* tools fell off because output_schema was a hand-maintained match whose every arm returned the same shape. Deriving it from the TOOLS catalogue fixed it and removed that drift class; the test now passes. New coverage: crates/akr-cli/tests/advisor_packet.rs (nine cases, the load-bearing ones negative — a blind open leaks no worker note, the envelope does not narrow to what the worker examined, a fresh packet does not drift against itself) and an_advisor_packet_opens_the_same_way_from_either_surface in the MCP differential, which also proves opening over MCP does not stamp the packet.
+        """
+    author "GitHub Uploader"
+}
+
 record akr.evidence.change-delta-green/1 : evidence {
     title "The whole workspace is green, clippy is silent, formatting is clean and the design set is coherent over the delta fix."
     state verified
