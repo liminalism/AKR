@@ -77,6 +77,25 @@ fn rpc(example: &Example, requests: &str) -> Vec<Value> {
 }
 
 /// The `result` object of an `akr ... --format json` run.
+/// The text half of a tool result: what the model reads as the briefing.
+fn call_text(example: &Example, tool: &str, arguments: &str) -> String {
+    let request = format!(
+        "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\
+         \"params\":{{\"name\":\"{tool}\",\"arguments\":{arguments}}}}}\n"
+    );
+    let response = rpc(example, &request);
+    response
+        .first()
+        .and_then(|value| value.get("result"))
+        .and_then(|result| result.get("content"))
+        .and_then(Value::as_array)
+        .and_then(|content| content.first())
+        .and_then(|item| item.get("text"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned()
+}
+
 fn cli_result(example: &Example, args: &[&str]) -> Value {
     let mut full = vec!["--format", "json"];
     full.extend_from_slice(args);
@@ -888,26 +907,40 @@ fn a_handoff_opens_the_same_way_from_either_surface() {
         created.to_pretty()
     );
 
-    let tool = call(
-        &example,
-        "knowledge.handoff_open",
-        &format!(r#"{{"packet":"{id}"}}"#),
-    );
+    let request = format!(r#"{{"packet":"{id}"}}"#);
+    let tool = call(&example, "knowledge.handoff_open", &request);
     let cli = cli_result(&example, &["handoff", "open", &id]);
     assert_eq!(tool.to_pretty(), cli.to_pretty());
 
-    // The session capsule is inherited, not copied, and it comes through resolved.
+    // The session capsule is inherited, not copied, and it comes through resolved -- in
+    // the text, which is the briefing. The structured half is an index into it, so the
+    // model is not shown every inherited fact twice under one budget.
+    let briefing = call_text(&example, "knowledge.handoff_open", &request);
     assert!(
-        tool.get("request")
-            .and_then(Value::as_str)
-            .is_some_and(|request| request.contains("memory and CPU")),
-        "{}",
-        tool.to_pretty()
+        briefing.contains("memory and CPU"),
+        "the verbatim request reaches the child:\n{briefing}"
+    );
+    assert!(
+        briefing.contains("PROJECT "),
+        "the project capsule reaches the child:\n{briefing}"
     );
     assert!(
         tool.get("project")
-            .is_some_and(|project| !project.is_null()),
-        "the project capsule reaches the child:\n{}",
+            .and_then(Value::as_str)
+            .is_some_and(|id| id.starts_with("pc-")),
+        "the index names the capsule rather than copying it:\n{}",
+        tool.to_pretty()
+    );
+    assert!(
+        tool.get("request").is_none() && tool.get("session_head").is_none(),
+        "the structured half must not duplicate the briefing:\n{}",
+        tool.to_pretty()
+    );
+    assert!(
+        tool.get("sections")
+            .and_then(Value::as_array)
+            .is_some_and(|sections| sections.iter().any(|s| s.as_str() == Some("inherited"))),
+        "the index names the continuations:\n{}",
         tool.to_pretty()
     );
 
@@ -919,9 +952,8 @@ fn a_handoff_opens_the_same_way_from_either_surface() {
         tool.to_pretty()
     );
     assert!(
-        !tool.to_pretty().contains("the cost is all in chroma"),
-        "a scout's open leaked a hypothesis:\n{}",
-        tool.to_pretty()
+        !briefing.contains("the cost is all in chroma") && !tool.to_pretty().contains("chroma"),
+        "a scout's open leaked a hypothesis:\n{briefing}"
     );
 
     // `knowledge.handoff_open` is declared read-only, so opening must not have stamped

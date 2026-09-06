@@ -12,8 +12,16 @@
 //! the same recorded path — a child that wants the notes at once may have them, but the
 //! packet says that it did.
 //!
-//! **Inheritance is resolved, not copied.** [`open`] walks `inherits` at read time. A
-//! session capsule corrected after five packets were cut corrects all five.
+//! **Inheritance is resolved, not copied.** [`open`] walks `inherits` at read time,
+//! transitively and cycle-safe, and follows each inherited packet to the result filed
+//! against it. A session capsule corrected after five packets were cut corrects all five,
+//! and what a predecessor actually read reaches its successor without the parent
+//! re-typing it.
+//!
+//! **A packet is fingerprinted when it is cut.** The session records where the delegation
+//! began; the parent then builds, tests and edits before it delegates. Drift is measured
+//! from the packet, so "does this still describe the tree you are looking at" is answered
+//! about the tree the child was handed, not the one the session opened on.
 
 use super::capsule::{self, Project, SessionCapsule};
 use super::packet::{self, Mode, Packet, WorkerNotes};
@@ -90,6 +98,8 @@ pub fn capsule_show(
     let mut capsule = project_capsule(session, refresh || !boundaries.is_empty())?;
     if !boundaries.is_empty() {
         capsule.boundaries = boundaries.to_vec();
+        // The id is a digest over the content, boundaries included, so it moves with them.
+        capsule.rekey();
         packet::write_json(&session.root, "project", &capsule.to_json()).map_err(env)?;
     }
     Ok(Output::plain(capsule.render(), capsule.to_json()))
@@ -405,6 +415,8 @@ pub fn create(session: &Session, request: &CreateRequest) -> Result<Output, EnvE
         .map(|raw| PreparedCommand::parse(raw))
         .collect();
     built.worker_notes = request.notes.clone();
+    // Against the tree as it stands now, not as it stood when the session opened.
+    built.workspace = Some(Fingerprint::capture(session));
 
     let path = packet::save(&session.root, &built).map_err(env)?;
     let relative = path
@@ -427,6 +439,9 @@ pub fn create(session: &Session, request: &CreateRequest) -> Result<Output, EnvE
         }
     ));
     text.push_str(&format!("scope        {}\n", built.scope.join(", ")));
+    if let Some(workspace) = &built.workspace {
+        text.push_str(&format!("workspace    {}\n", workspace.line()));
+    }
     text.push_str(&format!(
         "worker notes {}\n",
         match (built.worker_notes.is_empty(), mode.discloses_notes()) {
@@ -546,44 +561,245 @@ pub fn list(session: &Session) -> Result<Output, EnvError> {
 struct Inherited {
     project: Option<Project>,
     session: Option<SessionCapsule>,
+    /// Every packet reachable through `inherits`, nearest first, each once.
     parents: Vec<Packet>,
+    /// The results filed against those packets, in the same order.
+    results: Vec<Report>,
 }
 
+impl Inherited {
+    /// Whether any earlier packet is inherited beyond the capsules.
+    fn has_predecessors(&self) -> bool {
+        !self.parents.is_empty()
+    }
+
+    /// Whether an inherited result carries judgement: findings, uncertainties, follow-up.
+    fn has_judgement(&self) -> bool {
+        self.results.iter().any(|report| {
+            !report.findings.is_empty()
+                || !report.uncertainties.is_empty()
+                || !report.follow_up.is_empty()
+        })
+    }
+}
+
+/// Walks the inheritance graph.
+///
+/// Transitive, because `C inherits B inherits A` is what the docs describe and a child
+/// two hops down would otherwise lose everything A read. Cycle-safe, because two
+/// hand-edited packets naming each other must produce a finite rendering rather than a
+/// hung `open`. Breadth-first from the packet, so the nearest predecessor renders first
+/// and the same id is visited once however many paths reach it.
 fn resolve(session: &Session, stored: &Packet) -> Inherited {
     let mut resolved = Inherited {
         project: None,
         session: None,
         parents: Vec::new(),
+        results: Vec::new(),
     };
-    for id in &stored.inherits {
-        if id.starts_with("sx-") {
-            resolved.session = packet::read_json(&session.root, id)
-                .ok()
-                .and_then(|value| SessionCapsule::from_json(&value).ok());
-        } else if packet::is_packet_id(id)
-            && let Ok(parent) = packet::load(&session.root, id)
+    let mut seen: Vec<String> = vec![stored.id.clone()];
+    let mut queue: std::collections::VecDeque<String> = stored.inherits.iter().cloned().collect();
+    while let Some(id) = queue.pop_front() {
+        if seen.contains(&id) {
+            continue;
+        }
+        seen.push(id.clone());
+        if packet::is_session_id(&id) {
+            // The nearest session wins: a packet is cut inside one session, and a parent
+            // from another session does not move it.
+            if resolved.session.is_none() {
+                resolved.session = packet::read_json(&session.root, &id)
+                    .ok()
+                    .and_then(|value| SessionCapsule::from_json(&value).ok());
+            }
+        } else if packet::is_packet_id(&id)
+            && let Ok(parent) = packet::load(&session.root, &id)
         {
+            queue.extend(parent.inherits.iter().cloned());
             resolved.parents.push(parent);
         }
     }
+    let reports = result::all(&session.root);
+    for parent in &resolved.parents {
+        resolved.results.extend(
+            reports
+                .iter()
+                .filter(|report| report.packet == parent.id)
+                .cloned(),
+        );
+    }
     // The project capsule comes through the session rather than being named directly: one
     // path to it, so a packet cannot inherit a session and a different project.
-    if let Some(capsule) = &resolved.session {
+    if resolved.session.is_some() {
         resolved.project = packet::read_json(&session.root, "project")
             .ok()
-            .and_then(|value| Project::from_json(&value).ok())
-            .filter(|project| project.id == capsule.project)
-            .or_else(|| {
-                packet::read_json(&session.root, "project")
-                    .ok()
-                    .and_then(|value| Project::from_json(&value).ok())
-            });
+            .and_then(|value| Project::from_json(&value).ok());
     }
     resolved
 }
 
+/// The tree a packet describes: its own fingerprint, or the session's for a packet stored
+/// before packets carried one, or the tree as it stands for a packet with neither.
+fn described_workspace(session: &Session, stored: &Packet, inherited: &Inherited) -> Fingerprint {
+    stored.workspace.clone().unwrap_or_else(|| {
+        inherited
+            .session
+            .as_ref()
+            .map_or_else(|| Fingerprint::capture(session), |c| c.workspace.clone())
+    })
+}
+
+/// What earlier packets established: read, searched, ran, changed. Every mode inherits it,
+/// because it is fact, and re-establishing it is the cost this subsystem exists to remove.
+fn inherited_facts_text(inherited: &Inherited) -> String {
+    if !inherited.has_predecessors() {
+        return String::new();
+    }
+    let mut text = String::from(
+        "\nINHERITED FROM EARLIER PACKETS (fact: what they read, ran and changed, not what\n\
+         they concluded)\n",
+    );
+    for parent in &inherited.parents {
+        let answered: Vec<&Report> = inherited
+            .results
+            .iter()
+            .filter(|report| report.packet == parent.id)
+            .collect();
+        text.push_str(&format!(
+            "  {}  {}{}{}\n",
+            parent.id,
+            parent.mode.as_str(),
+            parent
+                .role
+                .as_ref()
+                .map_or_else(String::new, |role| format!(" {role}")),
+            if answered.is_empty() {
+                "  (no result filed yet)".to_owned()
+            } else {
+                format!(
+                    "  result {}",
+                    answered
+                        .iter()
+                        .map(|r| r.id.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+        ));
+        // The preparer's own account of what it read is coverage too, and it is the only
+        // coverage a packet nobody has answered yet can offer.
+        text.push_str(&block(
+            "    examined by the parent",
+            &parent.worker_notes.examined,
+            "      ",
+        ));
+        text.push_str(&block(
+            "    not examined by the parent",
+            &parent.worker_notes.not_examined,
+            "      ",
+        ));
+        text.push_str(&block(
+            "    searched by the parent",
+            &parent.worker_notes.searches,
+            "      ",
+        ));
+        for report in answered {
+            text.push_str(&report.coverage.render("    "));
+            text.push_str(&block("    changed", &report.changes, "      "));
+            text.push_str(&block("    evidence", &report.evidence, "      "));
+            if !report.commands.is_empty() {
+                text.push_str("    ran\n");
+                for command in &report.commands {
+                    text.push_str(&format!("      {}\n", command.line()));
+                }
+            }
+        }
+    }
+    text
+}
+
+/// What earlier packets concluded. It follows the same disclosure rule as the parent's own
+/// notes: a worker continues from it, everyone else forms a view first.
+fn inherited_judgement_text(inherited: &Inherited) -> String {
+    let mut text = String::new();
+    for report in &inherited.results {
+        if report.findings.is_empty()
+            && report.uncertainties.is_empty()
+            && report.follow_up.is_empty()
+        {
+            continue;
+        }
+        text.push_str(&format!(
+            "  from {} (result {})\n",
+            report.packet, report.id
+        ));
+        text.push_str(&block("    findings", &report.findings, "      "));
+        text.push_str(&block("    uncertainties", &report.uncertainties, "      "));
+        text.push_str(&block("    follow-up", &report.follow_up, "      "));
+    }
+    if text.is_empty() {
+        return text;
+    }
+    format!("\nINHERITED FINDINGS (non-authoritative: what earlier agents concluded)\n{text}")
+}
+
+/// The structured form of what a packet inherits from earlier packets, split the same way.
+fn inherited_json(inherited: &Inherited, show_judgement: bool) -> Value {
+    Value::array(
+        inherited
+            .parents
+            .iter()
+            .map(|parent| {
+                let results: Vec<Value> = inherited
+                    .results
+                    .iter()
+                    .filter(|report| report.packet == parent.id)
+                    .map(|report| {
+                        let mut fields = vec![
+                            ("result", Value::string(report.id.clone())),
+                            ("coverage", report.coverage.to_json()),
+                            ("changes", super::strings(&report.changes)),
+                            ("evidence", super::strings(&report.evidence)),
+                            ("commands", super::commands_json(&report.commands)),
+                        ];
+                        if show_judgement {
+                            fields.push(("findings", super::strings(&report.findings)));
+                            fields.push(("uncertainties", super::strings(&report.uncertainties)));
+                            fields.push(("follow_up", super::strings(&report.follow_up)));
+                        }
+                        Value::object(fields)
+                    })
+                    .collect();
+                Value::object(vec![
+                    ("packet", Value::string(parent.id.clone())),
+                    ("mode", Value::string(parent.mode.as_str())),
+                    (
+                        "role",
+                        parent
+                            .role
+                            .as_ref()
+                            .map_or(Value::Null, |r| Value::string(r.clone())),
+                    ),
+                    ("examined", super::strings(&parent.worker_notes.examined)),
+                    (
+                        "not_examined",
+                        super::strings(&parent.worker_notes.not_examined),
+                    ),
+                    ("searched", super::strings(&parent.worker_notes.searches)),
+                    ("results", Value::array(results)),
+                ])
+            })
+            .collect(),
+    )
+}
+
 /// The rendering, with Layer B included or withheld.
-fn render(stored: &Packet, inherited: &Inherited, drift: &super::snapshot::Drift) -> String {
+fn render(
+    stored: &Packet,
+    inherited: &Inherited,
+    workspace: &Fingerprint,
+    drift: &super::snapshot::Drift,
+) -> String {
     let mut text = format!(
         "{} PACKET {}\n",
         stored.mode.as_str().to_uppercase(),
@@ -603,26 +819,24 @@ fn render(stored: &Packet, inherited: &Inherited, drift: &super::snapshot::Drift
     if !stored.inherits.is_empty() {
         text.push_str(&format!("inherits     {}\n", stored.inherits.join(", ")));
     }
-    if let Some(capsule) = &inherited.session {
-        text.push_str(&format!(
-            "workspace    {} ({})\n",
-            capsule.workspace.line(),
-            drift.status()
-        ));
-        if !drift.exact {
-            if let Some((was, now)) = &drift.head_moved {
-                text.push_str(&format!(
-                    "  HEAD moved {} -> {}\n",
-                    &was[..was.len().min(8)],
-                    &now[..now.len().min(8)]
-                ));
-            }
-            if drift.ledger_moved {
-                text.push_str("  the ledger changed since this session opened\n");
-            }
-            for path in &drift.changed {
-                text.push_str(&format!("  changed since the session opened: {path}\n"));
-            }
+    text.push_str(&format!(
+        "workspace    {} ({})\n",
+        workspace.line(),
+        drift.status()
+    ));
+    if !drift.exact {
+        if let Some((was, now)) = &drift.head_moved {
+            text.push_str(&format!(
+                "  HEAD moved {} -> {}\n",
+                &was[..was.len().min(8)],
+                &now[..now.len().min(8)]
+            ));
+        }
+        if drift.ledger_moved {
+            text.push_str("  the ledger changed since this packet was cut\n");
+        }
+        for path in &drift.changed {
+            text.push_str(&format!("  changed since this packet was cut: {path}\n"));
         }
     }
 
@@ -704,31 +918,29 @@ fn render(stored: &Packet, inherited: &Inherited, drift: &super::snapshot::Drift
     text.push_str(&block("\nDO NOT REPEAT", &stored.skip, "  "));
     text.push_str(&block("\nRETURN", &stored.expected_return, "  "));
 
-    // Coverage from earlier packets in the chain, so a worker does not re-open what its
-    // predecessor already read. This is fact, not judgement, so every mode gets it.
-    let earlier: Vec<String> = inherited
-        .parents
-        .iter()
-        .flat_map(|parent| parent.worker_notes.examined.iter().cloned())
-        .collect();
-    text.push_str(&block(
-        "\nALREADY EXAMINED BY AN EARLIER PACKET",
-        &earlier,
-        "  ",
-    ));
+    // What earlier packets read, ran and changed is fact, so every mode gets it: this is
+    // where a successor stops re-reading what its predecessor already paid for.
+    text.push_str(&inherited_facts_text(inherited));
 
     if stored.shows_notes() {
         text.push_str(&notes_text(&stored.worker_notes));
+        text.push_str(&inherited_judgement_text(inherited));
     } else {
+        let withheld = !stored.worker_notes.is_empty() || inherited.has_judgement();
         text.push_str(&format!(
-            "\nWORKER NOTES  {}\n",
-            if stored.worker_notes.is_empty() {
-                "none recorded".to_owned()
+            "\nWORKER NOTES{}  {}\n",
+            if inherited.has_judgement() {
+                " AND INHERITED FINDINGS"
             } else {
+                ""
+            },
+            if withheld {
                 format!(
                     "withheld — form your own view first, then `akr handoff reveal {}`",
                     stored.id
                 )
+            } else {
+                "none recorded".to_owned()
             }
         ));
     }
@@ -766,11 +978,8 @@ fn notes_text(notes: &WorkerNotes) -> String {
 pub fn open(session: &Session, id: &str, reveal_now: bool) -> Result<Output, EnvError> {
     let mut stored = load_packet(session, id)?;
     let inherited = resolve(session, &stored);
-    let drift = inherited
-        .session
-        .as_ref()
-        .map(|capsule| capsule.workspace.compare(&Fingerprint::capture(session)))
-        .unwrap_or_else(|| Fingerprint::capture(session).compare(&Fingerprint::capture(session)));
+    let workspace = described_workspace(session, &stored, &inherited);
+    let drift = workspace.compare(&Fingerprint::capture(session));
 
     // `--reveal` takes the same recorded path as `akr handoff reveal`: a child may read
     // the notes at once, but the packet must never be unable to say whether the pass that
@@ -781,8 +990,13 @@ pub fn open(session: &Session, id: &str, reveal_now: bool) -> Result<Output, Env
     }
     let shows = stored.shows_notes();
 
-    let text = render(&stored, &inherited, &drift);
-    let mut fields = vec![
+    let text = render(&stored, &inherited, &workspace, &drift);
+    // The text is the briefing and the structured form is an index into it. An MCP
+    // response carries both, so a structured copy of the request, the project capsule and
+    // the session head would put every inherited fact in front of the model twice, and
+    // the budget this tool runs under counts both halves. Each section is one `expand`
+    // away, addressed by the names listed here.
+    let fields = vec![
         ("packet", Value::string(stored.id.clone())),
         ("mode", Value::string(stored.mode.as_str())),
         (
@@ -792,43 +1006,53 @@ pub fn open(session: &Session, id: &str, reveal_now: bool) -> Result<Output, Env
                 .as_ref()
                 .map_or(Value::Null, |r| Value::string(r.clone())),
         ),
-        ("task", Value::string(stored.task.clone())),
         (
-            "request",
+            "session",
             inherited
                 .session
                 .as_ref()
-                .map_or(Value::Null, |c| Value::string(c.request.clone())),
+                .map_or(Value::Null, |c| Value::string(c.id.clone())),
         ),
-        ("inherits", super::strings(&stored.inherits)),
-        ("scope", super::strings(&stored.scope)),
-        ("known", super::strings(&stored.known)),
-        ("skip", super::strings(&stored.skip)),
-        ("expected_return", super::strings(&stored.expected_return)),
-        ("drift", drift.to_json()),
         (
             "project",
             inherited
                 .project
                 .as_ref()
-                .map_or(Value::Null, Project::to_json),
+                .map_or(Value::Null, |p| Value::string(p.id.clone())),
+        ),
+        ("inherits", super::strings(&stored.inherits)),
+        (
+            "predecessors",
+            Value::array(
+                inherited
+                    .parents
+                    .iter()
+                    .map(|parent| Value::string(parent.id.clone()))
+                    .collect(),
+            ),
         ),
         (
-            "session_head",
-            inherited
-                .session
-                .as_ref()
-                .map_or(Value::Null, |c| Value::string(c.session_head.clone())),
+            "inherited_results",
+            Value::array(
+                inherited
+                    .results
+                    .iter()
+                    .map(|report| Value::string(report.id.clone()))
+                    .collect(),
+            ),
         ),
+        ("scope", super::strings(&stored.scope)),
+        ("drift", drift.to_json()),
         (
             "worker_notes_available",
             Value::bool(!stored.worker_notes.is_empty()),
         ),
         ("worker_notes_revealed", Value::bool(shows)),
+        (
+            "sections",
+            Value::array(SECTIONS.iter().map(|s| Value::string(*s)).collect()),
+        ),
     ];
-    if shows {
-        fields.push(("worker_notes", stored.worker_notes.to_json()));
-    }
     Ok(Output::plain(text, Value::object(fields)))
 }
 
@@ -840,6 +1064,7 @@ pub const SECTIONS: &[&str] = &[
     "session",
     "scope",
     "assignment",
+    "inherited",
     "notes",
 ];
 
@@ -866,10 +1091,7 @@ pub fn expand(session: &Session, id: &str, section: &str) -> Result<Output, EnvE
             ]),
         ),
         "workspace" => {
-            let fingerprint = inherited
-                .session
-                .as_ref()
-                .map_or_else(|| Fingerprint::capture(session), |c| c.workspace.clone());
+            let fingerprint = described_workspace(session, &stored, &inherited);
             let drift = fingerprint.compare(&Fingerprint::capture(session));
             let mut text = format!("{}\n", fingerprint.line());
             for entry in &fingerprint.dirty {
@@ -930,6 +1152,27 @@ pub fn expand(session: &Session, id: &str, section: &str) -> Result<Output, EnvE
                 ]),
             )
         }
+        "inherited" => {
+            let mut text = inherited_facts_text(&inherited);
+            if text.is_empty() {
+                text.push_str("no earlier packet is inherited\n");
+            }
+            if stored.shows_notes() {
+                text.push_str(&inherited_judgement_text(&inherited));
+            } else if inherited.has_judgement() {
+                text.push_str(&format!(
+                    "\ninherited findings withheld: `akr handoff reveal {}` shows them\n",
+                    stored.id
+                ));
+            }
+            (
+                text,
+                Value::object(vec![(
+                    "inherited",
+                    inherited_json(&inherited, stored.shows_notes()),
+                )]),
+            )
+        }
         // Expanding the notes is revealing them, so it goes through `reveal` rather than
         // quietly becoming a second door into Layer B that leaves no record.
         "notes" => return reveal(session, id),
@@ -955,7 +1198,11 @@ pub fn reveal(session: &Session, id: &str) -> Result<Output, EnvError> {
         packet::save(&session.root, &stored).map_err(env)?;
     }
 
+    // Inherited findings are judgement under the same rule as the parent's own notes, so
+    // the one recorded door opens both.
+    let inherited = resolve(session, &stored);
     let mut text = notes_text(&stored.worker_notes);
+    text.push_str(&inherited_judgement_text(&inherited));
     text.push_str(
         "\nCompare these against what you found. What did either side miss? Where the\n\
          two disagree, the code decides — not this packet.\n",
@@ -965,6 +1212,7 @@ pub fn reveal(session: &Session, id: &str) -> Result<Output, EnvError> {
         Value::object(vec![
             ("packet", Value::string(stored.id.clone())),
             ("worker_notes", stored.worker_notes.to_json()),
+            ("inherited", inherited_json(&inherited, true)),
             (
                 "revealed_at",
                 stored
@@ -984,10 +1232,7 @@ pub fn reveal(session: &Session, id: &str) -> Result<Output, EnvError> {
 pub fn verify(session: &Session, id: &str) -> Result<Output, EnvError> {
     let stored = load_packet(session, id)?;
     let inherited = resolve(session, &stored);
-    let fingerprint = inherited
-        .session
-        .as_ref()
-        .map_or_else(|| Fingerprint::capture(session), |c| c.workspace.clone());
+    let fingerprint = described_workspace(session, &stored, &inherited);
     let drift = fingerprint.compare(&Fingerprint::capture(session));
 
     let mut text = format!("{} {}\n", stored.id, drift.status());

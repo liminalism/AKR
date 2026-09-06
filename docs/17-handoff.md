@@ -57,6 +57,13 @@ RESULT            rs-…    what came back
 packets were cut corrects all five. Copying would have produced five snapshots drifting
 apart silently, which is the failure the capsules exist to remove.
 
+Resolution is transitive and cycle-safe: `C --inherit B`, where `B --inherit A`, reaches
+`A`. And it follows each inherited packet to the **result filed against it**, so what a
+predecessor actually read, searched, ran and changed reaches its successor without the
+parent re-typing it. That coverage is fact and every mode gets it. The predecessor's
+findings, uncertainties and follow-up are judgement, and go the way the parent's own notes
+go: a `worker` sees them on open, the other modes after a recorded `reveal`.
+
 ### The project capsule
 
 Derived from the checkout, not written:
@@ -90,7 +97,7 @@ Open one before delegating. Every packet cut afterwards inherits it.
 ### The packet
 
 Mode, role, task, scope, what is already known, what must not be repeated, what to return,
-and the parent's notes.
+the parent's notes, and the workspace fingerprint at the moment it was cut.
 
 ## 4. The modes
 
@@ -151,7 +158,7 @@ organised; it never says which drawer the answer is in.
 
 ## 7. The workspace fingerprint
 
-A capsule describes a tree. Parents keep working. So a session records:
+A capsule describes a tree. Parents keep working. So a session, and every packet, records:
 
 ```text
 head            a85e038b…            (full 40-hex)
@@ -164,11 +171,17 @@ Not every source byte: `HEAD` plus the source-graph hash plus a digest per dirty
 enough to detect drift, costs one status call and a read of the files git already named,
 and leaves the repository itself as the thing the child reads.
 
-`handoff open` and `handoff verify` recompute it:
+`handoff open` and `handoff verify` recompute it and compare against the **packet's**
+fingerprint, not the session's. The session records where the delegation began; the
+parent then builds, tests and edits before it cuts a packet, and a child asking "does this
+still describe the tree I am looking at" is asking about the tree it was handed. Measured
+from the session start, the answer would be `drifted` for the parent's own preparatory
+work, and a signal that fires for the wrong reason is one the child learns to ignore.
+`handoff session show` still reports drift from the session's own fingerprint.
 
 | Status | Meaning |
 | --- | --- |
-| `exact` | the workspace is as the capsule describes it |
+| `exact` | the workspace is as the packet describes it |
 | `drifted` | `HEAD` moved, the ledger moved, or named paths changed |
 
 Drift never changes the exit status. It is a fact about the working tree, not a
@@ -285,8 +298,9 @@ without the catalogue growing a member per mode.
 with newlines and quotes in it, and a shell mangles those.
 
 Sections for `expand`: `task`, `workspace`, `project`, `session`, `scope`, `assignment`,
-and `notes` — which is `reveal`, so expanding the notes cannot become a second door into
-the withheld layer that leaves no record.
+`inherited` — what earlier packets read, ran and changed, with their findings only where
+the mode discloses them — and `notes`, which is `reveal`, so expanding the notes cannot
+become a second door into the withheld layer that leaves no record.
 
 ## 13. The MCP surface
 
@@ -320,6 +334,14 @@ would be lying if a tool that created a packet reported itself read-only.
 whose whole purpose is that the second agent arrives knowing the workspace, and because a
 packet is addressable the overflow path names a real continuation —
 `knowledge.handoff_expand`, one section at a time — rather than truncating everything.
+
+Its two halves are deliberately asymmetric. The text is the complete briefing; the
+structured content is an index — ids, drift, scope, what is available and what is
+withheld, and the section names `expand` accepts. An MCP response carries both, and the
+budget counts both, so a structured copy of the request, the project capsule and the
+session head would put every inherited fact in front of the model twice. The same shape
+comes back from `akr --format json handoff open`; a section's structured form is one
+`expand` away.
 
 ## 14. What AKR does not own
 
@@ -362,9 +384,10 @@ whatever instruction files a workspace has:
 ```markdown
 ### Handoff
 
-`akr handoff worker` invokes a subagent. `akr handoff scout` invokes an independent
-agent. `akr handoff advisor` invokes a second opinion. `akr handoff reviewer` invokes
-an adversarial check.
+`akr handoff worker` cuts a packet for a continuing subagent; `scout` for an
+independent investigation, `advisor` for a second opinion, `reviewer` for an
+adversarial check. AKR builds the packet; you launch the agent and hand it
+`akr handoff open <id>`.
 
 Because inherited facts are cheap and inherited conclusions are not.
 

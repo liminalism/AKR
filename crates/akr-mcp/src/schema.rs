@@ -207,15 +207,18 @@ pub const TOOLS: &[Tool] = &[
     Tool {
         name: "knowledge.handoff_open",
         description: "Open a packet: the mode's contract, the verbatim request, your assignment\
-                      and scope, the inherited project and session capsules, what is already\
-                      established, what not to repeat, and what to return. A child agent calls\
-                      this INSTEAD of knowledge.start - the orientation is already in the packet.",
+                      and scope, the inherited project and session capsules, what earlier\
+                      packets already read and ran, what is already established, what not to\
+                      repeat, and what to return. The text is the whole briefing; the\
+                      structured content is an index into it. A child agent calls this INSTEAD\
+                      of knowledge.start - the orientation is already in the packet.",
         writes: false,
     },
     Tool {
         name: "knowledge.handoff_expand",
-        description: "Read one section of a packet: task, workspace, project, session, scope or\
-                      assignment. Cheaper than re-opening the whole packet.",
+        description: "Read one section of a packet: task, workspace, project, session, scope,\
+                      assignment or inherited (what earlier packets read, ran and changed).\
+                      Cheaper than re-opening the whole packet.",
         writes: false,
     },
     Tool {
@@ -770,7 +773,10 @@ pub fn input_schema(name: &str) -> Option<Value> {
                 ("packet", string("The packet id.")),
                 (
                     "section",
-                    string("One of: task, workspace, project, session, scope, assignment."),
+                    string(
+                        "One of: task, workspace, project, session, scope, assignment, \
+                         inherited.",
+                    ),
                 ),
             ],
             &["packet", "section"],

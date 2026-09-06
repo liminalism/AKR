@@ -247,7 +247,7 @@ pub fn derive_project(session: &Session) -> Project {
         instructions: present(&["AGENTS.md", "CLAUDE.md", "GEMINI.md", ".cursorrules"]),
         boundaries: Vec::new(),
     };
-    capsule.id = format!("pc-{}", &capsule.digest()[..12]);
+    capsule.rekey();
     capsule
 }
 
@@ -308,6 +308,14 @@ impl Project {
             hasher.update(b"\x1e");
         }
         hasher.finish().to_hex()
+    }
+
+    /// Recomputes the id from the content, after a field changed.
+    ///
+    /// The id is content-addressed: a capsule whose boundaries were edited and whose id
+    /// still named the old content would be a snapshot pretending to be an identity.
+    pub fn rekey(&mut self) {
+        self.id = format!("pc-{}", &self.digest()[..12]);
     }
 
     /// The rendering a packet embeds.

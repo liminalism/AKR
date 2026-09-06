@@ -325,6 +325,187 @@ fn a_fresh_session_is_exact_and_an_edited_tree_drifts() {
 }
 
 #[test]
+fn drift_is_measured_from_the_packet_not_the_session() {
+    let example = Example::materialise("handoff-drift-packet");
+    open_session(&example, &[]);
+    // The parent keeps working after the session opens: builds, edits, prepares.
+    example.write_file(
+        "sim/prepared-before-the-packet.txt",
+        "the parent's own edit",
+    );
+    let packet = cut(&example, "scout", &["--task", "Look at sim."]);
+
+    // The child is handed the tree as it stands at the cut, so that tree is exact.
+    let opened = example.run(&["handoff", "open", &packet]);
+    assert_eq!(opened.code, 0, "{}", opened.output());
+    assert!(
+        opened.stdout.contains("(exact)"),
+        "the parent's preparatory work must not read as drift to the child:\n{}",
+        opened.stdout
+    );
+    let verified = example.run(&["--format", "json", "handoff", "verify", &packet]);
+    assert!(
+        verified.stdout.contains("\"workspace_status\": \"exact\""),
+        "{}",
+        verified.stdout
+    );
+
+    // The session still measures from where the delegation began.
+    let shown = example.run(&["handoff", "session", "show"]);
+    assert!(shown.stdout.contains("(drifted)"), "{}", shown.stdout);
+
+    // And a change after the cut is drift for the packet.
+    example.write_file(
+        "sim/prepared-before-the-packet.txt",
+        "moved after the packet",
+    );
+    let verified = example.run(&["handoff", "verify", &packet]);
+    assert!(verified.stdout.contains("drifted"), "{}", verified.stdout);
+    assert!(
+        verified
+            .stdout
+            .contains("sim/prepared-before-the-packet.txt"),
+        "{}",
+        verified.stdout
+    );
+}
+
+#[test]
+fn a_successor_inherits_what_its_predecessor_actually_read() {
+    let example = Example::materialise("handoff-inherit-results");
+    open_session(&example, &[]);
+    let first = cut(
+        &example,
+        "scout",
+        &["--role", "first", "--task", "Scout the loop."],
+    );
+    let filed = example.run(&[
+        "handoff",
+        "result",
+        &first,
+        "--finding",
+        "The plane is materialised per channel.",
+        "--change",
+        "none yet",
+        "--read",
+        "sim/src/chroma.rs:1-470",
+        "--searched",
+        "collect::<Vec",
+        "--tested",
+        "chroma benchmark",
+        "--not-examined",
+        "sim/src/localtone.rs",
+    ]);
+    assert_eq!(filed.code, 0, "{}", filed.output());
+
+    // A worker continues: it sees the coverage and the findings.
+    let worker = cut(
+        &example,
+        "worker",
+        &["--task", "Fix the loop.", "--inherit", &first],
+    );
+    let opened = example.run(&["handoff", "open", &worker]);
+    assert_eq!(opened.code, 0, "{}", opened.output());
+    for fact in [
+        "INHERITED FROM EARLIER PACKETS",
+        "sim/src/chroma.rs:1-470",
+        "collect::<Vec",
+        "chroma benchmark",
+        "sim/src/localtone.rs",
+    ] {
+        assert!(
+            opened.stdout.contains(fact),
+            "the predecessor's coverage must reach the worker ({fact}):\n{}",
+            opened.stdout
+        );
+    }
+    assert!(
+        opened.stdout.contains("INHERITED FINDINGS")
+            && opened.stdout.contains("materialised per channel"),
+        "a worker sees what its predecessor concluded:\n{}",
+        opened.stdout
+    );
+
+    // A scout gets the same facts and none of the conclusions, until a recorded reveal.
+    let scout = cut(
+        &example,
+        "scout",
+        &["--task", "Scout the loop again.", "--inherit", &first],
+    );
+    let opened = example.run(&["handoff", "open", &scout]);
+    assert!(
+        opened.stdout.contains("sim/src/chroma.rs:1-470"),
+        "coverage is fact and every mode gets it:\n{}",
+        opened.stdout
+    );
+    assert!(
+        !opened.stdout.contains("materialised per channel"),
+        "a scout was handed its predecessor's conclusion:\n{}",
+        opened.stdout
+    );
+    assert!(
+        opened.stdout.contains("INHERITED FINDINGS  withheld"),
+        "the scout is told something is withheld, not left to guess:\n{}",
+        opened.stdout
+    );
+    let expanded = example.run(&["--format", "json", "handoff", "expand", &scout, "inherited"]);
+    assert_eq!(expanded.code, 0, "{}", expanded.output());
+    assert!(
+        expanded.stdout.contains("chroma.rs") && !expanded.stdout.contains("findings"),
+        "expand must not become a second door into the judgement:\n{}",
+        expanded.stdout
+    );
+    let revealed = example.run(&["handoff", "reveal", &scout]);
+    assert!(
+        revealed.stdout.contains("materialised per channel"),
+        "the one recorded door opens the inherited findings too:\n{}",
+        revealed.stdout
+    );
+}
+
+#[test]
+fn inheritance_is_transitive_and_survives_a_cycle() {
+    let example = Example::materialise("handoff-inherit-transitive");
+    open_session(&example, &[]);
+    let a = cut(&example, "scout", &["--role", "a", "--task", "A."]);
+    let filed = example.run(&["handoff", "result", &a, "--read", "sim/src/read-by-a.rs"]);
+    assert_eq!(filed.code, 0, "{}", filed.output());
+    let b = cut(
+        &example,
+        "worker",
+        &["--role", "b", "--task", "B.", "--inherit", &a],
+    );
+    let c = cut(
+        &example,
+        "worker",
+        &["--role", "c", "--task", "C.", "--inherit", &b],
+    );
+
+    let opened = example.run(&["handoff", "open", &c]);
+    assert_eq!(opened.code, 0, "{}", opened.output());
+    assert!(
+        opened.stdout.contains("sim/src/read-by-a.rs"),
+        "C inherits B inherits A, so A's coverage reaches C:\n{}",
+        opened.stdout
+    );
+
+    // Two packets naming each other must still render, once each.
+    let path_a = format!(".agent/handoffs/{a}.json");
+    let edited = example
+        .read_file(&path_a)
+        .replace("\"inherits\": [", &format!("\"inherits\": [\n    \"{c}\","));
+    example.write_file(&path_a, &edited);
+    let opened = example.run(&["handoff", "open", &c]);
+    assert_eq!(opened.code, 0, "{}", opened.output());
+    assert_eq!(
+        opened.stdout.matches("sim/src/read-by-a.rs").count(),
+        1,
+        "a cycle renders each predecessor once:\n{}",
+        opened.stdout
+    );
+}
+
+#[test]
 fn coverage_aggregates_and_names_what_nobody_opened() {
     let example = Example::materialise("handoff-coverage");
     open_session(&example, &[]);

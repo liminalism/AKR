@@ -413,6 +413,59 @@ record akr.work.handoff-context-transport/1 : work {
     author "GitHub Uploader"
 }
 
+record akr.work.handoff-packet-fingerprint-and-result-inheritance/1 : work {
+    title "Fingerprint each packet at the cut and inherit predecessors' filed coverage"
+    state completed
+    scope [
+        path "crates/akr-cli/src/handoff/**",
+        path "crates/akr-mcp/src/**",
+        path "docs/17-handoff.md",
+        path "scripts/agent-section.md"
+    ]
+    intent """
+        Close the two implementation misses an outside review found in the handoff transport before it is relied on. First, drift was measured from the session's fingerprint, captured when the delegation began, so a parent's own preparatory edits read to the child as drift against a packet cut later; a packet now carries the fingerprint of the tree it was cut against, and open, expand and verify compare against that (session show still measures from the session). Second, inheritance rendered only the preparer's notes stored in the parent packet, not the coverage the agent who received that packet later filed in its result; resolution is now transitive and cycle-safe and follows each inherited packet to its results, with what they read, searched, ran and changed shown to every mode and their findings following the mode's disclosure rule, revealed through the same recorded door as the notes. Alongside: the four-line brief said the mode commands 'invoke' agents when AKR builds a packet and launches nothing; the handoff_open structured content duplicated the whole briefing so both halves counted against one budget, and is now an index into the text; the project capsule's content-addressed id is recomputed when boundaries change; the MCP overflow hint named sections that did not exist.
+        """
+    note """
+        Advice reviewed against the code before acting; all four findings held. Deliberately not done, per the same advice: no new modes, no orchestration inside AKR, no summarisation or compaction, and the project capsule stays a single mutable file rather than a per-digest store.
+        """
+    acceptance {
+        check drift-is-per-packet {
+            statement """
+                A tree edited after the session opened but before the packet was cut is exact for the packet and drifted for the session; an edit after the cut is drift for the packet.
+                """
+            method command
+            command "cargo test -p akr-cli --test handoff drift_is_measured_from_the_packet_not_the_session"
+            verified_by [ @akr.evidence.handoff-refinement-suite/1 ]
+        }
+        check inheritance-is-transitive-and-cycle-safe {
+            statement """
+                C inheriting B inheriting A receives A's coverage, and a cycle renders each predecessor once.
+                """
+            method command
+            command "cargo test -p akr-cli --test handoff inheritance_is_transitive_and_survives_a_cycle"
+            verified_by [ @akr.evidence.handoff-refinement-suite/1 ]
+        }
+        check open-does-not-duplicate-itself {
+            statement """
+                knowledge.handoff_open and akr --format json handoff open return the same structured index, which carries neither the request nor the session head, while the text still carries the verbatim request and the project capsule.
+                """
+            method command
+            command "cargo test -p akr-mcp --test differential a_handoff_opens_the_same_way_from_either_surface"
+            verified_by [ @akr.evidence.handoff-open-index-differential/1 ]
+        }
+        check result-coverage-is-inherited-mode-aware {
+            statement """
+                A successor sees a predecessor's filed coverage in every mode; the predecessor's findings reach a worker on open and the other modes only through a recorded reveal.
+                """
+            method command
+            command "cargo test -p akr-cli --test handoff a_successor_inherits_what_its_predecessor_actually_read"
+            verified_by [ @akr.evidence.handoff-refinement-suite/1 ]
+        }
+    }
+    derived_from [ @akr.work.handoff-context-transport/1 ]
+    author "GitHub Uploader"
+}
+
 record akr.work.mcp-actionable-truncation/1 : work {
     title "Keep every budgeted MCP response usable"
     state completed

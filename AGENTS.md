@@ -106,9 +106,9 @@ Consult AKR at task and state-transition boundaries, not after every edit.
 
 **Handoff**
 
-`akr handoff worker` invokes a subagent. `akr handoff scout` invokes an independent agent.
-`akr handoff advisor` invokes a second opinion. `akr handoff reviewer` invokes an
-adversarial check.
+`akr handoff worker` cuts a packet for a continuing subagent; `scout` for an independent
+investigation, `advisor` for a second opinion, `reviewer` for an adversarial check. AKR
+builds the packet; you launch the agent and hand it `akr handoff open <id>`.
 
 Because inherited facts are cheap and inherited conclusions are not.
 

@@ -2329,12 +2329,21 @@ pub fn help_for(name: &str) -> Option<String> {
              that `akr handoff coverage` rolls up: five agents told to review the whole\n\
              project otherwise all check the same obvious doorway.\n\
              \n\
+             AKR builds the packet and does not launch the agent: your harness does that,\n\
+             and hands the child `akr handoff open <id>`.\n\
+             \n\
              Everything lives in .agent/handoffs/, is gitignored, and is invisible to\n\
              search, context and the compiler. open and verify report exact or drifted and\n\
              name what moved; drift never changes the exit status.\n\
              \n\
              SECTIONS for expand: task, workspace, project, session, scope, assignment,\n\
-             notes (notes is reveal).\n"
+             inherited, notes (notes is reveal).\n\
+             \n\
+             --inherit <id> is transitive: a packet reaches what its parents inherited,\n\
+             and each inherited packet brings the result filed against it. What that\n\
+             predecessor read, ran and changed is fact and every mode sees it; what it\n\
+             concluded follows the mode, like your notes. A packet is fingerprinted when\n\
+             it is cut, so drift means the tree moved since the child was handed it.\n"
         }
         "scratch" => {
             "akr scratch list\n\

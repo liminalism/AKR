@@ -164,7 +164,8 @@ fn narrowing_advice(tool: &str, arguments: &Value) -> String {
         }
         "knowledge.impact" => "Call again with a smaller `depth`.",
         "knowledge.handoff_open" => {
-            "Read one section at a time with `knowledge.handoff_expand`: task, workspace,              project, governing, envelope, execution."
+            "Read one section at a time with `knowledge.handoff_expand`: task, workspace, \
+             project, session, scope, assignment, inherited."
         }
         "knowledge.validate" => {
             "Call again with a smaller `limit`, or continue from `next_offset`."

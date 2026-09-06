@@ -33,6 +33,7 @@
 //! assignment: the narrowing stays visible to the agent it was done to, which is the only
 //! place it can be checked.
 
+use super::snapshot::Fingerprint;
 use super::{PreparedCommand, commands_json, list, optional, strings, text};
 use akr_core::hash::Sha256;
 use akr_core::json::{Value, parse};
@@ -232,6 +233,16 @@ pub struct Packet {
     pub created_by: Option<String>,
     /// Capsule and packet ids this inherits, resolved at read time and never copied.
     pub inherits: Vec<String>,
+    /// The tree this packet was cut against.
+    ///
+    /// Distinct from the session's fingerprint on purpose. The session records where the
+    /// delegation *began*; the parent then builds, runs, edits, and cuts a packet against
+    /// the tree as it stands at that moment. Drift measured from the session start would
+    /// tell a child that the packet no longer matches a tree it was never handed, and a
+    /// signal that fires for the wrong reason is one the child learns to ignore.
+    /// `None` only for a packet stored before this field existed; such a packet falls back
+    /// to the session's fingerprint when read.
+    pub workspace: Option<Fingerprint>,
     /// What the child is, in two or three words: `performance-scout`, `api-reviewer`.
     pub role: Option<String>,
     /// The assignment. May be narrower than the session request, and renders beneath it.
@@ -280,6 +291,7 @@ impl Packet {
             created_at: created_at.to_string(),
             created_by: None,
             inherits: inherits.to_vec(),
+            workspace: None,
             role: None,
             task: task.to_owned(),
             scope: vec![WHOLE_PROJECT.to_owned()],
@@ -333,6 +345,12 @@ impl Packet {
             ),
             ("inherits", strings(&self.inherits)),
             (
+                "workspace",
+                self.workspace
+                    .as_ref()
+                    .map_or(Value::Null, Fingerprint::to_json),
+            ),
+            (
                 "role",
                 self.role
                     .as_ref()
@@ -376,6 +394,10 @@ impl Packet {
             created_at: text(value, "created_at"),
             created_by: optional(value, "created_by"),
             inherits: list(Some(value), "inherits"),
+            workspace: value
+                .get("workspace")
+                .filter(|workspace| !workspace.is_null())
+                .map(Fingerprint::from_json),
             role: optional(value, "role"),
             task: value
                 .get("task")
@@ -411,6 +433,12 @@ pub fn directory(root: &Path) -> PathBuf {
 #[must_use]
 pub fn path(root: &Path, id: &str) -> PathBuf {
     directory(root).join(format!("{id}.json"))
+}
+
+/// Whether an id names a session capsule.
+#[must_use]
+pub fn is_session_id(id: &str) -> bool {
+    id.starts_with("sx-")
 }
 
 /// Whether an id names a packet rather than a capsule or a result.
