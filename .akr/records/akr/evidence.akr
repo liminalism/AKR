@@ -209,6 +209,44 @@ record akr.evidence.gui-suite-after-help-and-version-fixes/1 : evidence {
     author "GitHub Uploader"
 }
 
+record akr.evidence.handoff-design-set/1 : evidence {
+    title "The design set still coheres with D-041, docs/17-handoff.md and AKR-C044 in it"
+    state verified
+    result pass
+    method command
+    observed_at git:9579d4eed67ed1128c18ccbb349f8bafeaee8c2a
+    command "python tools/check-design.py"
+    summary """
+        All eight checks pass — links, codes, vocabulary, manifest, references, grammar, fixtures, terminology — after the decision was added, docs/17-advisor-packets.md was renamed to docs/17-handoff.md and rewritten, AKR-C043 was rewidened from advisor packet to handoff object, AKR-C044 was registered, the MCP catalogue grew to thirty-seven tools and roadmap phase P12 was rewritten. cargo clippy --all-targets is clean across the workspace and akr validate reports no diagnostics.
+        """
+    author "GitHub Uploader"
+}
+
+record akr.evidence.handoff-guidance-single-source/1 : evidence {
+    title "The handoff brief is four lines, authored in one file, with no second prose copy"
+    state verified
+    result pass
+    method manual
+    observed_at git:9579d4eed67ed1128c18ccbb349f8bafeaee8c2a
+    summary """
+        The agent-facing handoff brief exists once, in scripts/agent-section.md, at four lines: three command sentences naming worker, scout, advisor and reviewer; one reason line of exactly ten words (Because inherited facts are cheap and inherited conclusions are not); and one pointer to akr handoff --help. AGENTS.md carries the same four lines because it is an install target of that file, not a second authored copy, and adds one sentence telling a reader not to restate the detail there. docs/08-mcp.md section 8 embeds the same text verbatim, which is what that section is for. The Claude skill file .claude/skills/handoff/SKILL.md, which held a fifth copy of the workflow as prose, is deleted rather than trimmed. Verified by reading all four files after the change; the previous wave's long Calling an advisor block appears in none of them.
+        """
+    author "GitHub Uploader"
+}
+
+record akr.evidence.handoff-transport-suite/1 : evidence {
+    title "756 tests passed across 58 binaries, including the thirteen handoff cases and the MCP differential"
+    state verified
+    result pass
+    method command
+    observed_at git:9579d4eed67ed1128c18ccbb349f8bafeaee8c2a
+    command "cargo test"
+    summary """
+        The whole suite ran at 9579d4e with no failures. New coverage: crates/akr-cli/tests/handoff.rs (thirteen cases, the load-bearing ones negative — worker discloses the parent's notes while scout, reviewer and advisor do not; a packet resolves the capsule rather than a copy of it, proved by correcting the capsule and re-reading an earlier packet; the session request survives newlines and quotes and a narrowing renders beneath it rather than in place of it; coverage names what a child declared unopened and no child read, and stops naming it once somebody does; akr start reports an open session and, under AKR_HANDOFF_PACKET, names the packet to open instead) and a_handoff_opens_the_same_way_from_either_surface in the MCP differential, which also proves opening over MCP does not stamp the packet and that the coverage roll-up matches from either side. One earlier run of the same suite failed to build rather than to test, because concurrent akr invocations held target/debug/akr.exe on Windows; re-run clean.
+        """
+    author "GitHub Uploader"
+}
+
 record akr.evidence.human-review-gui-suite/1 : evidence {
     title "Eight GUI model, tree, filtering, multi-workspace, input-layout, and software-renderer tests passed."
     state verified

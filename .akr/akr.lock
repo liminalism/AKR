@@ -5,7 +5,7 @@ build {
     tool "akr 0.5.0"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:80306ba1d80c5a1034c40d4f029992dbf7e20491c66b8ca070d09a0d557481c8"
+    source_graph "sha256:5da62543a33b8f975e8b3ca0692983f243e51a7fe2c13d85b5789d79dfa65d36"
 }
 
 source ".akr/project.akr" {
@@ -24,8 +24,8 @@ source ".akr/records/akr/decisions.akr" {
 }
 
 source ".akr/records/akr/evidence.akr" {
-    hash "sha256:77328767bd8df62784adf94cccbd2ca8756946262123c5a5cd1dc8c034d0bc11"
-    records 62
+    hash "sha256:1bd3631c67ccaf2ae86da4f8886cf20d934d46ac5eb21b6a22bc982ea15f4ebd"
+    records 65
 }
 
 source ".akr/records/akr/milestones.akr" {
@@ -44,7 +44,7 @@ source ".akr/records/akr/papercuts.akr" {
 }
 
 source ".akr/records/akr/work.akr" {
-    hash "sha256:101c341883efb8efc23f840988ef735ddba0e6509bc38f6454998d9fd17629bb"
+    hash "sha256:8381334a00d4b1d62783b13cd45f86c14cc80a6c72333842a185e1702d526e87"
     records 45
 }
 
@@ -532,6 +532,21 @@ seal @akr.evidence.fmt-clean/1 {
 seal @akr.evidence.gui-suite-after-help-and-version-fixes/1 {
     state verified
     hash "sha256:8733abf1fd0d68419096ac256c7d97f1c8fb6c0e5c74a2140db4b1fc81e7340e"
+}
+
+seal @akr.evidence.handoff-design-set/1 {
+    state verified
+    hash "sha256:07862d842b456c9ba504b7a7f67c911b8288177f99ce120337f372c1fbf8b5ce"
+}
+
+seal @akr.evidence.handoff-guidance-single-source/1 {
+    state verified
+    hash "sha256:0151c003ba0119839713d3451902970624a1de94c97ccff4efce9f6d8deeec25"
+}
+
+seal @akr.evidence.handoff-transport-suite/1 {
+    state verified
+    hash "sha256:c7c408e2128f336a78709341dfb98a947d9f07d2d3662861b4bad2ac99a81c87"
 }
 
 seal @akr.evidence.human-review-gui-suite/1 {
@@ -1207,6 +1222,11 @@ seal @akr.work.context-import-provenance-hardening/1 {
 seal @akr.work.desktop-review-gui/1 {
     state completed
     hash "sha256:b15863b68a74a8ee583b7587682a428099369de66cbf8f8e0b62140175b3b851"
+}
+
+seal @akr.work.handoff-context-transport/1 {
+    state completed
+    hash "sha256:5f3f4ff04b5671a94da71b68d983299091fd9fbfcc90eaf09ac96760ba913552"
 }
 
 seal @akr.work.mcp-actionable-truncation/1 {

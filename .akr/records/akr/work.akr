@@ -339,7 +339,7 @@ record akr.work.desktop-review-gui/1 : work {
 
 record akr.work.handoff-context-transport/1 : work {
     title "Generalise the advisor packet into an agent-to-agent context transport"
-    state proposed
+    state completed
     scope [
         path "AGENTS.md",
         path "crates/akr-cli/src/handoff/**",
@@ -360,6 +360,7 @@ record akr.work.handoff-context-transport/1 : work {
                 """
             method command
             command "cargo test -p akr-cli --test handoff coverage_aggregates_and_names_what_nobody_opened"
+            verified_by [ @akr.evidence.handoff-transport-suite/1 ]
         }
         check disclosure-follows-the-mode {
             statement """
@@ -367,12 +368,14 @@ record akr.work.handoff-context-transport/1 : work {
                 """
             method command
             command "cargo test -p akr-cli --test handoff disclosure_follows_the_mode"
+            verified_by [ @akr.evidence.handoff-transport-suite/1 ]
         }
         check guidance-is-one-place {
             statement """
                 The agent-facing handoff brief exists in scripts/agent-section.md alone, at four lines, with no second copy in AGENTS.md, a skill file, or the MCP document beyond its verbatim embed.
                 """
             method manual
+            verified_by [ @akr.evidence.handoff-guidance-single-source/1 ]
         }
         check inheritance-by-reference {
             statement """
@@ -380,6 +383,7 @@ record akr.work.handoff-context-transport/1 : work {
                 """
             method command
             command "cargo test -p akr-cli --test handoff a_packet_inherits_the_session_rather_than_copying_it"
+            verified_by [ @akr.evidence.handoff-transport-suite/1 ]
         }
         check narrowing-stays-visible {
             statement """
@@ -387,6 +391,7 @@ record akr.work.handoff-context-transport/1 : work {
                 """
             method command
             command "cargo test -p akr-cli --test handoff the_session_request_is_carried_verbatim_and_a_narrowing_stays_visible"
+            verified_by [ @akr.evidence.handoff-transport-suite/1 ]
         }
         check suite-and-design-set-hold {
             statement """
@@ -394,6 +399,7 @@ record akr.work.handoff-context-transport/1 : work {
                 """
             method command
             command "cargo test && python tools/check-design.py"
+            verified_by [ @akr.evidence.handoff-design-set/1 ]
         }
         check surfaces-agree {
             statement """
@@ -401,6 +407,7 @@ record akr.work.handoff-context-transport/1 : work {
                 """
             method command
             command "cargo test -p akr-mcp --test differential a_handoff_opens_the_same_way_from_either_surface"
+            verified_by [ @akr.evidence.handoff-transport-suite/1 ]
         }
     }
     author "GitHub Uploader"
