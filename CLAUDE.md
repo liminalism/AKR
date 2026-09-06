@@ -12,6 +12,7 @@ Two adjacent systems share the repo and are deliberately *not* the ledger:
 
 - **`sources/`** — an immutable, content-hashed library of outside advice (D-031, `docs/15-external-sources.md`). Registering a document creates no records; editing one is `AKR-S021`. `.akr/cache/sources.sqlite` chunks and ranks it on its own cache generation. Records cite it by `document` + byte range, never by chunk id.
 - **The change transaction** (D-032, `docs/16-change-protocol.md`) — a per-worktree file under the git dir that binds a commit to the work it advances. The staged tree is the synchronisation boundary, and the durable link is commit trailers, not stored commit hashes.
+- **Advisor packets** (D-040, `docs/17-advisor-packets.md`) — `.agent/handoffs/*.json`, gitignored. A packet hands a task to a second model without handing over the judgement that model is being brought in to make: administrative fact is compressed and handed over, worker interpretation is recorded but withheld until `handoff reveal`, and the search envelope defaults to the whole project so the preparing agent's blind spot never becomes the advisor's boundary. Disposable coordination state, invisible to search, context and the compiler.
 
 ## Commands
 
@@ -35,7 +36,7 @@ If you are in a sandbox with no Rust toolchain and `static.rust-lang.org` blocke
 ## Workspace layout
 
 - **`crates/akr-core`** — the model (`model/`), lexer/parser/formatter (`syntax/`), validation rules V-001..V-025 (`validate/`), resolver, git freshness (`freshness/`, `git/`), context assembly (`context/`), SQLite index + renderers (`render/`), lock file (`lock/`), atomic write ops (`ops/`).
-- **`crates/akr-cli`** — the `akr` binary, and a library (`akr_cli`) so the MCP server reuses the exact same command implementations.
+- **`crates/akr-cli`** — the `akr` binary, and a library (`akr_cli`) so the MCP server reuses the exact same command implementations. `handoff/` holds two projections that are not the ledger: `session_head.rs` (what `akr start` prepends) and `packet.rs`/`advisor.rs`/`snapshot.rs` (the advisor packet, its store, and the workspace fingerprint that tells an advisor whether the tree still matches what it was handed).
 - **`crates/akr-mcp`** — MCP server (`knowledge.*` tools over stdio). Contains **no ledger logic**: it is only JSON-RPC framing, tool schemas, argument translation, and error mapping over `akr-cli` functions. `tests/differential.rs` enforces that CLI and MCP produce identical results.
 
 **Dependency policy is deliberate and strict**: the only runtime dependency in the workspace is `rusqlite` (bundled) in `akr-core`, sanctioned solely for stage E. Argument parsing, JSON, and JSON-RPC framing are hand-written. Do not add dependencies. Nothing outside `akr-core`'s store module may open the SQLite cache (D-019) — CLI and MCP reach it only through `akr-core`.

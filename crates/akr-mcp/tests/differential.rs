@@ -852,3 +852,81 @@ fn both_supported_protocol_versions_are_accepted() {
         Some("2025-11-25")
     );
 }
+
+/// An advisor packet reaches the same object from either surface, and the MCP `open`
+/// stays read-only (D-040).
+///
+/// The blind read is the claim worth a differential test rather than a unit one: the
+/// separation only holds if *both* adapters honour it, and the MCP surface deliberately
+/// has no reveal-on-open shorthand where the command line does.
+#[test]
+fn an_advisor_packet_opens_the_same_way_from_either_surface() {
+    let example = Example::materialise("differential-handoff");
+    let created = call(
+        &example,
+        "knowledge.handoff_create",
+        r#"{"task":"Review this project and optimise for performance, both memory and CPU.","by":"worker-model","worker_notes":{"hypotheses":["the cost is all in chroma"],"not_examined":["src/luma.rs"]}}"#,
+    );
+    let id = created
+        .get("packet")
+        .and_then(Value::as_str)
+        .expect("create names the packet")
+        .to_owned();
+    assert_eq!(
+        created
+            .get("search_envelope")
+            .and_then(Value::as_array)
+            .and_then(|globs| globs.first())
+            .and_then(Value::as_str),
+        Some("**"),
+        "the envelope defaults to the whole project: {}",
+        created.to_pretty()
+    );
+
+    let tool = call(&example, "knowledge.handoff_open", &format!(r#"{{"packet":"{id}"}}"#));
+    let cli = cli_result(&example, &["handoff", "open", &id]);
+    assert_eq!(tool.to_pretty(), cli.to_pretty());
+
+    // Neither surface leaks Layer B on an ordinary open.
+    assert_eq!(
+        tool.get("worker_notes_revealed").and_then(Value::as_bool),
+        Some(false),
+        "{}",
+        tool.to_pretty()
+    );
+    assert!(
+        !tool.to_pretty().contains("chroma"),
+        "a blind read leaked a hypothesis:\n{}",
+        tool.to_pretty()
+    );
+    assert_eq!(
+        tool.get("worker_notes_available").and_then(Value::as_bool),
+        Some(true)
+    );
+
+    // `knowledge.handoff_open` is declared read-only, so opening must not have stamped
+    // the packet — otherwise the tool's own `readOnlyHint` would be false.
+    let listed = call(&example, "knowledge.handoff_list", "{}");
+    assert!(
+        listed
+            .get("packets")
+            .and_then(Value::as_array)
+            .is_some_and(|rows| rows
+                .iter()
+                .all(|row| row.get("revealed").and_then(Value::as_bool) == Some(false))),
+        "{}",
+        listed.to_pretty()
+    );
+
+    let revealed = call(
+        &example,
+        "knowledge.handoff_reveal",
+        &format!(r#"{{"packet":"{id}"}}"#),
+    );
+    assert!(revealed.to_pretty().contains("chroma"), "{}", revealed.to_pretty());
+    assert!(
+        revealed.to_pretty().contains("src/luma.rs"),
+        "what the worker did not examine is part of the notes:\n{}",
+        revealed.to_pretty()
+    );
+}

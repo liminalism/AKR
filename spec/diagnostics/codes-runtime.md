@@ -186,6 +186,7 @@ resolving heads, so `AKR-R051` and `AKR-R052` belong to Writer A's resolve range
 | `AKR-C034` | a source changed on disk while the write was being prepared | error | `write aborted: {path} changed on disk while this write was being prepared; nothing was written` | The pipeline reads every source, edits in memory, and writes each touched file whole, so a source that changes in between would be overwritten from a stale snapshot. Writers take an advisory lock on `.akr/cache/write.lock` and therefore queue rather than collide; this fires for what a lock cannot cover — an editor, a `git checkout`, or a filesystem with no working lock. Nothing is written; re-read and retry. |
 | `AKR-C041` | command has no JSON form | error | `{command} does not support --format json` | Exit status 2. Applies to `fmt` and `init`, whose output is a file-system effect rather than data. |
 | `AKR-C042` | workspace path not readable or not writable | error | `cannot {read\|write\|create} {path}: {reason}` | Exit status 3. The filesystem refused, so this is a checkout problem rather than a ledger problem — a read-only mount, a permission, a full disk. |
+| `AKR-C043` | advisor packet not found | error | `no advisor packet {id}` | Exit status 3. `akr handoff open`, `expand`, `reveal` or `verify` against an id this workspace does not hold. Packets are disposable and gitignored (D-040), so an id from another checkout, another worktree, or one already discarded reaches this rather than a stale read. `akr handoff list` names what is there. |
 
 ---
 

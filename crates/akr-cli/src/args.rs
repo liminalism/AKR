@@ -565,6 +565,39 @@ pub enum Command {
         /// A file holding one or more `evidence` records in AKR syntax.
         from: PathBuf,
     },
+    /// `akr handoff create` (D-040).
+    HandoffCreate(Box<crate::handoff::advisor::CreateRequest>),
+    /// `akr handoff list`.
+    HandoffList,
+    /// `akr handoff open <id> [--reveal]`.
+    HandoffOpen {
+        /// The packet id.
+        id: String,
+        /// Reveal the worker notes on this read, and record that it happened.
+        reveal: bool,
+    },
+    /// `akr handoff expand <id> <section>`.
+    HandoffExpand {
+        /// The packet id.
+        id: String,
+        /// One of `crate::handoff::advisor::SECTIONS`.
+        section: String,
+    },
+    /// `akr handoff reveal <id>`.
+    HandoffReveal {
+        /// The packet id.
+        id: String,
+    },
+    /// `akr handoff verify <id>`.
+    HandoffVerify {
+        /// The packet id.
+        id: String,
+    },
+    /// `akr handoff discard <id>`.
+    HandoffDiscard {
+        /// The packet id.
+        id: String,
+    },
 }
 
 impl Command {
@@ -637,6 +670,13 @@ impl Command {
             Self::ScratchList => "scratch list".to_owned(),
             Self::ScratchPrune { .. } => "scratch prune".to_owned(),
             Self::ScratchKeep { .. } => "scratch keep".to_owned(),
+            Self::HandoffCreate(_) => "handoff create".to_owned(),
+            Self::HandoffList => "handoff list".to_owned(),
+            Self::HandoffOpen { .. } => "handoff open".to_owned(),
+            Self::HandoffExpand { .. } => "handoff expand".to_owned(),
+            Self::HandoffReveal { .. } => "handoff reveal".to_owned(),
+            Self::HandoffVerify { .. } => "handoff verify".to_owned(),
+            Self::HandoffDiscard { .. } => "handoff discard".to_owned(),
         }
     }
 
@@ -712,6 +752,7 @@ pub const COMMANDS: &[&str] = &[
     "papercut",
     "evidence",
     "scratch",
+    "handoff",
 ];
 
 /// Parses an argument list, excluding the program name.
@@ -1132,6 +1173,7 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
             }
             Command::DiffStaged
         }
+        "handoff" => parse_handoff(name, &positional, tail)?,
         "change" => parse_change(name, &positional, tail)?,
         "git" => parse_git(name, &positional, tail)?,
         "git-hook" => Command::GitHook {
@@ -1792,6 +1834,137 @@ fn parse_change(
     })
 }
 
+/// `akr handoff <subcommand>` (D-040).
+///
+/// The flag list is long because the packet's whole purpose is to separate two kinds of
+/// material, and a surface that made worker interpretation easy to pass as fact would
+/// defeat it. Every `--note-*` flag lands in the hidden layer; nothing else can.
+fn parse_handoff(
+    name: &str,
+    positional: &[&String],
+    tail: &[String],
+) -> Result<Command, UsageError> {
+    let sub = positional.first().map(|s| s.as_str()).ok_or_else(|| {
+        UsageError::new(
+            "AKR-C003",
+            format!("{name} requires a subcommand (create|list|open|expand|reveal|verify|discard)"),
+        )
+    })?;
+    let id = |what: &str| -> Result<String, UsageError> {
+        positional.get(1).map(|s| (*s).clone()).ok_or_else(|| {
+            UsageError::new("AKR-C003", format!("handoff {what} requires a packet id"))
+        })
+    };
+    Ok(match sub {
+        "create" => {
+            let task = match (
+                option_value(tail, "--task"),
+                option_value(tail, "--task-file"),
+            ) {
+                (Some(_), Some(_)) => {
+                    return Err(UsageError::new(
+                        "AKR-C005",
+                        "--task cannot be combined with --task-file",
+                    ));
+                }
+                (Some(task), None) => task,
+                // A verbatim request is often a paragraph with newlines and quotes in it,
+                // which a shell mangles. Reading it from a file is the only way to keep
+                // "verbatim" literally true, so it is a first-class way to pass it.
+                (None, Some(path)) => std::fs::read_to_string(&path)
+                    .map_err(|error| {
+                        UsageError::new("AKR-C004", format!("--task-file {path}: {error}"))
+                    })?
+                    .trim_end_matches(['\n', '\r'])
+                    .to_owned(),
+                (None, None) => {
+                    return Err(UsageError::new(
+                        "AKR-C003",
+                        "handoff create requires --task <text> or --task-file <path>",
+                    )
+                    .with_help(
+                        "pass the user's request verbatim; interpretation belongs in \
+                         --question or a --note-* flag",
+                    ));
+                }
+            };
+            if task.trim().is_empty() {
+                return Err(UsageError::new("AKR-C004", "--task is empty"));
+            }
+            let budget = match option_value(tail, "--budget") {
+                Some(raw) => Some(raw.parse::<usize>().map_err(|_| {
+                    UsageError::new("AKR-C004", format!("--budget: {raw} is not a token count"))
+                })?),
+                None => None,
+            };
+            Command::HandoffCreate(Box::new(crate::handoff::advisor::CreateRequest {
+                task,
+                question: option_value(tail, "--question"),
+                by: option_value(tail, "--by"),
+                goal: option_value(tail, "--goal"),
+                governing: repeated(tail, "--governing"),
+                envelope: repeated(tail, "--envelope"),
+                commands: repeated(tail, "--command"),
+                baselines: repeated(tail, "--baseline"),
+                constraints: repeated(tail, "--constraint"),
+                evidence: repeated(tail, "--evidence"),
+                artifacts: repeated(tail, "--artifact"),
+                notes: crate::handoff::packet::WorkerNotes {
+                    hypotheses: repeated(tail, "--note-hypothesis"),
+                    examined: repeated(tail, "--note-examined"),
+                    not_examined: repeated(tail, "--note-unexamined"),
+                    approaches: repeated(tail, "--note-approach"),
+                    searches: repeated(tail, "--note-search"),
+                },
+                budget,
+            }))
+        }
+        "list" => Command::HandoffList,
+        "open" | "show" => Command::HandoffOpen {
+            id: id(sub)?,
+            reveal: tail.iter().any(|a| a == "--reveal"),
+        },
+        "expand" => {
+            let sections = || {
+                format!(
+                    "sections are: {}",
+                    crate::handoff::advisor::SECTIONS.join(", ")
+                )
+            };
+            let section = positional.get(2).map(|s| (*s).clone()).ok_or_else(|| {
+                UsageError::new("AKR-C003", "handoff expand requires a section")
+                    .with_help(sections())
+            })?;
+            // Checked here rather than only at dispatch so that a mistyped section is
+            // exit 2, like every other malformed invocation, instead of exit 3's "the
+            // workspace is unusable" (`docs/07-cli.md` §3).
+            if !crate::handoff::advisor::SECTIONS.contains(&section.as_str()) {
+                return Err(UsageError::new(
+                    "AKR-C004",
+                    format!("{section:?} is not a packet section"),
+                )
+                .with_help(sections()));
+            }
+            Command::HandoffExpand {
+                id: id("expand")?,
+                section,
+            }
+        }
+        "reveal" => Command::HandoffReveal { id: id("reveal")? },
+        "verify" => Command::HandoffVerify { id: id("verify")? },
+        "discard" => Command::HandoffDiscard { id: id("discard")? },
+        other => {
+            return Err(UsageError::new(
+                "AKR-C001",
+                format!("unknown subcommand {other:?} for command \"handoff\""),
+            )
+            .with_help(
+                "supported subcommands: create, list, open, expand, reveal, verify, discard",
+            ));
+        }
+    })
+}
+
 /// `akr git <subcommand>`.
 fn parse_git(name: &str, positional: &[&String], tail: &[String]) -> Result<Command, UsageError> {
     let sub = positional.first().map(|s| s.as_str()).ok_or_else(|| {
@@ -1991,6 +2164,50 @@ pub fn help_for(name: &str) -> Option<String> {
              \x20                      views (AKR-E011..E014) — the D-025 gate\n\
              \x20   --scratch-clean    also fail when .agent/scratch holds prunable\n\
              \x20                      entries (AKR-G042)\n"
+        }
+        "handoff" => {
+            "akr handoff create --task <text> | --task-file <path>\n\
+             \x20                  [--question <text>] [--by <name>] [--goal <ref>]\n\
+             \x20                  [--governing <ref>]... [--envelope <glob>]...\n\
+             \x20                  [--command <cmd>[=<result>]]... [--baseline <text>]...\n\
+             \x20                  [--constraint <text>]... [--evidence <ref>]...\n\
+             \x20                  [--artifact <path>]... [--budget <tokens>]\n\
+             \x20                  [--note-hypothesis <text>]... [--note-examined <path>]...\n\
+             \x20                  [--note-unexamined <path>]... [--note-approach <text>]...\n\
+             \x20                  [--note-search <text>]...\n\
+             akr handoff list\n\
+             akr handoff open <id> [--reveal]\n\
+             akr handoff expand <id> <section>\n\
+             akr handoff reveal <id>\n\
+             akr handoff verify <id>\n\
+             akr handoff discard <id>\n\
+             \n\
+             An advisor packet hands a task to a second model without handing over the\n\
+             judgement it was brought in to make (D-040). It carries two layers.\n\
+             \n\
+             LAYER A is administrative fact: the task verbatim, HEAD, the ledger revision,\n\
+             the session head, governing records, the search envelope, build and test\n\
+             commands, baselines, artefacts. Compressing it costs the advisor nothing.\n\
+             \n\
+             LAYER B is worker interpretation: hypotheses, what was and was not examined,\n\
+             proposed approaches. open withholds it; reveal releases it and records that\n\
+             it happened, so the advisor reviews independently first and compares after.\n\
+             \n\
+             --task is the user request as the user wrote it. Do not restate it: a\n\
+             restatement puts the preparing agent conclusion in place of the problem.\n\
+             Interpretation goes in --question or a --note-* flag.\n\
+             \n\
+             --envelope defaults to ** -- the whole project. Narrow it only when the user\n\
+             did. Narrowing it to what you examined hands the advisor your blind spot as\n\
+             a boundary, which is the one thing it is there to escape.\n\
+             \n\
+             Packets live in .agent/handoffs/, are gitignored, and are invisible to\n\
+             search, context and the compiler. open and verify report whether the\n\
+             workspace still matches the packet (exact or drifted) and name what moved;\n\
+             drift is a fact about the tree and never changes the exit status.\n\
+             \n\
+             SECTIONS for expand: task, workspace, project, governing, envelope,\n\
+             execution, notes (notes is reveal).\n"
         }
         "scratch" => {
             "akr scratch list\n\
@@ -2501,6 +2718,10 @@ pub fn help() -> String {
         (
             "scratch",
             "the working directory nothing else empties; list, prune, keep",
+        ),
+        (
+            "handoff",
+            "prepare a packet for an independent advisor; create, open, reveal",
         ),
     ] {
         out.push_str(&format!("    {name:<16}{summary}\n"));

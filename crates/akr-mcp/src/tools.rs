@@ -117,6 +117,44 @@ pub fn call(root: &Path, name: &str, arguments: &Value) -> Result<ToolResult, To
         "knowledge.complete" => complete(root, arguments),
         "knowledge.evidence_add" => evidence_add(root, arguments),
         "knowledge.evidence_add_many" => evidence_add_many(root, arguments),
+        "knowledge.handoff_create" => handoff_create(root, arguments),
+        "knowledge.handoff_list" => run_read(root, Command::HandoffList),
+        "knowledge.handoff_open" => run_read(
+            root,
+            Command::HandoffOpen {
+                id: required_str(arguments, "packet")?.to_owned(),
+                // The MCP surface has no reveal-on-open shorthand on purpose: `open` is
+                // declared read-only, and a flag that quietly wrote the reveal marker
+                // would make that declaration false. Two calls, and the packet can always
+                // say whether the review that followed was independent.
+                reveal: false,
+            },
+        ),
+        "knowledge.handoff_expand" => run_read(
+            root,
+            Command::HandoffExpand {
+                id: required_str(arguments, "packet")?.to_owned(),
+                section: required_str(arguments, "section")?.to_owned(),
+            },
+        ),
+        "knowledge.handoff_verify" => run_read(
+            root,
+            Command::HandoffVerify {
+                id: required_str(arguments, "packet")?.to_owned(),
+            },
+        ),
+        "knowledge.handoff_reveal" => run_coordination(
+            root,
+            Command::HandoffReveal {
+                id: required_str(arguments, "packet")?.to_owned(),
+            },
+        ),
+        "knowledge.handoff_discard" => run_coordination(
+            root,
+            Command::HandoffDiscard {
+                id: required_str(arguments, "packet")?.to_owned(),
+            },
+        ),
         "knowledge.papercut" => papercut(root, arguments),
         other => Err(ToolError::new(
             "AKR-X041",
@@ -1057,6 +1095,62 @@ fn run_read(root: &Path, command: Command) -> Result<ToolResult, ToolError> {
     let text = output.text.clone();
     let structured = finish(&session.sources, output)?;
     Ok(ToolResult::Read { text, structured })
+}
+
+/// Runs a command that changes `.agent/`, not `.akr/records/`.
+///
+/// Advisor packets are workspace state without being ledger state (D-040), so they need a
+/// third runner: [`run_write`]'s route is the record write pipeline, and [`run_read`]
+/// promises not to change anything. This one needs git facts, because a packet's whole
+/// value depends on fingerprinting the tree it describes, and it keeps the text half,
+/// because "hand this to the advisor: `akr handoff open ap-...`" is the useful output.
+fn run_coordination(root: &Path, command: Command) -> Result<ToolResult, ToolError> {
+    let mut session = open(root, true)?;
+    let output = commands::run(&mut session, &command).map_err(environment)?;
+    let text = output.text.clone();
+    let structured = finish(&session.sources, output)?;
+    Ok(ToolResult::Read { text, structured })
+}
+
+/// `knowledge.handoff_create`.
+fn handoff_create(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
+    let task = required_str(arguments, "task")?;
+    let notes = arguments.get("worker_notes");
+    let note_list = |field: &str| {
+        notes
+            .and_then(|notes| notes.get(field))
+            .and_then(Value::as_array)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(Value::as_str)
+            .map(ToOwned::to_owned)
+            .collect()
+    };
+    let request = akr_cli::handoff::advisor::CreateRequest {
+        task: task.to_owned(),
+        question: optional_str(arguments, "question"),
+        by: optional_str(arguments, "by"),
+        goal: optional_str(arguments, "goal"),
+        governing: string_list(arguments, "governing"),
+        envelope: string_list(arguments, "search_envelope"),
+        commands: string_list(arguments, "commands"),
+        baselines: string_list(arguments, "baselines"),
+        constraints: string_list(arguments, "constraints"),
+        evidence: string_list(arguments, "evidence"),
+        artifacts: string_list(arguments, "artifacts"),
+        notes: akr_cli::handoff::packet::WorkerNotes {
+            hypotheses: note_list("hypotheses"),
+            examined: note_list("examined"),
+            not_examined: note_list("not_examined"),
+            approaches: note_list("approaches"),
+            searches: note_list("searches"),
+        },
+        budget: arguments
+            .get("budget_tokens")
+            .and_then(Value::as_integer)
+            .and_then(|value| usize::try_from(value).ok()),
+    };
+    run_coordination(root, Command::HandoffCreate(Box::new(request)))
 }
 
 fn run_write(root: &Path, command: Command) -> Result<ToolResult, ToolError> {

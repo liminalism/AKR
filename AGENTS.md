@@ -26,6 +26,7 @@ shell:
 | `knowledge.supersede` / `knowledge.complete` | `akr supersede <key>` / `akr complete <key>` |
 | `knowledge.evidence_add` / `knowledge.evidence_add_many` | `akr evidence add <key>` / `akr evidence add-many --from <file>` |
 | `knowledge.papercut` | `akr papercut -m <agent> "<message>"` |
+| `knowledge.handoff_*` | `akr handoff create`, `list`, `open`, `expand`, `reveal`, `verify`, `discard` |
 | `knowledge.validate` | `akr check`, or `akr validate` under the same name |
 | `knowledge.source_*` | `akr source add|list|get|search|verify|supersede` |
 
@@ -103,11 +104,44 @@ Consult AKR at task and state-transition boundaries, not after every edit.
   the project needs sanding down. This is distinct from durable records (knowledge) and
   from `.agent/scratch/` (working notes, see below).
 
+**Calling an advisor**
+
+When you are asked to bring in a second model — "ask an advisor", "get a second opinion",
+"hand this to <model>", "use the AKR handoff workflow" — prepare an **advisor packet**
+rather than writing it a summary. The rule is *compress state, not search* (D-040,
+`docs/17-advisor-packets.md`): a summary of what you noticed is the worst possible input
+for a model hired to find what you did not, because it hands over your blind spot as a
+boundary.
+
+1. Do the administrative preparation and stop there. Session head, project state,
+   repository map, verify the build, run the existing tests and benchmarks, collect the
+   artefacts that already exist. Do **not** wait until you believe you understand the
+   problem — that just moves the bottleneck instead of removing it.
+2. `knowledge.handoff_create`, or `akr handoff create`:
+   - `task` is the user's request **verbatim**. Never your reading of it. Interpretation
+     goes in `question` — what the advisor is asked when the *user* narrowed it — or in
+     `worker_notes`.
+   - `search_envelope` stays `**` unless the user narrowed the task.
+   - `commands`, `baselines`, `constraints`, `evidence`, `artifacts`: what you established.
+   - `worker_notes`: what you *think*. Hypotheses, what you examined, what you did **not**
+     examine, approaches, searches already run. The advisor cannot see these until it asks.
+3. Hand over the packet id and nothing else.
+4. As the advisor: `akr handoff open <id>`, review independently anywhere the envelope
+   reaches, form your own view, and only then `akr handoff reveal <id>`. Compare — what
+   did either side miss? `handoff open` and `handoff verify` also report `exact` or
+   `drifted` and name what moved, so you are never told about one tree while reading
+   another.
+5. Whatever the review made durable goes in the ledger through the ordinary write path.
+   The packet is disposable: `akr handoff discard <id>` when it is done.
+
+Packets live in `.agent/handoffs/`, gitignored beside `.agent/scratch/`, and are invisible
+to search, context and the compiler. Nothing about one is knowledge.
+
 **Scratch**
 
-`.agent/` holds everything an agent writes that is not a record: handoffs and plans are
-committed, and `.agent/scratch/` is gitignored working space. One directory, one ignored
-subtree — there is no `.agents/`.
+`.agent/` holds everything an agent writes that is not a record: written handoffs and
+plans are committed, while `.agent/scratch/` (working space) and `.agent/handoffs/`
+(advisor packets) are gitignored. One directory — there is no `.agents/`.
 
 Scratch persists. The OS clears its temp directory and everybody deletes `target/` without
 a thought, but this is a gitignored directory *inside the repository* that survives every

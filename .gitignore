@@ -7,6 +7,12 @@
 # Agent scratch layer — disposable, non-canonical (see docs/01-architecture.md).
 .agent/scratch/
 
+# Advisor packets — disposable coordination state describing a workspace at a moment,
+# not project truth (D-040, docs/17-advisor-packets.md). A packet is worthless once the
+# tree it fingerprints has moved on, and committing one would also commit the preparing
+# agent's private worker notes.
+.agent/handoffs/
+
 # Rust build output (implementation phases P1+).
 /target/
 **/*.rs.bk

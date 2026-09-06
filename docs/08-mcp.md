@@ -123,8 +123,15 @@ in prose and in these two checks, not in a schema anyone can validate against.
 | `knowledge.evidence_add` | write | `akr evidence add` | by key |
 | `knowledge.evidence_add_many` | write | — | by all keys |
 | `knowledge.papercut` | write | `akr papercut` | no |
+| `knowledge.handoff_create` | write | `akr handoff create` | no |
+| `knowledge.handoff_list` | read | `akr handoff list` | yes |
+| `knowledge.handoff_open` | read | `akr handoff open` | yes |
+| `knowledge.handoff_expand` | read | `akr handoff expand` | yes |
+| `knowledge.handoff_reveal` | write | `akr handoff reveal` | by state |
+| `knowledge.handoff_verify` | read | `akr handoff verify` | yes |
+| `knowledge.handoff_discard` | write | `akr handoff discard` | by state |
 
-Twenty-three tools. Notably absent:
+Thirty tools. Notably absent:
 
 - **No `knowledge.query`.** No arbitrary query language, and above all no SQL. Agents
   never see the SQLite cache (§6).
@@ -144,6 +151,27 @@ verifies** (D-016) — the link is authored on the check (`verified_by`) or supp
 validates and commits them in one atomic write. Use it when one verification run closes
 several checks; duplicate or existing keys reject the whole batch without a partial
 write.
+
+The seven `handoff_*` tools prepare and read an **advisor packet** — a task handed to a
+second model without the judgement that model is being brought in to make
+(`docs/17-advisor-packets.md`, D-040). Their `write` kind means they change
+`.agent/handoffs/`, not `.akr/records/`: a packet is disposable coordination state, and
+nothing about one is knowledge. `readOnlyHint` and `--surface read` read the same flag, so
+a tool that creates a packet may not report itself read-only.
+
+`knowledge.handoff_open` renders the packet's factual layer and withholds the preparing
+agent's notes; `knowledge.handoff_reveal` releases them and records that it happened, so
+the packet can always say whether the review that followed was independent. There is
+deliberately no reveal-on-open argument — `akr handoff open --reveal` is one process and
+one recorded act, while an MCP flag would make a tool declared read-only write. The
+one-implementation invariant holds either way: `akr handoff open <id>` reproduces
+`knowledge.handoff_open` exactly.
+
+`knowledge.handoff_open` carries the largest budget on this surface (2,000 target, 3,500
+hard). It is the one read whose whole point is that a second model arrives knowing the
+workspace, and because a packet is addressable the overflow path names a real
+continuation — `knowledge.handoff_expand`, one section at a time — rather than truncating
+everything.
 
 ## 3. Read tools
 
@@ -642,6 +670,22 @@ Consult at task and state-transition boundaries, not after every edit.
 - Finished work: `knowledge.evidence_add`, then `knowledge.complete`. An evidence `artifact` must not be under `.agent/scratch`; move it or `akr scratch keep` it first.
 - Friction: `knowledge.papercut`.
 - Handoff: `knowledge.validate`.
+
+### Calling an advisor
+
+When you are asked to bring in a second model — "ask an advisor", "get a second opinion", "hand this to <model>", "use the AKR handoff workflow" — prepare an **advisor packet**. Do not write it a summary of what you found: an advisor is there to see what you did not, and a summary hands it your blind spot as a boundary. **Compress state, not search.**
+
+1. Do the administrative preparation, and stop there. Session head, project state, repository map, verify the build, run the existing tests and benchmarks, collect what already exists. Do **not** wait until you think you understand the problem — that just moves the bottleneck.
+2. `knowledge.handoff_create` (CLI: `akr handoff create`).
+   - `task` is the user's request **verbatim**, never your reading of it.
+   - `search_envelope` stays project-wide unless the *user* narrowed it.
+   - `commands`, `baselines`, `constraints`, `evidence`, `artifacts`: what you established.
+   - `worker_notes`: what you *think* — hypotheses, what you examined, what you did **not** examine, approaches, searches already run. The advisor cannot see these until it asks.
+3. Hand the advisor the packet id and nothing else.
+4. As the advisor: `knowledge.handoff_open` (`akr handoff open <id>`), review independently anywhere the envelope reaches, form your own view, and only then `knowledge.handoff_reveal`. Compare: what did either side miss?
+5. Whatever the review made durable goes in the ledger — `knowledge.propose`, evidence, completion. The packet is disposable: `akr handoff discard <id>` when done.
+
+`knowledge.handoff_open` and `handoff_verify` report `exact` or `drifted` and name what moved, so an advisor is never told about one tree while reading another. `handoff_expand <id> <section>` reads one part without re-opening the whole packet.
 
 ### Scratch
 

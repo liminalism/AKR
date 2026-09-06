@@ -117,6 +117,15 @@ fn dispatch(session: &mut Session, command: &Command) -> Result<Output, EnvError
             review_clean,
             views_current,
         } => check(session, *scratch_clean, *review_clean, *views_current),
+        Command::HandoffCreate(request) => crate::handoff::advisor::create(session, request),
+        Command::HandoffList => crate::handoff::advisor::list(session),
+        Command::HandoffOpen { id, reveal } => crate::handoff::advisor::open(session, id, *reveal),
+        Command::HandoffExpand { id, section } => {
+            crate::handoff::advisor::expand(session, id, section)
+        }
+        Command::HandoffReveal { id } => crate::handoff::advisor::reveal(session, id),
+        Command::HandoffVerify { id } => crate::handoff::advisor::verify(session, id),
+        Command::HandoffDiscard { id } => crate::handoff::advisor::discard(session, id),
         Command::ScratchList => scratch_list(session),
         Command::ScratchPrune {
             older_than,

@@ -133,6 +133,22 @@ record akr.decision.completed-planning-work-satisfies-dependency/1 : decision {
     supported_by [ @akr.evidence.write-latency-and-lifecycle-suite ]
 }
 
+record akr.decision.compress-state-not-search/1 : decision {
+    title "Compress the state, not the search: an advisor packet has two layers and one is withheld"
+    state proposed
+    scope [ all ]
+    decision """
+        Handing a task to a second model produces an advisor packet, not a summary. A packet carries two typed layers. Layer A is administrative fact: the user's request verbatim, HEAD and its subject, the ledger revision, dirty paths with digests, the session head, declared namespaces, the governing goal and records, the search envelope, commands with what they produced, baselines, constraints, evidence and artefacts. All of it may be compressed. Layer B is worker interpretation: hypotheses, what was examined, what was not examined, proposed approaches, searches already run. It may be recorded and may not be substituted for the problem. handoff open renders Layer A and reports only that Layer B exists; handoff reveal releases it and stamps the packet, so whether a review was independent is knowable afterwards. The task field is verbatim, the search envelope defaults to the whole project, and the workspace is fingerprinted by HEAD, the source-graph hash and a sha256 per dirty path so that open and verify report exact or drifted and name what moved. Packets live in .agent/handoffs/, gitignored, invisible to search, context and the compiler, and are never records. Recorded as D-040.
+        """
+    context """
+        An agent doing the work reaches a point where a second model would help, and the obvious handoff is a summary of what it found. That destroys the reason for making it: if the advisor's value is finding what the first agent missed, a summary of what the first agent noticed makes it a perceptual bottleneck, and its blind spot silently becomes the advisor's boundary. Afterwards nobody can tell, because a narrowed task reads exactly like a narrow one. The opposite failure was measured too: an advisor arriving cold spends its most expensive tokens on questions with deterministic answers, and in one logged run had to discover and correct the base_rev requirement mid-task. Both failures are the same mistake in opposite directions.
+        """
+    consequences """
+        .agent/ now has two ignored subtrees rather than the one D-036 settled on; that line of D-036 was reasoning about the .agents/ versus .agent/ collision, which a second subtree under the same name does not reintroduce. The MCP Tool::writes field widens from writes to .akr/records/ to changes the workspace, because readOnlyHint and --surface read both read it and both would be lying if a tool that created a packet reported itself read-only; a third runner, run_coordination, sits beside run_read and run_write. knowledge.handoff_open carries the largest budget on the surface, and because a packet is addressable its overflow path names knowledge.handoff_expand rather than truncating everything. There is deliberately no reveal-on-open argument over MCP where the command line has --reveal: the CLI flag is one process and one recorded act, an MCP flag would make a read-only tool write, and the one-implementation invariant still holds because akr handoff open reproduces knowledge.handoff_open exactly. AKR does not become a model orchestrator: it owns state, context, packet construction, retrieval, provenance and snapshot verification, and a packet is provider-neutral.
+        """
+    author "GitHub Uploader"
+}
+
 record akr.decision.dirty-source-graph-has-no-commit-provenance/1 : decision {
     title "Dirty source graphs do not claim HEAD provenance"
     state proposed

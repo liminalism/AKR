@@ -13,7 +13,12 @@ pub struct Tool {
     pub name: &'static str,
     /// One line, shown to the agent.
     pub description: &'static str,
-    /// Whether it writes to `.akr/records/`.
+    /// Whether the tool changes the workspace.
+    ///
+    /// Usually that means `.akr/records/`. It also covers the advisor-packet store
+    /// under `.agent/handoffs/` (D-040), which is not the ledger but is still a file
+    /// this tool creates: `readOnlyHint` and `--surface read` both read this field, and
+    /// both would be lying if a tool that wrote a packet reported itself read-only.
     pub writes: bool,
 }
 
@@ -156,6 +161,52 @@ pub const TOOLS: &[Tool] = &[
         description: "Record up to 100 evidence observations atomically. The workspace is \
                       opened once and the resulting ledger is validated and written once; \
                       if any item is invalid, none are written.",
+        writes: true,
+    },
+    Tool {
+        name: "knowledge.handoff_create",
+        description: "Prepare an advisor packet: hand a task to a second model without handing over\
+                      the judgement it is being brought in to make. `task` is the user's request\
+                      VERBATIM — never a restatement, because a restatement substitutes your\
+                      conclusion for the problem. `search_envelope` defaults to the whole project;\
+                      narrow it only when the user did. Your own findings go in `worker_notes`,\
+                      which the advisor cannot see until knowledge.handoff_reveal.",
+        writes: true,
+    },
+    Tool {
+        name: "knowledge.handoff_list",
+        description: "List the advisor packets this workspace holds.",
+        writes: false,
+    },
+    Tool {
+        name: "knowledge.handoff_open",
+        description: "Open an advisor packet: the task verbatim, the workspace and whether it has\
+                      drifted, the independent search scope, the session head, governing records,\
+                      commands and baselines. Worker notes are withheld — review independently\
+                      first, then knowledge.handoff_reveal.",
+        writes: false,
+    },
+    Tool {
+        name: "knowledge.handoff_expand",
+        description: "Read one section of a packet: task, workspace, project, governing, envelope or\
+                      execution. Use it instead of re-opening the whole packet.",
+        writes: false,
+    },
+    Tool {
+        name: "knowledge.handoff_reveal",
+        description: "Release the packet's worker notes, and record that it happened. Call it after\
+                      an independent pass, then compare: what did either side miss?",
+        writes: true,
+    },
+    Tool {
+        name: "knowledge.handoff_verify",
+        description: "Does the packet still describe this tree? Reports exact or drifted, and names\
+                      what moved.",
+        writes: false,
+    },
+    Tool {
+        name: "knowledge.handoff_discard",
+        description: "Delete an advisor packet. Packets are disposable; nothing durable is lost.",
         writes: true,
     },
     Tool {
@@ -515,6 +566,119 @@ pub fn input_schema(name: &str) -> Option<Value> {
             )],
             &["evidence"],
         ),
+        "knowledge.handoff_create" => object(
+            vec![
+                (
+                    "task",
+                    string(
+                        "The user's request, VERBATIM. Not a restatement, not your \
+                         reading of it: an advisor hired for what you did not notice \
+                         cannot be handed your noticing as the definition of the task.",
+                    ),
+                ),
+                (
+                    "question",
+                    string(
+                        "What the advisor is specifically asked, when that is narrower than the task.",
+                    ),
+                ),
+                (
+                    "by",
+                    string("Who prepared the packet: a model or harness name."),
+                ),
+                (
+                    "goal",
+                    string("The governing planning key, if the work has one."),
+                ),
+                (
+                    "governing",
+                    string_array("Records that govern or constrain the work."),
+                ),
+                (
+                    "search_envelope",
+                    string_array(
+                        "The advisor's independent search scope, as path globs. Defaults \
+                         to the whole project. Narrowing it to what you examined hands \
+                         the advisor your blind spot as a boundary.",
+                    ),
+                ),
+                (
+                    "commands",
+                    string_array("Commands the advisor can run, as `command` or `command=result`."),
+                ),
+                (
+                    "baselines",
+                    string_array("Measurements already established."),
+                ),
+                (
+                    "constraints",
+                    string_array("Constraints the answer must respect."),
+                ),
+                (
+                    "evidence",
+                    string_array("Evidence records already written."),
+                ),
+                (
+                    "artifacts",
+                    string_array("Artefacts already produced, by repository path."),
+                ),
+                (
+                    "worker_notes",
+                    object(
+                        vec![
+                            (
+                                "hypotheses",
+                                string_array("Where you suspect the answer lies."),
+                            ),
+                            ("examined", string_array("What you read.")),
+                            (
+                                "not_examined",
+                                string_array(
+                                    "What you did not read. The half of coverage usually lost.",
+                                ),
+                            ),
+                            ("approaches", string_array("Approaches you would propose.")),
+                            (
+                                "searches",
+                                string_array(
+                                    "Searches you ran, so a query that found nothing is not repeated.",
+                                ),
+                            ),
+                        ],
+                        &[],
+                    ),
+                ),
+                (
+                    "budget_tokens",
+                    integer("Approximate token budget for the embedded session head."),
+                ),
+            ],
+            &["task"],
+        ),
+        "knowledge.handoff_list" => object(Vec::new(), &[]),
+        "knowledge.handoff_open" => object(
+            vec![("packet", string("The packet id, e.g. ap-7f29d3a10b44."))],
+            &["packet"],
+        ),
+        "knowledge.handoff_expand" => object(
+            vec![
+                ("packet", string("The packet id.")),
+                (
+                    "section",
+                    string("One of: task, workspace, project, governing, envelope, execution."),
+                ),
+            ],
+            &["packet", "section"],
+        ),
+        "knowledge.handoff_reveal" => {
+            object(vec![("packet", string("The packet id."))], &["packet"])
+        }
+        "knowledge.handoff_verify" => {
+            object(vec![("packet", string("The packet id."))], &["packet"])
+        }
+        "knowledge.handoff_discard" => {
+            object(vec![("packet", string("The packet id."))], &["packet"])
+        }
         "knowledge.papercut" => object(
             vec![
                 (

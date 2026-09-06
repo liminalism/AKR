@@ -52,6 +52,13 @@ pub fn budget_for(tool: &str) -> Budget {
         "knowledge.impact" => Budget::new(800, 1_500),
         "knowledge.explain" => Budget::new(800, 1_500),
         "knowledge.validate" => Budget::new(500, 3_000),
+        // An advisor packet is the one deliberately large read on this surface: the point
+        // of it is that the second model arrives knowing the workspace. It is also
+        // addressable, so the overflow path has somewhere real to send the caller -- one
+        // section at a time, rather than a truncated everything.
+        "knowledge.handoff_open" => Budget::new(2_000, 3_500),
+        "knowledge.handoff_expand" | "knowledge.handoff_reveal" => Budget::new(1_000, 2_000),
+        "knowledge.handoff_list" | "knowledge.handoff_verify" => Budget::new(600, 1_000),
         // Every write tool. A successful write has nothing to say but where it landed.
         _ => Budget::new(300, 500),
     }
@@ -151,6 +158,9 @@ fn narrowing_advice(tool: &str, arguments: &Value) -> String {
              files you are about to touch."
         }
         "knowledge.impact" => "Call again with a smaller `depth`.",
+        "knowledge.handoff_open" => {
+            "Read one section at a time with `knowledge.handoff_expand`: task, workspace,              project, governing, envelope, execution."
+        }
         "knowledge.validate" => {
             "Call again with a smaller `limit`, or continue from `next_offset`."
         }
@@ -174,6 +184,23 @@ fn narrowing_arguments(tool: &str, original: &Value) -> Value {
         "knowledge.start" => vec![("budget_tokens", Value::integer(1_500))],
         "knowledge.context" => vec![("budget_tokens", Value::integer(2_000))],
         "knowledge.impact" => vec![("depth", Value::integer(1))],
+        "knowledge.handoff_open" => {
+            // The continuation is a different tool, so the shared "same tool, narrower
+            // arguments" shape does not fit: name the tool that does answer.
+            return Value::object(vec![
+                ("tool", Value::string("knowledge.handoff_expand")),
+                (
+                    "arguments",
+                    Value::object(vec![
+                        (
+                            "packet",
+                            original.get("packet").cloned().unwrap_or(Value::Null),
+                        ),
+                        ("section", Value::string("task")),
+                    ]),
+                ),
+            ]);
+        }
         "knowledge.validate" => vec![("limit", Value::integer(3)), ("offset", Value::integer(0))],
         _ => return Value::Null,
     };

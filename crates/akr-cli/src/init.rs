@@ -72,8 +72,9 @@ Durable project knowledge lives in `.akr/` as typed records, not in Markdown.
 - `knowledge.validate`. If it reports diagnostics, fix them or say so explicitly.
 "#;
 
-/// The two paths a workspace must not track.
-const GITIGNORE_ENTRIES: &[&str] = &[".akr/cache/", ".agent/scratch/"];
+/// The paths a workspace must not track: the rebuildable index cache, and the two
+/// disposable agent subtrees (D-036, D-040).
+const GITIGNORE_ENTRIES: &[&str] = &[".akr/cache/", ".agent/scratch/", ".agent/handoffs/"];
 
 /// Scaffolds a workspace in the current directory.
 ///

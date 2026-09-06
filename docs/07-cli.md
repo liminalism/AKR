@@ -921,6 +921,73 @@ anything; removal is always explicit.
 
 ---
 
+### `akr handoff`
+
+```
+akr handoff create --task <text> | --task-file <path>
+                   [--question <text>] [--by <name>] [--goal <ref>]
+                   [--governing <ref>]... [--envelope <glob>]...
+                   [--command <cmd>[=<result>]]... [--baseline <text>]...
+                   [--constraint <text>]... [--evidence <ref>]...
+                   [--artifact <path>]... [--budget <tokens>]
+                   [--note-hypothesis <text>]... [--note-examined <path>]...
+                   [--note-unexamined <path>]... [--note-approach <text>]...
+                   [--note-search <text>]...
+akr handoff list
+akr handoff open <id> [--reveal]
+akr handoff expand <id> <section>
+akr handoff reveal <id>
+akr handoff verify <id>
+akr handoff discard <id>
+```
+
+An **advisor packet** hands a task to a second model without handing over the judgement
+that model is being brought in to make (D-040, `17-advisor-packets.md`). The rule it is
+built to is *compress state, not search*, and it carries two layers.
+
+**Layer A is administrative fact**: the task verbatim, `HEAD` and its subject, the ledger
+revision, dirty paths with digests, the session head, declared namespaces, the governing
+goal and records, the search envelope, commands with what they produced, baselines,
+constraints, evidence and artefacts. All of it may be compressed, because compressing it
+loses nothing an advisor wanted.
+
+**Layer B is worker interpretation**: hypotheses, what was examined, what was *not*
+examined, proposed approaches, searches already run. Every `--note-*` flag lands here and
+nothing else can. `open` withholds it and reports only that it exists; `reveal` releases
+it *and records that it happened*, so the packet can always say whether the review that
+followed was independent.
+
+`--task` is the user's request as the user wrote it. A restatement puts the preparing
+agent's conclusion where the problem should be, and afterwards nobody can tell a narrowed
+task from a narrow one. Interpretation goes in `--question`, which is what the advisor is
+specifically asked when the *user* narrowed it, or in a `--note-*` flag. `--task-file`
+exists because a verbatim request is often a paragraph with newlines and quotes in it and
+a shell mangles those.
+
+`--envelope` defaults to `**`, the whole project, and the default is load-bearing:
+an envelope drawn from what the preparing agent examined hands the advisor that agent's
+blind spot as a boundary, which is the one thing it is there to escape. Narrow it only
+when the user narrowed the task.
+
+`open` and `verify` recompute the workspace fingerprint — `HEAD`, the source-graph hash,
+and a sha256 per dirty path — and report `exact` or `drifted`, naming what moved. Silently
+describing one tree while a second model reads another is the failure this prevents.
+Drift never changes the exit status: it is a fact about the working tree, not a
+contradiction in the ledger, exactly as staleness is under D-024. The packet store is
+excluded from the fingerprint, so writing a packet cannot make it drift against itself.
+
+`expand` reads one section without re-opening the whole packet: `task`, `workspace`,
+`project`, `governing`, `envelope`, `execution`, and `notes` — which is `reveal`, so that
+expanding the notes cannot become a second door into Layer B that leaves no record.
+
+Packets live in `.agent/handoffs/<id>.json`, gitignored beside `.agent/scratch/`. A packet
+describes a workspace at a moment, is worthless once that tree has moved on, and holds the
+preparing agent's private notes, so it is never committed and never a record. It is
+invisible to `akr search`, `akr context` and the compiler. What survives one is whatever
+the review made durable, written through the ordinary pipeline of §4.
+
+---
+
 ### `akr evidence add`
 
 ```

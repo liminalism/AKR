@@ -1,6 +1,61 @@
 akr 0.1
 project akr
 
+record akr.work.advisor-packet-handoff/1 : work {
+    title "Give AKR a formal worker-to-advisor handoff"
+    state proposed
+    scope [
+        path "crates/akr-cli/src/handoff/**",
+        path "crates/akr-mcp/src/**",
+        path "docs/17-advisor-packets.md",
+        path "scripts/agent-section.md"
+    ]
+    intent """
+        Make handing a task to a second model a first-class, addressable AKR operation rather than a hand-written summary. The packet separates administrative fact, which the preparing agent may compress, from worker interpretation, which it may record but not substitute for the problem; the interpretation is withheld until the advisor has reviewed independently, and the reveal is recorded so that independence is knowable afterwards. Delivered as akr handoff create/list/open/expand/reveal/verify/discard, the matching knowledge.handoff_* MCP tools, a workspace fingerprint that reports exact or drifted, and the agent guidance that makes call an advisor mean prepare a packet.
+        """
+    note """
+        Requested with a design brief that identified the failure mode directly: a summary handoff turns the preparing agent into a perceptual bottleneck, so the receiving model must retain independent discovery authority. Recorded as D-040.
+        """
+    acceptance {
+        check blind-read-holds {
+            statement """
+                akr handoff open and knowledge.handoff_open render the factual layer and leak no worker note; reveal releases them and records that it happened.
+                """
+            method command
+            command "cargo test -p akr-cli --test advisor_packet"
+        }
+        check design-set-coherent {
+            statement """
+                The spec set still coheres with D-040, docs/17 and AKR-C043 in it, and the whole suite passes.
+                """
+            method command
+            command "python tools/check-design.py && cargo test"
+        }
+        check drift-is-reported-not-fatal {
+            statement """
+                A fresh packet verifies as exact, an edited tree verifies as drifted and names what moved, and neither changes the exit status.
+                """
+            method command
+            command "cargo test -p akr-cli --test advisor_packet a_fresh_packet_is_exact_and_an_edited_tree_drifts"
+        }
+        check envelope-stays-project-wide {
+            statement """
+                A packet's search envelope defaults to the whole project rather than to what the preparing agent examined.
+                """
+            method command
+            command "cargo test -p akr-cli --test advisor_packet the_envelope_defaults_to_the_whole_project"
+        }
+        check surfaces-agree {
+            statement """
+                knowledge.handoff_open and akr handoff open produce an identical result object, and opening over MCP does not stamp the packet.
+                """
+            method command
+            command "cargo test -p akr-mcp --test differential an_advisor_packet"
+        }
+    }
+    author "GitHub Uploader"
+}
+
 record akr.work.authoring-contracts/1 : work {
     title "Make AKR authoring contracts discoverable before writes"
     state completed

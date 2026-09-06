@@ -1555,3 +1555,127 @@ accurately.
 `crates/akr-core/tests/ops_write.rs`, `crates/akr-core/tests/v_rules.rs`,
 `docs/07-cli.md` §4, `docs/05-validation-rules.md`,
 `spec/diagnostics/codes-runtime.md` (`AKR-C031`).
+
+---
+
+## D-040 — Compress the state, not the search: an advisor packet has two layers and one of them is withheld
+
+*Addition, 2026-09-06.*
+
+**Question.** An agent doing the work reaches a point where a second, differently capable
+model would help. How is the task handed over?
+
+The obvious answer is a summary — "here is the project, here is what I found, here is where
+I think the problem is" — and it is wrong in a way that is easy to miss, because it looks
+like exactly the compression the receiving model wants.
+
+**Question behind the question.** What is the advisor for?
+
+If it is for confirming a conclusion, a summary is the right handoff. If it is for finding
+what the first agent did not notice — which is the only reason worth paying a second model
+— then a summary of what the first agent noticed is the worst possible input. It makes the
+worker a perceptual bottleneck: the advisor inherits the framing, searches where the worker
+searched, and refines instead of forming a view. The worker's blind spot silently becomes
+the advisor's boundary, and afterwards nobody can tell, because a narrowed task reads
+exactly like a narrow one.
+
+The opposite failure is real too and was measured. An advisor arriving cold spends its
+first and most expensive tokens on questions with deterministic answers: what is AKR, what
+work is current, what does `base_rev` mean, what are the build commands, does `benches/`
+exist, which document is authoritative — plus a cold dependency compile. In one logged
+run the advisor had to discover and correct the `base_rev` requirement mid-task. That is
+pure waste, and none of it is judgement.
+
+**Resolution.** Both failures are the same mistake made in opposite directions, so state
+the rule and build to it:
+
+> **Compress state, not search.**
+
+An **advisor packet** carries two categories in two fields.
+
+**Layer A is administrative fact:** the user's request verbatim, `HEAD` and its subject,
+the ledger revision, dirty paths with digests, the session head, declared namespaces, the
+governing goal and records, the search envelope, build and test commands with what they
+produced, baselines, constraints, evidence and artefacts already made. All of it may be
+prepared and compressed, because compressing it loses nothing an advisor wanted.
+
+**Layer B is worker interpretation:** hypotheses, what was examined, what was *not*
+examined, proposed approaches, searches already run. The worker may record it and may not
+substitute it for the problem.
+
+**The reveal is a separate, recorded act.** `handoff open` renders Layer A and reports only
+that Layer B exists. `handoff reveal` releases it and stamps the packet. Recording it is
+the point: once you know an advisor read blind and then saw the notes, *"what did either
+side miss?"* is a question with an answer, and across tasks that accumulates into evidence
+about where each model actually sees — which is worth more than the handoff machinery.
+
+**Three details carry most of the weight.**
+
+*The task is verbatim.* A worker that has concluded the work is about guided chroma
+denoising must not be able to replace "review this project and optimise for performance,
+both memory and CPU" with its own conclusion. Interpretation has two legitimate homes,
+`question` and `worker_notes`, and neither is `task`.
+
+*The envelope defaults to the whole project.* `["**"]`, not the paths the worker touched.
+A default drawn from what the worker examined would hand over the blind spot as a boundary
+— the one thing the packet exists to prevent. It is a permission, not an instruction:
+Layer A says how the kitchen is organised and never which drawer the answer is in.
+
+*The workspace is fingerprinted.* Workers keep working after preparing a packet. `HEAD`,
+the source-graph hash and a sha256 per dirty path are enough to detect drift, cost one
+status call plus a read of files git already named, and leave the repository itself as the
+thing the advisor reads — a full source snapshot would be a second copy of the checkout to
+no purpose. `open` and `verify` report `exact` or `drifted` and name what moved. Drift
+never changes the exit status: it is a fact about the working tree, not a contradiction in
+the ledger, exactly as staleness is under D-024.
+
+**A packet is not a record, and this is not a near miss.** It describes a workspace at a
+moment, it is worthless once that tree has moved on, and it holds the worker's private
+notes. Hundreds of them in `.akr/records/` would drown the decisions and evidence the
+ledger exists to hold, which is D-032's argument against a `commit` kind applied to the
+same shape of object. So packets live in `.agent/handoffs/`, gitignored, invisible to
+`akr search`, `akr context` and the compiler. What survives a packet is whatever the
+review made durable: a record, with evidence, through the ordinary write pipeline.
+
+**AKR does not become the orchestrator.** It owns state, context, packet construction and
+retrieval, provenance and snapshot verification. It does not launch models, choose between
+them, price them, or know a particular harness's spawn mechanism. A packet is
+provider-neutral; a data model coupled to this month's agent harness would date within a
+release.
+
+**Consequences.**
+
+`.agent/` now has two ignored subtrees rather than the one D-036 settled on. That line of
+D-036 was reasoning about *scratch*, and the reason it gave — two names one letter apart,
+one tracked and one ignored — does not apply to a second subtree under the same name. Both
+are disposable, both are ignored, and `akr init` writes both entries.
+
+The MCP `Tool::writes` field widens from "writes to `.akr/records/`" to "changes the
+workspace". `readOnlyHint` and `--surface read` both read it, and both would be lying if a
+tool that created a packet reported itself read-only. A third runner, `run_coordination`,
+sits beside `run_read` and `run_write`: it needs git facts, because a fingerprint is the
+point, and it keeps the text half, because the useful output is the id to hand over.
+
+`knowledge.handoff_open` gets an unusually large budget (2,000 / 3,500). It is the one read
+whose whole purpose is that the second model arrives knowing the workspace. Because a
+packet is addressable, the overflow path has somewhere real to send the caller —
+`knowledge.handoff_expand`, one section at a time — rather than a truncated everything.
+
+`knowledge.handoff_open` has no reveal-on-open argument, though `akr handoff open` has
+`--reveal`. The CLI flag is one process and one recorded act; an MCP flag would have made a
+tool declared read-only write, so the MCP surface composes it from two calls instead. The
+one-implementation invariant holds: every MCP behaviour is reproducible from the command
+line.
+
+`scripts/agent-section.md` gains the workflow, which is the half of this that reaches
+projects and harnesses that never read this file — including the instruction that *"call an
+advisor"*, in whatever words the user uses, means preparing a packet rather than writing a
+summary.
+
+**Honored by.** `crates/akr-cli/src/handoff/` (`mod.rs`, `advisor.rs`, `packet.rs`,
+`snapshot.rs`, `session_head.rs`), `crates/akr-cli/src/args.rs` (`parse_handoff`),
+`crates/akr-cli/src/commands.rs`, `crates/akr-cli/src/init.rs` (`GITIGNORE_ENTRIES`),
+`crates/akr-mcp/src/schema.rs`, `crates/akr-mcp/src/tools.rs` (`run_coordination`,
+`handoff_create`), `crates/akr-mcp/src/budget.rs`, `crates/akr-cli/tests/advisor_packet.rs`,
+`docs/17-advisor-packets.md`, `spec/diagnostics/codes-runtime.md` (`AKR-C043`),
+`scripts/agent-section.md`, `.gitignore`.

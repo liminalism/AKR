@@ -1,9 +1,13 @@
-//! The compact project handoff prepended by `akr start` and `knowledge.start`.
+//! The compact session head prepended by `akr start` and `knowledge.start`.
 //!
 //! This is a projection, never authority: records remain authoritative for intent and
 //! Git remains authoritative for snapshots. The projection exists to make the first
 //! read of a session useful without making the agent search for a chronologically recent
 //! planning key.
+//!
+//! It is also the orientation layer an advisor packet embeds verbatim
+//! ([`super::packet`]), so that a second model arriving cold does not have to rediscover
+//! the ledger's shape before it can look at the code.
 
 use crate::session::{EnvError, Session};
 use akr_core::change::{self, SemanticDelta};
