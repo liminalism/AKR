@@ -117,15 +117,27 @@ fn dispatch(session: &mut Session, command: &Command) -> Result<Output, EnvError
             review_clean,
             views_current,
         } => check(session, *scratch_clean, *review_clean, *views_current),
-        Command::HandoffCreate(request) => crate::handoff::advisor::create(session, request),
-        Command::HandoffList => crate::handoff::advisor::list(session),
-        Command::HandoffOpen { id, reveal } => crate::handoff::advisor::open(session, id, *reveal),
-        Command::HandoffExpand { id, section } => {
-            crate::handoff::advisor::expand(session, id, section)
+        Command::HandoffCapsule {
+            refresh,
+            boundaries,
+        } => crate::handoff::ops::capsule_show(session, *refresh, boundaries),
+        Command::HandoffSessionBegin(request) => {
+            crate::handoff::ops::session_begin(session, request)
         }
-        Command::HandoffReveal { id } => crate::handoff::advisor::reveal(session, id),
-        Command::HandoffVerify { id } => crate::handoff::advisor::verify(session, id),
-        Command::HandoffDiscard { id } => crate::handoff::advisor::discard(session, id),
+        Command::HandoffSessionShow => crate::handoff::ops::session_show(session),
+        Command::HandoffSessionEnd => crate::handoff::ops::session_end(session),
+        Command::HandoffCreate(request) => crate::handoff::ops::create(session, request),
+        Command::HandoffList => crate::handoff::ops::list(session),
+        Command::HandoffOpen { id, reveal } => crate::handoff::ops::open(session, id, *reveal),
+        Command::HandoffExpand { id, section } => crate::handoff::ops::expand(session, id, section),
+        Command::HandoffReveal { id } => crate::handoff::ops::reveal(session, id),
+        Command::HandoffVerify { id } => crate::handoff::ops::verify(session, id),
+        Command::HandoffDiscard { id } => crate::handoff::ops::discard(session, id),
+        Command::HandoffResult(request) => crate::handoff::ops::file_result(session, request),
+        Command::HandoffResults { packet } => {
+            crate::handoff::ops::results(session, packet.as_deref())
+        }
+        Command::HandoffCoverage => crate::handoff::ops::coverage(session),
         Command::ScratchList => scratch_list(session),
         Command::ScratchPrune {
             older_than,
@@ -2873,9 +2885,52 @@ fn finish_start(
             ));
         }
         fields.push(("handoff".into(), handoff.value));
+        if let Some((line, value)) = delegation_notice(root) {
+            output.text.push_str(&line);
+            fields.push(("handoff_session".into(), value));
+        }
     }
     output.text = format!("{}{}", handoff.text, output.text);
     output
+}
+
+/// The line `akr start` prints when a handoff session is open.
+///
+/// A child agent should open the packet it was given rather than re-deriving the project
+/// from scratch: that re-derivation is the whole cost the capsules exist to remove, and
+/// five children paying it produce five accounts of one answer that do not always agree
+/// (D-041). AKR cannot see process ancestry, so it cannot *know* that this caller is a
+/// child — but the harness can say so, and when `AKR_HANDOFF_PACKET` names a packet this
+/// says exactly what to run instead. Without it, the conditional is the honest form.
+///
+/// It is a line rather than a diagnostic. What is open in `.agent/handoffs/` is a fact
+/// about the working tree, not a contradiction in the ledger, and facts about the working
+/// tree never change an exit code (D-024, D-036).
+fn delegation_notice(root: &Path) -> Option<(String, Value)> {
+    let session = crate::handoff::packet::current_session(root)?;
+    let assigned = std::env::var("AKR_HANDOFF_PACKET")
+        .ok()
+        .map(|id| id.trim().to_owned())
+        .filter(|id| !id.is_empty());
+    let line = match &assigned {
+        Some(packet) => format!(
+            "\nhandoff      you hold packet {packet} — `akr handoff open {packet}` carries \
+             this orientation already;\n             this call re-derived it.\n"
+        ),
+        None => format!(
+            "\nhandoff      session {session} is open. If you were given a packet id, \
+             `akr handoff open <id>`\n             instead: it inherits this orientation \
+             and names what not to repeat.\n"
+        ),
+    };
+    let value = Value::object(vec![
+        ("session", Value::string(session)),
+        (
+            "assigned_packet",
+            assigned.map_or(Value::Null, Value::string),
+        ),
+    ]);
+    Some((line, value))
 }
 
 /// A deterministic ledger-only orientation when the working ledger is invalid and the

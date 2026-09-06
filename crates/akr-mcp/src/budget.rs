@@ -58,6 +58,11 @@ pub fn budget_for(tool: &str) -> Budget {
         // section at a time, rather than a truncated everything.
         "knowledge.handoff_open" => Budget::new(2_000, 3_500),
         "knowledge.handoff_expand" | "knowledge.handoff_reveal" => Budget::new(1_000, 2_000),
+        // A result is what a parent reads instead of a transcript, and the coverage
+        // roll-up is what it delegates the next wave from; both are read repeatedly by
+        // one agent, so they get room without getting the packet's.
+        "knowledge.handoff_results" | "knowledge.handoff_coverage" => Budget::new(1_200, 2_500),
+        "knowledge.handoff_capsule" | "knowledge.handoff_session_show" => Budget::new(1_000, 2_000),
         "knowledge.handoff_list" | "knowledge.handoff_verify" => Budget::new(600, 1_000),
         // Every write tool. A successful write has nothing to say but where it landed.
         _ => Budget::new(300, 500),

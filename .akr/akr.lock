@@ -5,7 +5,7 @@ build {
     tool "akr 0.5.0"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:6bdfb86ca96c019b1fe02a713f5d3e646729f555b9753a1b9cffe011b9d7c900"
+    source_graph "sha256:80306ba1d80c5a1034c40d4f029992dbf7e20491c66b8ca070d09a0d557481c8"
 }
 
 source ".akr/project.akr" {
@@ -19,8 +19,8 @@ source ".akr/records/akr/assessments.akr" {
 }
 
 source ".akr/records/akr/decisions.akr" {
-    hash "sha256:acb8b582e7d2551b2b28e28ef39ee878602d5edb45b496f74e1544d60aecbe05"
-    records 30
+    hash "sha256:990437a7794ecfc71f2b2474d2a8b2cfe8e9ea5764e37c7202e6c4ec9800f11f"
+    records 31
 }
 
 source ".akr/records/akr/evidence.akr" {
@@ -44,8 +44,8 @@ source ".akr/records/akr/papercuts.akr" {
 }
 
 source ".akr/records/akr/work.akr" {
-    hash "sha256:f05ba6ce4487fc3fdb39a6d8e4d0abfe176ec7a8a5903afe118338e24f362a39"
-    records 44
+    hash "sha256:101c341883efb8efc23f840988ef735ddba0e6509bc38f6454998d9fd17629bb"
+    records 45
 }
 
 resolution @akr.assessment.papercut-reconciliation-2026-08-27/1 {

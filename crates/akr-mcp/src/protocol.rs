@@ -312,6 +312,10 @@ impl Server {
                 // preview that itself exceeded the advertised hard limit.
                 let internally_budgeted = match name {
                     "knowledge.start" => Some(token_budget(&arguments, 1_400)),
+                    // A session capsule embeds a session head assembled to its own
+                    // budget, so a second ceiling at the adapter would truncate work
+                    // that was already sized.
+                    "knowledge.handoff_session_begin" => Some(token_budget(&arguments, 1_400)),
                     "knowledge.context" => arguments
                         .get("budget_tokens")
                         .and_then(Value::as_integer)

@@ -565,8 +565,21 @@ pub enum Command {
         /// A file holding one or more `evidence` records in AKR syntax.
         from: PathBuf,
     },
-    /// `akr handoff create` (D-040).
-    HandoffCreate(Box<crate::handoff::advisor::CreateRequest>),
+    /// `akr handoff capsule [--refresh] [--boundary <text>]...` (D-041).
+    HandoffCapsule {
+        /// Re-derive from the workspace rather than reading the stored capsule.
+        refresh: bool,
+        /// Architectural boundaries, the one field nothing derives.
+        boundaries: Vec<String>,
+    },
+    /// `akr handoff session begin`.
+    HandoffSessionBegin(Box<crate::handoff::ops::SessionRequest>),
+    /// `akr handoff session show`.
+    HandoffSessionShow,
+    /// `akr handoff session end`.
+    HandoffSessionEnd,
+    /// `akr handoff worker|scout|reviewer|advisor` (D-040, D-041).
+    HandoffCreate(Box<crate::handoff::ops::CreateRequest>),
     /// `akr handoff list`.
     HandoffList,
     /// `akr handoff open <id> [--reveal]`.
@@ -580,7 +593,7 @@ pub enum Command {
     HandoffExpand {
         /// The packet id.
         id: String,
-        /// One of `crate::handoff::advisor::SECTIONS`.
+        /// One of `crate::handoff::ops::SECTIONS`.
         section: String,
     },
     /// `akr handoff reveal <id>`.
@@ -595,9 +608,18 @@ pub enum Command {
     },
     /// `akr handoff discard <id>`.
     HandoffDiscard {
-        /// The packet id.
+        /// The id of the packet, capsule or result to remove.
         id: String,
     },
+    /// `akr handoff result <packet>`.
+    HandoffResult(Box<crate::handoff::ops::ResultRequest>),
+    /// `akr handoff results [<packet>]`.
+    HandoffResults {
+        /// One packet's results, or the open session's when absent.
+        packet: Option<String>,
+    },
+    /// `akr handoff coverage`.
+    HandoffCoverage,
 }
 
 impl Command {
@@ -670,13 +692,22 @@ impl Command {
             Self::ScratchList => "scratch list".to_owned(),
             Self::ScratchPrune { .. } => "scratch prune".to_owned(),
             Self::ScratchKeep { .. } => "scratch keep".to_owned(),
-            Self::HandoffCreate(_) => "handoff create".to_owned(),
+            Self::HandoffCapsule { .. } => "handoff capsule".to_owned(),
+            Self::HandoffSessionBegin(_) => "handoff session begin".to_owned(),
+            Self::HandoffSessionShow => "handoff session show".to_owned(),
+            Self::HandoffSessionEnd => "handoff session end".to_owned(),
+            Self::HandoffCreate(request) => {
+                format!("handoff {}", request.mode.as_deref().unwrap_or("create"))
+            }
             Self::HandoffList => "handoff list".to_owned(),
             Self::HandoffOpen { .. } => "handoff open".to_owned(),
             Self::HandoffExpand { .. } => "handoff expand".to_owned(),
             Self::HandoffReveal { .. } => "handoff reveal".to_owned(),
             Self::HandoffVerify { .. } => "handoff verify".to_owned(),
             Self::HandoffDiscard { .. } => "handoff discard".to_owned(),
+            Self::HandoffResult(_) => "handoff result".to_owned(),
+            Self::HandoffResults { .. } => "handoff results".to_owned(),
+            Self::HandoffCoverage => "handoff coverage".to_owned(),
         }
     }
 
@@ -1834,11 +1865,13 @@ fn parse_change(
     })
 }
 
-/// `akr handoff <subcommand>` (D-040).
+/// `akr handoff <subcommand>` (D-040, D-041).
 ///
-/// The flag list is long because the packet's whole purpose is to separate two kinds of
-/// material, and a surface that made worker interpretation easy to pass as fact would
-/// defeat it. Every `--note-*` flag lands in the hidden layer; nothing else can.
+/// The mode is the subcommand -- `akr handoff scout ...` rather than
+/// `akr handoff create --mode scout` -- because the mode is the whole decision a parent
+/// makes when it delegates, and burying it in a flag makes the wrong one easy to leave at
+/// its default. `create --mode <m>` is accepted too, so that one MCP tool maps onto all
+/// four without the tool catalogue growing a member per mode.
 fn parse_handoff(
     name: &str,
     positional: &[&String],
@@ -1847,90 +1880,137 @@ fn parse_handoff(
     let sub = positional.first().map(|s| s.as_str()).ok_or_else(|| {
         UsageError::new(
             "AKR-C003",
-            format!("{name} requires a subcommand (create|list|open|expand|reveal|verify|discard)"),
+            format!(
+                "{name} requires a subcommand (capsule|session|worker|scout|reviewer|advisor|\
+                 list|open|expand|reveal|verify|result|results|coverage|discard)"
+            ),
         )
     })?;
-    let id = |what: &str| -> Result<String, UsageError> {
-        positional.get(1).map(|s| (*s).clone()).ok_or_else(|| {
-            UsageError::new("AKR-C003", format!("handoff {what} requires a packet id"))
-        })
+    let at = |n: usize, what: &str| -> Result<String, UsageError> {
+        positional
+            .get(n)
+            .map(|s| (*s).clone())
+            .ok_or_else(|| UsageError::new("AKR-C003", format!("handoff {sub} requires {what}")))
     };
-    Ok(match sub {
-        "create" => {
-            let task = match (
-                option_value(tail, "--task"),
-                option_value(tail, "--task-file"),
-            ) {
-                (Some(_), Some(_)) => {
-                    return Err(UsageError::new(
-                        "AKR-C005",
-                        "--task cannot be combined with --task-file",
-                    ));
-                }
-                (Some(task), None) => task,
-                // A verbatim request is often a paragraph with newlines and quotes in it,
-                // which a shell mangles. Reading it from a file is the only way to keep
-                // "verbatim" literally true, so it is a first-class way to pass it.
-                (None, Some(path)) => std::fs::read_to_string(&path)
+    let notes = || crate::handoff::packet::WorkerNotes {
+        hypotheses: repeated(tail, "--note-hypothesis"),
+        examined: repeated(tail, "--note-examined"),
+        not_examined: repeated(tail, "--note-unexamined"),
+        approaches: repeated(tail, "--note-approach"),
+        searches: repeated(tail, "--note-search"),
+    };
+
+    // A verbatim request is often a paragraph with newlines and quotes in it, which a
+    // shell mangles. Reading it from a file is the only way to keep "verbatim" literally
+    // true for a long one.
+    let from_file = |flag: &str| -> Result<Option<String>, UsageError> {
+        match option_value(tail, flag) {
+            None => Ok(None),
+            Some(path) => Ok(Some(
+                std::fs::read_to_string(&path)
                     .map_err(|error| {
-                        UsageError::new("AKR-C004", format!("--task-file {path}: {error}"))
+                        UsageError::new("AKR-C004", format!("{flag} {path}: {error}"))
                     })?
                     .trim_end_matches(['\n', '\r'])
                     .to_owned(),
-                (None, None) => {
-                    return Err(UsageError::new(
+            )),
+        }
+    };
+    let one_of = |inline: &str, file: &str| -> Result<Option<String>, UsageError> {
+        match (option_value(tail, inline), from_file(file)?) {
+            (Some(_), Some(_)) => Err(UsageError::new(
+                "AKR-C005",
+                format!("{inline} cannot be combined with {file}"),
+            )),
+            (Some(text), None) | (None, Some(text)) => Ok(Some(text)),
+            (None, None) => Ok(None),
+        }
+    };
+
+    Ok(match sub {
+        "capsule" => Command::HandoffCapsule {
+            refresh: tail.iter().any(|a| a == "--refresh"),
+            boundaries: repeated(tail, "--boundary"),
+        },
+        "session" => match positional.get(1).map(|s| s.as_str()) {
+            Some("begin") => {
+                let request = one_of("--request", "--request-file")?.ok_or_else(|| {
+                    UsageError::new(
                         "AKR-C003",
-                        "handoff create requires --task <text> or --task-file <path>",
+                        "handoff session begin requires --request <text> or --request-file <path>",
                     )
                     .with_help(
-                        "pass the user's request verbatim; interpretation belongs in \
-                         --question or a --note-* flag",
-                    ));
+                        "pass the user's request verbatim; every packet cut from this \
+                         session inherits it, and a narrowed assignment renders beneath it",
+                    )
+                })?;
+                if request.trim().is_empty() {
+                    return Err(UsageError::new("AKR-C004", "--request is empty"));
                 }
-            };
-            if task.trim().is_empty() {
-                return Err(UsageError::new("AKR-C004", "--task is empty"));
+                let budget = match option_value(tail, "--budget") {
+                    Some(raw) => Some(raw.parse::<usize>().map_err(|_| {
+                        UsageError::new("AKR-C004", format!("--budget: {raw} is not a token count"))
+                    })?),
+                    None => None,
+                };
+                Command::HandoffSessionBegin(Box::new(crate::handoff::ops::SessionRequest {
+                    request,
+                    goal: option_value(tail, "--goal"),
+                    governing: repeated(tail, "--governing"),
+                    constraints: repeated(tail, "--constraint"),
+                    commands: repeated(tail, "--command"),
+                    baselines: repeated(tail, "--baseline"),
+                    evidence: repeated(tail, "--evidence"),
+                    artifacts: repeated(tail, "--artifact"),
+                    budget,
+                }))
             }
-            let budget = match option_value(tail, "--budget") {
-                Some(raw) => Some(raw.parse::<usize>().map_err(|_| {
-                    UsageError::new("AKR-C004", format!("--budget: {raw} is not a token count"))
-                })?),
-                None => None,
+            Some("show") | Some("status") | None => Command::HandoffSessionShow,
+            Some("end") | Some("close") => Command::HandoffSessionEnd,
+            Some(other) => {
+                return Err(UsageError::new(
+                    "AKR-C001",
+                    format!("unknown subcommand {other:?} for command \"handoff session\""),
+                )
+                .with_help("supported subcommands: begin, show, end"));
+            }
+        },
+        "worker" | "scout" | "reviewer" | "advisor" | "create" => {
+            let mode = if sub == "create" {
+                option_value(tail, "--mode").ok_or_else(|| {
+                    UsageError::new("AKR-C003", "handoff create requires --mode <mode>")
+                        .with_help("modes are: worker, scout, reviewer, advisor")
+                })?
+            } else {
+                sub.to_owned()
             };
-            Command::HandoffCreate(Box::new(crate::handoff::advisor::CreateRequest {
-                task,
-                question: option_value(tail, "--question"),
+            if crate::handoff::packet::Mode::from_name(&mode).is_none() {
+                return Err(
+                    UsageError::new("AKR-C004", format!("{mode:?} is not a handoff mode"))
+                        .with_help("modes are: worker, scout, reviewer, advisor"),
+                );
+            }
+            Command::HandoffCreate(Box::new(crate::handoff::ops::CreateRequest {
+                mode: Some(mode),
+                task: one_of("--task", "--task-file")?.unwrap_or_default(),
+                role: option_value(tail, "--role"),
                 by: option_value(tail, "--by"),
-                goal: option_value(tail, "--goal"),
-                governing: repeated(tail, "--governing"),
-                envelope: repeated(tail, "--envelope"),
+                inherits: repeated(tail, "--inherit"),
+                scope: repeated(tail, "--scope"),
+                known: repeated(tail, "--known"),
+                skip: repeated(tail, "--skip"),
+                expect: repeated(tail, "--expect"),
                 commands: repeated(tail, "--command"),
-                baselines: repeated(tail, "--baseline"),
-                constraints: repeated(tail, "--constraint"),
-                evidence: repeated(tail, "--evidence"),
-                artifacts: repeated(tail, "--artifact"),
-                notes: crate::handoff::packet::WorkerNotes {
-                    hypotheses: repeated(tail, "--note-hypothesis"),
-                    examined: repeated(tail, "--note-examined"),
-                    not_examined: repeated(tail, "--note-unexamined"),
-                    approaches: repeated(tail, "--note-approach"),
-                    searches: repeated(tail, "--note-search"),
-                },
-                budget,
+                notes: notes(),
             }))
         }
         "list" => Command::HandoffList,
         "open" | "show" => Command::HandoffOpen {
-            id: id(sub)?,
+            id: at(1, "a packet id")?,
             reveal: tail.iter().any(|a| a == "--reveal"),
         },
         "expand" => {
-            let sections = || {
-                format!(
-                    "sections are: {}",
-                    crate::handoff::advisor::SECTIONS.join(", ")
-                )
-            };
+            let sections = || format!("sections are: {}", crate::handoff::ops::SECTIONS.join(", "));
             let section = positional.get(2).map(|s| (*s).clone()).ok_or_else(|| {
                 UsageError::new("AKR-C003", "handoff expand requires a section")
                     .with_help(sections())
@@ -1938,7 +2018,7 @@ fn parse_handoff(
             // Checked here rather than only at dispatch so that a mistyped section is
             // exit 2, like every other malformed invocation, instead of exit 3's "the
             // workspace is unusable" (`docs/07-cli.md` §3).
-            if !crate::handoff::advisor::SECTIONS.contains(&section.as_str()) {
+            if !crate::handoff::ops::SECTIONS.contains(&section.as_str()) {
                 return Err(UsageError::new(
                     "AKR-C004",
                     format!("{section:?} is not a packet section"),
@@ -1946,20 +2026,46 @@ fn parse_handoff(
                 .with_help(sections()));
             }
             Command::HandoffExpand {
-                id: id("expand")?,
+                id: at(1, "a packet id")?,
                 section,
             }
         }
-        "reveal" => Command::HandoffReveal { id: id("reveal")? },
-        "verify" => Command::HandoffVerify { id: id("verify")? },
-        "discard" => Command::HandoffDiscard { id: id("discard")? },
+        "reveal" => Command::HandoffReveal {
+            id: at(1, "a packet id")?,
+        },
+        "verify" => Command::HandoffVerify {
+            id: at(1, "a packet id")?,
+        },
+        "discard" => Command::HandoffDiscard {
+            id: at(1, "an id")?,
+        },
+        "result" => Command::HandoffResult(Box::new(crate::handoff::ops::ResultRequest {
+            packet: at(1, "the packet it answers")?,
+            by: option_value(tail, "--by"),
+            findings: repeated(tail, "--finding"),
+            evidence: repeated(tail, "--evidence"),
+            changes: repeated(tail, "--change"),
+            uncertainties: repeated(tail, "--uncertainty"),
+            follow_up: repeated(tail, "--follow-up"),
+            commands: repeated(tail, "--command"),
+            read: repeated(tail, "--read"),
+            searched: repeated(tail, "--searched"),
+            tested: repeated(tail, "--tested"),
+            not_examined: repeated(tail, "--not-examined"),
+        })),
+        "results" => Command::HandoffResults {
+            packet: positional.get(1).map(|s| (*s).clone()),
+        },
+        "coverage" => Command::HandoffCoverage,
         other => {
             return Err(UsageError::new(
                 "AKR-C001",
                 format!("unknown subcommand {other:?} for command \"handoff\""),
             )
             .with_help(
-                "supported subcommands: create, list, open, expand, reveal, verify, discard",
+                "supported subcommands: capsule, session, worker, scout, reviewer, \
+                 advisor, list, open, expand, reveal, verify, result, results, coverage, \
+                 discard",
             ));
         }
     })
@@ -2166,48 +2272,69 @@ pub fn help_for(name: &str) -> Option<String> {
              \x20                      entries (AKR-G042)\n"
         }
         "handoff" => {
-            "akr handoff create --task <text> | --task-file <path>\n\
-             \x20                  [--question <text>] [--by <name>] [--goal <ref>]\n\
-             \x20                  [--governing <ref>]... [--envelope <glob>]...\n\
-             \x20                  [--command <cmd>[=<result>]]... [--baseline <text>]...\n\
-             \x20                  [--constraint <text>]... [--evidence <ref>]...\n\
-             \x20                  [--artifact <path>]... [--budget <tokens>]\n\
+            "akr handoff capsule [--refresh] [--boundary <text>]...\n\
+             akr handoff session begin --request <text> | --request-file <path>\n\
+             \x20                         [--goal <ref>] [--governing <ref>]...\n\
+             \x20                         [--constraint <text>]... [--command <cmd>[=<result>]]...\n\
+             \x20                         [--baseline <text>]... [--evidence <ref>]...\n\
+             \x20                         [--artifact <path>]... [--budget <tokens>]\n\
+             akr handoff session show | end\n\
+             akr handoff worker | scout | reviewer | advisor\n\
+             \x20                  --role <text> --task <text> | --task-file <path>\n\
+             \x20                  [--scope <glob>]... [--known <text>]... [--skip <text>]...\n\
+             \x20                  [--expect <text>]... [--inherit <id>]... [--by <name>]\n\
+             \x20                  [--command <cmd>[=<result>]]...\n\
              \x20                  [--note-hypothesis <text>]... [--note-examined <path>]...\n\
              \x20                  [--note-unexamined <path>]... [--note-approach <text>]...\n\
              \x20                  [--note-search <text>]...\n\
-             akr handoff list\n\
-             akr handoff open <id> [--reveal]\n\
-             akr handoff expand <id> <section>\n\
-             akr handoff reveal <id>\n\
-             akr handoff verify <id>\n\
-             akr handoff discard <id>\n\
+             akr handoff list | open <id> [--reveal] | expand <id> <section>\n\
+             akr handoff reveal <id> | verify <id> | discard <id>\n\
+             akr handoff result <packet> [--finding <text>]... [--evidence <ref>]...\n\
+             \x20                  [--change <text>]... [--uncertainty <text>]...\n\
+             \x20                  [--follow-up <text>]... [--command <cmd>[=<result>]]...\n\
+             \x20                  [--read <path[:range]>]... [--searched <query>]...\n\
+             \x20                  [--tested <text>]... [--not-examined <path>]...\n\
+             akr handoff results [<packet>] | coverage\n\
              \n\
-             An advisor packet hands a task to a second model without handing over the\n\
-             judgement it was brought in to make (D-040). It carries two layers.\n\
+             A bounded, inheritable context object for transferring work between agents\n\
+             (D-040, D-041). Three levels, inherited by reference and never copied:\n\
              \n\
-             LAYER A is administrative fact: the task verbatim, HEAD, the ledger revision,\n\
-             the session head, governing records, the search envelope, build and test\n\
-             commands, baselines, artefacts. Compressing it costs the advisor nothing.\n\
+             \x20  PROJECT CAPSULE  pc-...  toolchain, layout, commands, namespaces\n\
+             \x20  SESSION CAPSULE  sx-...  HEAD, ledger, the request verbatim, baselines\n\
+             \x20  PACKET           wk- sc- rv- ad-  role, task, scope, what not to repeat\n\
              \n\
-             LAYER B is worker interpretation: hypotheses, what was and was not examined,\n\
-             proposed approaches. open withholds it; reveal releases it and records that\n\
-             it happened, so the advisor reviews independently first and compares after.\n\
+             Five subagents each re-deriving the toolchain, the module map, the build\n\
+             commands and the current plan is one answer paid for five times -- and the\n\
+             five do not always agree, which costs more than the tokens. Establish it once,\n\
+             inherit it.\n\
              \n\
-             --task is the user request as the user wrote it. Do not restate it: a\n\
-             restatement puts the preparing agent conclusion in place of the problem.\n\
-             Interpretation goes in --question or a --note-* flag.\n\
+             MODES decide what a child sees of YOUR judgement, which is the one decision\n\
+             delegation actually makes:\n\
              \n\
-             --envelope defaults to ** -- the whole project. Narrow it only when the user\n\
-             did. Narrowing it to what you examined hands the advisor your blind spot as\n\
-             a boundary, which is the one thing it is there to escape.\n\
+             \x20  worker    sees your notes. Continuing your job; must not repeat it.\n\
+             \x20  scout     notes withheld. Exploring a scope independently.\n\
+             \x20  reviewer  notes withheld. Checking what you produced, not your reasoning.\n\
+             \x20  advisor   notes withheld, then revealed and compared.\n\
              \n\
-             Packets live in .agent/handoffs/, are gitignored, and are invisible to\n\
-             search, context and the compiler. open and verify report whether the\n\
-             workspace still matches the packet (exact or drifted) and name what moved;\n\
-             drift is a fact about the tree and never changes the exit status.\n\
+             Every mode can reveal, and reveal is recorded, so whether a pass was\n\
+             independent stays knowable afterwards.\n\
              \n\
-             SECTIONS for expand: task, workspace, project, governing, envelope,\n\
-             execution, notes (notes is reveal).\n"
+             --task may be narrower than the session request. It never replaces it: the\n\
+             request renders above the assignment, so the narrowing is visible to the agent\n\
+             it was done to. --scope defaults to ** -- narrowing it to what you examined\n\
+             hands the child your blind spot as a boundary.\n\
+             \n\
+             RESULTS come back as packets too, so a parent reads findings rather than a\n\
+             transcript. --read, --searched, --tested and --not-examined build the coverage\n\
+             that `akr handoff coverage` rolls up: five agents told to review the whole\n\
+             project otherwise all check the same obvious doorway.\n\
+             \n\
+             Everything lives in .agent/handoffs/, is gitignored, and is invisible to\n\
+             search, context and the compiler. open and verify report exact or drifted and\n\
+             name what moved; drift never changes the exit status.\n\
+             \n\
+             SECTIONS for expand: task, workspace, project, session, scope, assignment,\n\
+             notes (notes is reveal).\n"
         }
         "scratch" => {
             "akr scratch list\n\
@@ -2721,7 +2848,7 @@ pub fn help() -> String {
         ),
         (
             "handoff",
-            "prepare a packet for an independent advisor; create, open, reveal",
+            "hand work to another agent; session, worker, scout, advisor, result",
         ),
     ] {
         out.push_str(&format!("    {name:<16}{summary}\n"));

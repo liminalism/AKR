@@ -117,6 +117,19 @@ pub fn call(root: &Path, name: &str, arguments: &Value) -> Result<ToolResult, To
         "knowledge.complete" => complete(root, arguments),
         "knowledge.evidence_add" => evidence_add(root, arguments),
         "knowledge.evidence_add_many" => evidence_add_many(root, arguments),
+        "knowledge.handoff_capsule" => run_read(
+            root,
+            Command::HandoffCapsule {
+                refresh: arguments
+                    .get("refresh")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                boundaries: string_list(arguments, "boundaries"),
+            },
+        ),
+        "knowledge.handoff_session_begin" => handoff_session_begin(root, arguments),
+        "knowledge.handoff_session_show" => run_read(root, Command::HandoffSessionShow),
+        "knowledge.handoff_session_end" => run_coordination(root, Command::HandoffSessionEnd),
         "knowledge.handoff_create" => handoff_create(root, arguments),
         "knowledge.handoff_list" => run_read(root, Command::HandoffList),
         "knowledge.handoff_open" => run_read(
@@ -126,7 +139,7 @@ pub fn call(root: &Path, name: &str, arguments: &Value) -> Result<ToolResult, To
                 // The MCP surface has no reveal-on-open shorthand on purpose: `open` is
                 // declared read-only, and a flag that quietly wrote the reveal marker
                 // would make that declaration false. Two calls, and the packet can always
-                // say whether the review that followed was independent.
+                // say whether the pass that followed was independent.
                 reveal: false,
             },
         ),
@@ -149,6 +162,14 @@ pub fn call(root: &Path, name: &str, arguments: &Value) -> Result<ToolResult, To
                 id: required_str(arguments, "packet")?.to_owned(),
             },
         ),
+        "knowledge.handoff_result" => handoff_result(root, arguments),
+        "knowledge.handoff_results" => run_read(
+            root,
+            Command::HandoffResults {
+                packet: optional_str(arguments, "packet"),
+            },
+        ),
+        "knowledge.handoff_coverage" => run_read(root, Command::HandoffCoverage),
         "knowledge.handoff_discard" => run_coordination(
             root,
             Command::HandoffDiscard {
@@ -1112,9 +1133,31 @@ fn run_coordination(root: &Path, command: Command) -> Result<ToolResult, ToolErr
     Ok(ToolResult::Read { text, structured })
 }
 
+/// `knowledge.handoff_session_begin`.
+fn handoff_session_begin(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
+    let request = required_str(arguments, "request")?;
+    run_coordination(
+        root,
+        Command::HandoffSessionBegin(Box::new(akr_cli::handoff::ops::SessionRequest {
+            request: request.to_owned(),
+            goal: optional_str(arguments, "goal"),
+            governing: string_list(arguments, "governing"),
+            constraints: string_list(arguments, "constraints"),
+            commands: string_list(arguments, "commands"),
+            baselines: string_list(arguments, "baselines"),
+            evidence: string_list(arguments, "evidence"),
+            artifacts: string_list(arguments, "artifacts"),
+            budget: arguments
+                .get("budget_tokens")
+                .and_then(Value::as_integer)
+                .and_then(|value| usize::try_from(value).ok()),
+        })),
+    )
+}
+
 /// `knowledge.handoff_create`.
 fn handoff_create(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
-    let task = required_str(arguments, "task")?;
+    let mode = required_str(arguments, "mode")?;
     let notes = arguments.get("worker_notes");
     let note_list = |field: &str| {
         notes
@@ -1126,18 +1169,17 @@ fn handoff_create(root: &Path, arguments: &Value) -> Result<ToolResult, ToolErro
             .map(ToOwned::to_owned)
             .collect()
     };
-    let request = akr_cli::handoff::advisor::CreateRequest {
-        task: task.to_owned(),
-        question: optional_str(arguments, "question"),
+    let request = akr_cli::handoff::ops::CreateRequest {
+        mode: Some(mode.to_owned()),
+        task: optional_str(arguments, "task").unwrap_or_default(),
+        role: optional_str(arguments, "role"),
         by: optional_str(arguments, "by"),
-        goal: optional_str(arguments, "goal"),
-        governing: string_list(arguments, "governing"),
-        envelope: string_list(arguments, "search_envelope"),
+        inherits: string_list(arguments, "inherits"),
+        scope: string_list(arguments, "scope"),
+        known: string_list(arguments, "known"),
+        skip: string_list(arguments, "skip"),
+        expect: string_list(arguments, "expect"),
         commands: string_list(arguments, "commands"),
-        baselines: string_list(arguments, "baselines"),
-        constraints: string_list(arguments, "constraints"),
-        evidence: string_list(arguments, "evidence"),
-        artifacts: string_list(arguments, "artifacts"),
         notes: akr_cli::handoff::packet::WorkerNotes {
             hypotheses: note_list("hypotheses"),
             examined: note_list("examined"),
@@ -1145,12 +1187,30 @@ fn handoff_create(root: &Path, arguments: &Value) -> Result<ToolResult, ToolErro
             approaches: note_list("approaches"),
             searches: note_list("searches"),
         },
-        budget: arguments
-            .get("budget_tokens")
-            .and_then(Value::as_integer)
-            .and_then(|value| usize::try_from(value).ok()),
     };
     run_coordination(root, Command::HandoffCreate(Box::new(request)))
+}
+
+/// `knowledge.handoff_result`.
+fn handoff_result(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
+    let packet = required_str(arguments, "packet")?;
+    run_coordination(
+        root,
+        Command::HandoffResult(Box::new(akr_cli::handoff::ops::ResultRequest {
+            packet: packet.to_owned(),
+            by: optional_str(arguments, "by"),
+            findings: string_list(arguments, "findings"),
+            evidence: string_list(arguments, "evidence"),
+            changes: string_list(arguments, "changes"),
+            uncertainties: string_list(arguments, "uncertainties"),
+            follow_up: string_list(arguments, "follow_up"),
+            commands: string_list(arguments, "commands"),
+            read: string_list(arguments, "read"),
+            searched: string_list(arguments, "searched"),
+            tested: string_list(arguments, "tested"),
+            not_examined: string_list(arguments, "not_examined"),
+        })),
+    )
 }
 
 fn run_write(root: &Path, command: Command) -> Result<ToolResult, ToolError> {

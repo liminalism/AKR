@@ -924,67 +924,102 @@ anything; removal is always explicit.
 ### `akr handoff`
 
 ```
-akr handoff create --task <text> | --task-file <path>
-                   [--question <text>] [--by <name>] [--goal <ref>]
-                   [--governing <ref>]... [--envelope <glob>]...
-                   [--command <cmd>[=<result>]]... [--baseline <text>]...
-                   [--constraint <text>]... [--evidence <ref>]...
-                   [--artifact <path>]... [--budget <tokens>]
+akr handoff capsule [--refresh] [--boundary <text>]...
+akr handoff session begin --request <text> | --request-file <path>
+                          [--goal <ref>] [--governing <ref>]...
+                          [--constraint <text>]... [--command <cmd>[=<result>]]...
+                          [--baseline <text>]... [--evidence <ref>]...
+                          [--artifact <path>]... [--budget <tokens>]
+akr handoff session show | end
+akr handoff worker | scout | reviewer | advisor
+                   --role <text> --task <text> | --task-file <path>
+                   [--scope <glob>]... [--known <text>]... [--skip <text>]...
+                   [--expect <text>]... [--inherit <id>]... [--by <name>]
+                   [--command <cmd>[=<result>]]...
                    [--note-hypothesis <text>]... [--note-examined <path>]...
                    [--note-unexamined <path>]... [--note-approach <text>]...
                    [--note-search <text>]...
-akr handoff list
-akr handoff open <id> [--reveal]
-akr handoff expand <id> <section>
-akr handoff reveal <id>
-akr handoff verify <id>
-akr handoff discard <id>
+akr handoff list | open <id> [--reveal] | expand <id> <section>
+akr handoff reveal <id> | verify <id> | discard <id>
+akr handoff result <packet> [--finding <text>]... [--evidence <ref>]...
+                   [--change <text>]... [--uncertainty <text>]...
+                   [--follow-up <text>]... [--command <cmd>[=<result>]]...
+                   [--read <path[:range]>]... [--searched <query>]...
+                   [--tested <text>]... [--not-examined <path>]...
+akr handoff results [<packet>] | coverage
 ```
 
-An **advisor packet** hands a task to a second model without handing over the judgement
-that model is being brought in to make (D-040, `17-advisor-packets.md`). The rule it is
-built to is *compress state, not search*, and it carries two layers.
+A bounded, snapshot-bound, inheritable context object for transferring work between agents
+(D-040, D-041, `17-handoff.md`). Three levels, inherited **by reference** and never copied,
+so a session capsule corrected after five packets were cut corrects all five:
 
-**Layer A is administrative fact**: the task verbatim, `HEAD` and its subject, the ledger
-revision, dirty paths with digests, the session head, declared namespaces, the governing
-goal and records, the search envelope, commands with what they produced, baselines,
-constraints, evidence and artefacts. All of it may be compressed, because compressing it
-loses nothing an advisor wanted.
+```text
+PROJECT CAPSULE  pc-…   toolchain, layout, commands, namespaces, what is generated
+SESSION CAPSULE  sx-…   HEAD, ledger revision, the request verbatim, baselines
+PACKET           wk- sc- rv- ad-   role, task, scope, what not to repeat, what to return
+RESULT           rs-…   findings, evidence, uncertainties, and coverage
+```
 
-**Layer B is worker interpretation**: hypotheses, what was examined, what was *not*
-examined, proposed approaches, searches already run. Every `--note-*` flag lands here and
-nothing else can. `open` withholds it and reports only that it exists; `reveal` releases
-it *and records that it happened*, so the packet can always say whether the review that
-followed was independent.
+Five subagents each re-deriving the toolchain, the module map, the build commands and the
+current plan is one answer paid for five times — and the five do not always agree, which
+costs more than the tokens because the disagreements are invisible. `session begin`
+establishes it once; every packet cut afterwards inherits it.
 
-`--task` is the user's request as the user wrote it. A restatement puts the preparing
-agent's conclusion where the problem should be, and afterwards nobody can tell a narrowed
-task from a narrow one. Interpretation goes in `--question`, which is what the advisor is
-specifically asked when the *user* narrowed it, or in a `--note-*` flag. `--task-file`
-exists because a verbatim request is often a paragraph with newlines and quotes in it and
-a shell mangles those.
+**The mode is the subcommand**, not a flag, because it is the whole decision a parent makes
+when it delegates and burying it in a flag makes the wrong one easy to leave at its
+default. It decides what the child sees of the parent's *judgement*:
 
-`--envelope` defaults to `**`, the whole project, and the default is load-bearing:
-an envelope drawn from what the preparing agent examined hands the advisor that agent's
-blind spot as a boundary, which is the one thing it is there to escape. Narrow it only
-when the user narrowed the task.
+| Mode | Notes | For |
+| --- | --- | --- |
+| `worker` | disclosed on open | continuing a job the parent began |
+| `scout` | withheld | exploring an assigned scope independently |
+| `reviewer` | withheld | checking what the parent produced, not its reasoning |
+| `advisor` | withheld | an independent judgement, then a recorded comparison |
 
-`open` and `verify` recompute the workspace fingerprint — `HEAD`, the source-graph hash,
-and a sha256 per dirty path — and report `exact` or `drifted`, naming what moved. Silently
-describing one tree while a second model reads another is the failure this prevents.
-Drift never changes the exit status: it is a fact about the working tree, not a
-contradiction in the ledger, exactly as staleness is under D-024. The packet store is
+Every mode can `reveal`, and `reveal` is recorded — which is what makes the comparison
+worth anything, because "what did either side miss?" only has an answer when you know the
+first pass was blind. `create --mode <m>` is accepted so one MCP tool maps onto all four.
+
+`--task` may be narrower than the session request; it never replaces it. The request
+renders above the assignment, so the narrowing is visible to the agent it was done to,
+which is the only place it can be checked. `--task-file` and `--request-file` exist because
+a verbatim request is often a paragraph with newlines and quotes in it and a shell mangles
+those.
+
+`--scope` defaults to `**`. A scope drawn from what the parent examined would hand the
+child that parent's blind spot as a boundary, which is the one thing an independent pass is
+there to escape.
+
+`--known` and `--skip` are the fields that stop duplicate work: what is already
+established, and what the child must not repeat — a dependency build, a broad benchmark
+suite, discovery the parent already did.
+
+`result` files what came back as a packet rather than a transcript. `--read`, `--searched`,
+`--tested` and `--not-examined` build the coverage that `coverage` rolls up across the
+session, so the next wave is delegated against evidence — *nobody has opened
+`freshness/mod.rs`* — rather than against a hunch. `--not-examined` is as load-bearing as
+`--read`: a path nobody names might have been ruled out in a second or never noticed, and
+only one of those is delegable.
+
+`open` and `verify` recompute the session's workspace fingerprint — `HEAD`, the
+source-graph hash, a sha256 per dirty path — and report `exact` or `drifted`, naming what
+moved. Drift never changes the exit status: it is a fact about the working tree, not a
+contradiction in the ledger, exactly as staleness is under D-024. The handoff store is
 excluded from the fingerprint, so writing a packet cannot make it drift against itself.
 
-`expand` reads one section without re-opening the whole packet: `task`, `workspace`,
-`project`, `governing`, `envelope`, `execution`, and `notes` — which is `reveal`, so that
-expanding the notes cannot become a second door into Layer B that leaves no record.
+Sections for `expand`: `task`, `workspace`, `project`, `session`, `scope`, `assignment`,
+and `notes` — which is `reveal`, so expanding the notes cannot become a second door into
+the withheld layer that leaves no record.
 
-Packets live in `.agent/handoffs/<id>.json`, gitignored beside `.agent/scratch/`. A packet
-describes a workspace at a moment, is worthless once that tree has moved on, and holds the
-preparing agent's private notes, so it is never committed and never a record. It is
-invisible to `akr search`, `akr context` and the compiler. What survives one is whatever
-the review made durable, written through the ordinary pipeline of §4.
+Everything lives in `.agent/handoffs/`, gitignored beside `.agent/scratch/`. It is
+disposable coordination state, never a record, and invisible to `akr search`, `akr context`
+and the compiler. What survives is whatever the work made durable, written through the
+ordinary pipeline of §4.
+
+A child agent opens its packet **instead of** running `akr start`: the orientation is
+already in the packet, and re-deriving it is the cost the capsules exist to remove. When a
+handoff session is open, `akr start` says so; when the harness sets `AKR_HANDOFF_PACKET`,
+it names the packet to open instead.
 
 ---
 

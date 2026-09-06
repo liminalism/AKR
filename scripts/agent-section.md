@@ -30,21 +30,13 @@ Consult at task and state-transition boundaries, not after every edit.
 - Friction: `knowledge.papercut`.
 - Handoff: `knowledge.validate`.
 
-### Calling an advisor
+### Handoff
 
-When you are asked to bring in a second model — "ask an advisor", "get a second opinion", "hand this to <model>", "use the AKR handoff workflow" — prepare an **advisor packet**. Do not write it a summary of what you found: an advisor is there to see what you did not, and a summary hands it your blind spot as a boundary. **Compress state, not search.**
+`akr handoff worker` invokes a subagent. `akr handoff scout` invokes an independent agent. `akr handoff advisor` invokes a second opinion. `akr handoff reviewer` invokes an adversarial check.
 
-1. Do the administrative preparation, and stop there. Session head, project state, repository map, verify the build, run the existing tests and benchmarks, collect what already exists. Do **not** wait until you think you understand the problem — that just moves the bottleneck.
-2. `knowledge.handoff_create` (CLI: `akr handoff create`).
-   - `task` is the user's request **verbatim**, never your reading of it.
-   - `search_envelope` stays project-wide unless the *user* narrowed it.
-   - `commands`, `baselines`, `constraints`, `evidence`, `artifacts`: what you established.
-   - `worker_notes`: what you *think* — hypotheses, what you examined, what you did **not** examine, approaches, searches already run. The advisor cannot see these until it asks.
-3. Hand the advisor the packet id and nothing else.
-4. As the advisor: `knowledge.handoff_open` (`akr handoff open <id>`), review independently anywhere the envelope reaches, form your own view, and only then `knowledge.handoff_reveal`. Compare: what did either side miss?
-5. Whatever the review made durable goes in the ledger — `knowledge.propose`, evidence, completion. The packet is disposable: `akr handoff discard <id>` when done.
+Because inherited facts are cheap and inherited conclusions are not.
 
-`knowledge.handoff_open` and `handoff_verify` report `exact` or `drifted` and name what moved, so an advisor is never told about one tree while reading another. `handoff_expand <id> <section>` reads one part without re-opening the whole packet.
+Open a session first (`akr handoff session begin --request "<the user's words, verbatim>"`); each packet inherits it, so no child re-derives the project. `akr handoff --help` has the rest.
 
 ### Scratch
 

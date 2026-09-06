@@ -337,6 +337,75 @@ record akr.work.desktop-review-gui/1 : work {
     part_of [ @akr.milestone.human-record-review/1 ]
 }
 
+record akr.work.handoff-context-transport/1 : work {
+    title "Generalise the advisor packet into an agent-to-agent context transport"
+    state proposed
+    scope [
+        path "AGENTS.md",
+        path "crates/akr-cli/src/handoff/**",
+        path "crates/akr-mcp/src/**",
+        path "docs/17-handoff.md",
+        path "scripts/agent-section.md"
+    ]
+    intent """
+        Make moving work between agents one mechanism rather than three. The advisor packet of the previous wave was a special case wearing the name of the general thing: an advisor, a scout, a worker and a reviewer differ in exactly one respect, how much of the parent's judgement the child may see, and that is a field rather than a subsystem. Delivered as three inherited levels resolved by reference (a derived project capsule, a session capsule holding the user's request verbatim, and packets in four modes), results filed as packets, a coverage roll-up so the next wave is delegated against evidence rather than a hunch, fourteen knowledge.handoff_* MCP tools, and an akr start notice that sends a child to its packet instead of re-deriving the project.
+        """
+    note """
+        Also collapses the agent-facing guidance from four files to one, at four lines: three command lines, a ten-word reason, and a pointer. Recorded as D-041. Note that @akr.work.advisor-packet-handoff/1's acceptance checks name a test file this work renamed; they are honest about what was verified at the commit they were observed at, and are left alone rather than rewritten.
+        """
+    acceptance {
+        check coverage-names-the-gap {
+            statement """
+                Coverage aggregates across results and reports what some child named as unopened and no child read.
+                """
+            method command
+            command "cargo test -p akr-cli --test handoff coverage_aggregates_and_names_what_nobody_opened"
+        }
+        check disclosure-follows-the-mode {
+            statement """
+                worker discloses the parent's notes on an ordinary open; scout, reviewer and advisor withhold them until a recorded reveal.
+                """
+            method command
+            command "cargo test -p akr-cli --test handoff disclosure_follows_the_mode"
+        }
+        check guidance-is-one-place {
+            statement """
+                The agent-facing handoff brief exists in scripts/agent-section.md alone, at four lines, with no second copy in AGENTS.md, a skill file, or the MCP document beyond its verbatim embed.
+                """
+            method manual
+        }
+        check inheritance-by-reference {
+            statement """
+                A packet inherits the session and project capsules rather than copying them, so correcting a capsule corrects every packet cut from it.
+                """
+            method command
+            command "cargo test -p akr-cli --test handoff a_packet_inherits_the_session_rather_than_copying_it"
+        }
+        check narrowing-stays-visible {
+            statement """
+                The session's request is carried verbatim and a narrowed assignment renders beneath it rather than in place of it.
+                """
+            method command
+            command "cargo test -p akr-cli --test handoff the_session_request_is_carried_verbatim_and_a_narrowing_stays_visible"
+        }
+        check suite-and-design-set-hold {
+            statement """
+                The whole test suite passes and the design set still coheres with D-041, docs/17-handoff.md and AKR-C044 in it.
+                """
+            method command
+            command "cargo test && python tools/check-design.py"
+        }
+        check surfaces-agree {
+            statement """
+                knowledge.handoff_open and akr handoff open produce an identical result object, opening over MCP does not stamp the packet, and coverage matches from either side.
+                """
+            method command
+            command "cargo test -p akr-mcp --test differential a_handoff_opens_the_same_way_from_either_surface"
+        }
+    }
+    author "GitHub Uploader"
+}
+
 record akr.work.mcp-actionable-truncation/1 : work {
     title "Keep every budgeted MCP response usable"
     state completed

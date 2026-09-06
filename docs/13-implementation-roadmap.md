@@ -45,7 +45,7 @@ its own development and two more real projects (§8).
 | **P9** | Human review interface | `10-freshness-and-git.md`, `11-projections.md` |
 | **P10** | Immutable source library, chunk index, citations | `15-external-sources.md`, D-031 |
 | **P11** | The AKR ↔ git change protocol | `16-change-protocol.md`, D-032 |
-| **P12** | Advisor packets: the worker-to-advisor handoff | `17-advisor-packets.md`, D-040 |
+| **P12** | Handoff: capsules, packets, results, coverage | `17-handoff.md`, D-040, D-041 |
 
 The order is a dependency order, not a priority order. P4 sits where it does because a
 rendered roadmap is the first artefact a person can *judge*, and judging it early is
@@ -390,35 +390,37 @@ what the bridge *refuses* — which is the part worth having.
 
 ---
 
-### P12 — Advisor packets
+### P12 — Handoff: the agent-to-agent context transport
 
-**Goal.** Make handing a task to a second model a first-class operation, without letting
-the preparing agent make the judgement that model is being brought in to make (D-040).
+**Goal.** Make moving work between agents a first-class operation, without letting the
+parent make the judgement the child is being sent to make (D-040, D-041).
 
 **Deliverables.**
 
-- `akr handoff create|list|open|expand|reveal|verify|discard`, stored in
-  `.agent/handoffs/`, gitignored.
-- The two-layer packet: administrative fact, compressible; worker interpretation,
-  withheld until a recorded `reveal`.
-- The workspace fingerprint — `HEAD`, the source-graph hash, a digest per dirty path —
-  and the `exact` / `drifted` statuses derived from it.
-- Seven `knowledge.handoff_*` MCP tools over the same commands, and a third runner
+- Three inherited levels — project capsule, session capsule, packet — resolved by
+  reference at read time, stored in `.agent/handoffs/` and gitignored.
+- Four modes (`worker`, `scout`, `reviewer`, `advisor`) whose disclosure policy decides
+  what a child sees of the parent's judgement, with a recorded `reveal` in every mode.
+- Results as packets, and the coverage roll-up across a session.
+- The workspace fingerprint and the `exact` / `drifted` statuses.
+- Fourteen `knowledge.handoff_*` MCP tools over the same commands, and a third runner
   (`run_coordination`) for a workspace change that is not a ledger write.
-- The agent guidance that makes "call an advisor" mean "prepare a packet".
+- Four lines of agent guidance, in one file, and the `akr start` notice that sends a child
+  to its packet.
 
 **Exit criteria.**
 
-1. An ordinary `open` leaks no worker note, on either surface.
-2. `reveal` is recorded, so whether a review was independent is knowable afterwards.
-3. The search envelope defaults to the whole project, never to what the worker examined.
-4. The task field survives the round trip byte-identically, newlines and quotes included.
-5. A fresh packet verifies as `exact`; an edited tree verifies as `drifted` and names
-   what moved, without changing the exit status.
-6. `knowledge.handoff_open` and `akr handoff open` produce an identical result object.
+1. An ordinary `open` leaks no worker note in a withholding mode, on either surface.
+2. `worker` discloses them without a reveal; the other three do not.
+3. `reveal` is recorded, so whether a pass was independent is knowable afterwards.
+4. A packet inherits the session's verbatim request, and a narrowed assignment renders
+   beneath it rather than in place of it.
+5. Scope defaults to the whole project, never to what the parent examined.
+6. Coverage aggregates across results and reports what nobody examined.
+7. `knowledge.handoff_open` and `akr handoff open` produce an identical result object.
 
-**Testing.** `crates/akr-cli/tests/advisor_packet.rs`, whose assertions are mostly about
-what a packet does *not* say — the blind read is only a property if both surfaces keep it.
+**Testing.** `crates/akr-cli/tests/handoff.rs`, whose assertions are mostly about what a
+packet does *not* say — a disclosure policy is only a property if both surfaces keep it.
 
 ---
 

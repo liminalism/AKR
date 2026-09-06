@@ -416,6 +416,23 @@ record akr.decision.git-facts-batched-by-ledger-file/1 : decision {
     supported_by [ @akr.evidence.write-latency-and-lifecycle-suite ]
 }
 
+record akr.decision.inherited-facts-not-conclusions/1 : decision {
+    title "Inherited facts are cheap; inherited conclusions are not"
+    state proposed
+    scope [ all ]
+    decision """
+        Moving work between agents is one mechanism, akr handoff, in three levels inherited by reference and never copied: a project capsule derived from the checkout (toolchain, layout, commands, namespaces, what is authoritative and what is generated), a session capsule (HEAD, the ledger revision, the user's request verbatim, constraints, baselines, the rendered session head), and a packet (role, task, scope, what is known, what must not be repeated, what to return). Results are packets too, carrying findings, evidence, changes, uncertainties, follow-up and coverage. Four modes decide what a child sees of the parent's judgement and nothing else: worker discloses the parent's notes, scout, reviewer and advisor withhold them until a recorded reveal. The task may be narrowed but never replaced, because the session's verbatim request renders above the assignment. Scope defaults to the whole project. A child opens its packet instead of calling knowledge.start, and akr start says so when a session is open. Recorded as D-041, amending D-040.
+        """
+    context """
+        D-040 built an advisor packet: one bounded object for one second model. Delegation to ordinary subagents is the same shape and the larger waste, because five of them re-derive the toolchain, the module map, the build commands and the current plan five times over, and do not always arrive at the same answer, which costs more than the tokens because the disagreements are invisible. Asking what actually differs between an advisor, a scout, a worker and a reviewer gives one answer: how much of the parent's judgement the child may see. That is a field, not a subsystem, so D-040's advisor packet was a special case wearing the name of the general thing.
+        """
+    consequences """
+        Inheritance by reference is the load-bearing choice: copying a capsule into each packet would have been simpler and would have produced five snapshots drifting apart silently, which is the failure the capsules exist to remove. The three withholding modes are mechanically identical on purpose, differing in the contract each states and what each is asked to return, because three disclosure policies to make them look distinct in code would have been decoration. Coverage is the field that pays for itself: without it, five capable agents told to review a project all check the same obvious doorway, and the aggregate reports as untouched only what some child named as unopened and no child read, because silence is not evidence of absence. The MCP catalogue gains fourteen tools, reaching thirty-seven, which is a large addition to a list documented as closed and earns it because a subsystem a child must use instead of knowledge.start has to be fully reachable over MCP. The agent-facing guidance collapses from four files to one, at four lines, and the Claude skill file is deleted rather than trimmed, because a second place to learn the same thing is a second place for it to be wrong. AKR cannot see process ancestry so it cannot enforce the child rule; it reports it as a line in the session head rather than a diagnostic, the standing scratch has under D-036.
+        """
+    derived_from [ @akr.decision.compress-state-not-search/1 ]
+    author "GitHub Uploader"
+}
+
 record akr.decision.mcp-budgeted-and-instrumented/1 : decision {
     title "The MCP surface is budgeted and instrumented"
     state superseded

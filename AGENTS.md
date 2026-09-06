@@ -104,38 +104,18 @@ Consult AKR at task and state-transition boundaries, not after every edit.
   the project needs sanding down. This is distinct from durable records (knowledge) and
   from `.agent/scratch/` (working notes, see below).
 
-**Calling an advisor**
+**Handoff**
 
-When you are asked to bring in a second model — "ask an advisor", "get a second opinion",
-"hand this to <model>", "use the AKR handoff workflow" — prepare an **advisor packet**
-rather than writing it a summary. The rule is *compress state, not search* (D-040,
-`docs/17-advisor-packets.md`): a summary of what you noticed is the worst possible input
-for a model hired to find what you did not, because it hands over your blind spot as a
-boundary.
+`akr handoff worker` invokes a subagent. `akr handoff scout` invokes an independent agent.
+`akr handoff advisor` invokes a second opinion. `akr handoff reviewer` invokes an
+adversarial check.
 
-1. Do the administrative preparation and stop there. Session head, project state,
-   repository map, verify the build, run the existing tests and benchmarks, collect the
-   artefacts that already exist. Do **not** wait until you believe you understand the
-   problem — that just moves the bottleneck instead of removing it.
-2. `knowledge.handoff_create`, or `akr handoff create`:
-   - `task` is the user's request **verbatim**. Never your reading of it. Interpretation
-     goes in `question` — what the advisor is asked when the *user* narrowed it — or in
-     `worker_notes`.
-   - `search_envelope` stays `**` unless the user narrowed the task.
-   - `commands`, `baselines`, `constraints`, `evidence`, `artifacts`: what you established.
-   - `worker_notes`: what you *think*. Hypotheses, what you examined, what you did **not**
-     examine, approaches, searches already run. The advisor cannot see these until it asks.
-3. Hand over the packet id and nothing else.
-4. As the advisor: `akr handoff open <id>`, review independently anywhere the envelope
-   reaches, form your own view, and only then `akr handoff reveal <id>`. Compare — what
-   did either side miss? `handoff open` and `handoff verify` also report `exact` or
-   `drifted` and name what moved, so you are never told about one tree while reading
-   another.
-5. Whatever the review made durable goes in the ledger through the ordinary write path.
-   The packet is disposable: `akr handoff discard <id>` when it is done.
+Because inherited facts are cheap and inherited conclusions are not.
 
-Packets live in `.agent/handoffs/`, gitignored beside `.agent/scratch/`, and are invisible
-to search, context and the compiler. Nothing about one is knowledge.
+Open a session first — `akr handoff session begin --request "<the user's words,
+verbatim>"` — and every packet cut afterwards inherits it, so no child re-derives the
+project. `akr handoff --help` and `docs/17-handoff.md` have the rest; do not restate them
+here or in any other instruction file.
 
 **Scratch**
 

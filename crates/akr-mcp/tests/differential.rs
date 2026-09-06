@@ -853,33 +853,38 @@ fn both_supported_protocol_versions_are_accepted() {
     );
 }
 
-/// An advisor packet reaches the same object from either surface, and the MCP `open`
-/// stays read-only (D-040).
+/// A handoff reaches the same object from either surface, and `open` stays read-only.
 ///
-/// The blind read is the claim worth a differential test rather than a unit one: the
-/// separation only holds if *both* adapters honour it, and the MCP surface deliberately
-/// has no reveal-on-open shorthand where the command line does.
+/// Disclosure is the claim worth a differential test rather than a unit one: it only holds
+/// if *both* adapters honour it, and the MCP surface deliberately has no reveal-on-open
+/// shorthand where the command line does (D-040, D-041).
 #[test]
-fn an_advisor_packet_opens_the_same_way_from_either_surface() {
+fn a_handoff_opens_the_same_way_from_either_surface() {
     let example = Example::materialise("differential-handoff");
+    call(
+        &example,
+        "knowledge.handoff_session_begin",
+        r#"{"request":"Review this project and optimise for performance, both memory and CPU.","baselines":["peak RSS 412 MB"]}"#,
+    );
     let created = call(
         &example,
         "knowledge.handoff_create",
-        r#"{"task":"Review this project and optimise for performance, both memory and CPU.","by":"worker-model","worker_notes":{"hypotheses":["the cost is all in chroma"],"not_examined":["src/luma.rs"]}}"#,
+        r#"{"mode":"scout","role":"perf-scout","task":"Inspect the sim crate.","by":"parent-model","worker_notes":{"hypotheses":["the cost is all in chroma"],"not_examined":["sim/src/localtone.rs"]}}"#,
     );
     let id = created
         .get("packet")
         .and_then(Value::as_str)
         .expect("create names the packet")
         .to_owned();
+    assert!(id.starts_with("sc-"), "the id says what it is: {id}");
     assert_eq!(
         created
-            .get("search_envelope")
+            .get("scope")
             .and_then(Value::as_array)
             .and_then(|globs| globs.first())
             .and_then(Value::as_str),
         Some("**"),
-        "the envelope defaults to the whole project: {}",
+        "the scope defaults to the whole project: {}",
         created.to_pretty()
     );
 
@@ -891,7 +896,22 @@ fn an_advisor_packet_opens_the_same_way_from_either_surface() {
     let cli = cli_result(&example, &["handoff", "open", &id]);
     assert_eq!(tool.to_pretty(), cli.to_pretty());
 
-    // Neither surface leaks Layer B on an ordinary open.
+    // The session capsule is inherited, not copied, and it comes through resolved.
+    assert!(
+        tool.get("request")
+            .and_then(Value::as_str)
+            .is_some_and(|request| request.contains("memory and CPU")),
+        "{}",
+        tool.to_pretty()
+    );
+    assert!(
+        tool.get("project")
+            .is_some_and(|project| !project.is_null()),
+        "the project capsule reaches the child:\n{}",
+        tool.to_pretty()
+    );
+
+    // Neither surface leaks the withheld layer on an ordinary open.
     assert_eq!(
         tool.get("worker_notes_revealed").and_then(Value::as_bool),
         Some(false),
@@ -899,13 +919,9 @@ fn an_advisor_packet_opens_the_same_way_from_either_surface() {
         tool.to_pretty()
     );
     assert!(
-        !tool.to_pretty().contains("chroma"),
-        "a blind read leaked a hypothesis:\n{}",
+        !tool.to_pretty().contains("the cost is all in chroma"),
+        "a scout's open leaked a hypothesis:\n{}",
         tool.to_pretty()
-    );
-    assert_eq!(
-        tool.get("worker_notes_available").and_then(Value::as_bool),
-        Some(true)
     );
 
     // `knowledge.handoff_open` is declared read-only, so opening must not have stamped
@@ -928,13 +944,25 @@ fn an_advisor_packet_opens_the_same_way_from_either_surface() {
         &format!(r#"{{"packet":"{id}"}}"#),
     );
     assert!(
-        revealed.to_pretty().contains("chroma"),
+        revealed.to_pretty().contains("the cost is all in chroma"),
         "{}",
         revealed.to_pretty()
     );
+
+    // A result files and aggregates identically from either side.
+    call(
+        &example,
+        "knowledge.handoff_result",
+        &format!(
+            r#"{{"packet":"{id}","findings":["planes are materialised per channel"],"read":["sim/src/chroma.rs:1-470"],"not_examined":["sim/src/localtone.rs"]}}"#
+        ),
+    );
+    let tool = call(&example, "knowledge.handoff_coverage", "{}");
+    let cli = cli_result(&example, &["handoff", "coverage"]);
+    assert_eq!(tool.to_pretty(), cli.to_pretty());
     assert!(
-        revealed.to_pretty().contains("src/luma.rs"),
-        "what the worker did not examine is part of the notes:\n{}",
-        revealed.to_pretty()
+        tool.to_pretty().contains("sim/src/localtone.rs"),
+        "coverage must name what nobody opened:\n{}",
+        tool.to_pretty()
     );
 }

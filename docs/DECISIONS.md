@@ -1672,10 +1672,138 @@ projects and harnesses that never read this file — including the instruction t
 advisor"*, in whatever words the user uses, means preparing a packet rather than writing a
 summary.
 
-**Honored by.** `crates/akr-cli/src/handoff/` (`mod.rs`, `advisor.rs`, `packet.rs`,
-`snapshot.rs`, `session_head.rs`), `crates/akr-cli/src/args.rs` (`parse_handoff`),
+**Honored by.** `crates/akr-cli/src/handoff/` (`mod.rs`, `ops.rs`, `packet.rs`, `capsule.rs`,
+`result.rs`, `snapshot.rs`, `session_head.rs`), `crates/akr-cli/src/args.rs`
+(`parse_handoff`),
 `crates/akr-cli/src/commands.rs`, `crates/akr-cli/src/init.rs` (`GITIGNORE_ENTRIES`),
 `crates/akr-mcp/src/schema.rs`, `crates/akr-mcp/src/tools.rs` (`run_coordination`,
-`handoff_create`), `crates/akr-mcp/src/budget.rs`, `crates/akr-cli/tests/advisor_packet.rs`,
-`docs/17-advisor-packets.md`, `spec/diagnostics/codes-runtime.md` (`AKR-C043`),
+`handoff_create`), `crates/akr-mcp/src/budget.rs`, `crates/akr-cli/tests/handoff.rs`,
+`docs/17-handoff.md`, `spec/diagnostics/codes-runtime.md` (`AKR-C043`),
 `scripts/agent-section.md`, `.gitignore`.
+
+---
+
+## D-041 — Inherited facts are cheap; inherited conclusions are not
+
+*Amendment to D-040, 2026-09-06.*
+
+**Question.** D-040 built an advisor packet: a bounded object handing one task to one
+second model. Delegation to ordinary subagents is the same shape and probably the larger
+waste — five of them, five times over, on every task that fans out. Is that a second
+subsystem?
+
+**Question behind the question.** What is actually different between an advisor, a scout,
+a worker and a reviewer?
+
+Not the task. Not the workspace. Not the build commands, the module map, the current plan,
+the ledger, or anything else an agent spends its first thousand tokens discovering. The
+only thing that differs is **how much of the parent's judgement the child may see** — and
+that is one field, not one subsystem.
+
+So D-040's advisor packet was a special case wearing the name of the general thing. The
+general thing is:
+
+> A bounded, snapshot-bound, inheritable context object for transferring work between
+> agents.
+
+**Resolution.** One mechanism, `akr handoff`, in three inherited levels.
+
+```text
+PROJECT CAPSULE   pc-…    toolchain, layout, commands, namespaces, generated paths
+      ↓
+SESSION CAPSULE   sx-…    HEAD, ledger revision, the request verbatim, baselines
+      ↓
+PACKET            wk- sc- rv- ad-    role, task, scope, what not to repeat
+      ↓
+RESULT            rs-…    findings, evidence, uncertainties, coverage
+```
+
+**Inheritance is by reference, and this is the load-bearing choice.** A packet names what
+it inherits; `handoff open` resolves the chain at read time. Copying the capsule into each
+packet would have been simpler and wrong: five copies drift apart silently, which is
+precisely the failure the capsules exist to remove. Five subagents each deriving the
+toolchain is one answer paid for five times; five subagents each deriving it *slightly
+differently* is worse, because nobody can see the disagreement.
+
+**The mode is the epistemic contract**, and it is the subcommand rather than a flag,
+because it is the whole decision a parent makes when it delegates:
+
+| Mode | Notes | For |
+| --- | --- | --- |
+| `worker` | disclosed on open | continuing a job the parent began |
+| `scout` | withheld | exploring an assigned scope independently |
+| `reviewer` | withheld | checking what the parent produced, not its reasoning |
+| `advisor` | withheld | an independent judgement, then a recorded comparison |
+
+The three withholding modes are mechanically identical, deliberately. Their difference is
+the contract each states and what each is asked to return; three disclosure policies to
+make them look distinct in code would have been decoration. What matters is the default: a
+worker made to ask for the parent's coverage duplicates work, and a scout handed the
+parent's hypotheses stops being a scout.
+
+**The task is narrowed, never replaced.** D-040 held the user's request verbatim because an
+advisor takes the whole problem. A subagent does not — narrowing is what delegation *is*.
+The reconciliation is that the session holds the request, every packet inherits it, and a
+narrowed assignment renders *beneath* it. The narrowing stays visible to the agent it was
+done to, which is the only place it can be checked; from inside a child, a narrowed task
+and a narrow one are otherwise indistinguishable.
+
+**Coverage is the field that pays for itself.** Every result says what it read, searched,
+ran, and deliberately did not open, and `handoff coverage` rolls that up. Without it, "use
+five agents to review the project" degenerates into five capable agents checking the same
+obvious doorway, and an agent's ten minutes of orientation evaporates with its transcript.
+The aggregate reports as untouched only what some child *named* as unopened and no child
+read: silence is not evidence of absence, and claiming it would make the aggregate lie in
+the direction that costs a wasted agent.
+
+**A child does not call `knowledge.start`.** A root agent orients; a child inherits. AKR
+cannot see process ancestry, so it cannot enforce this — but it can say so when a session is
+open, and say it precisely when the harness sets `AKR_HANDOFF_PACKET`. A line in the
+session head rather than a diagnostic: what sits in `.agent/handoffs/` is a fact about the
+working tree, and facts about the working tree never change an exit code (D-024, D-036).
+
+**Consequences.**
+
+*D-040's advisor packet is now one mode of this.* Its id prefix changes from `ap-` to
+`ad-`, its `search_envelope` becomes `scope`, and its two layers become the `advisor`
+mode's disclosure policy. Nothing about the blind read weakens; it generalises. Packets are
+disposable and were never released, so no migration is owed.
+
+*The MCP catalogue gains fourteen tools*, taking it to thirty-seven. That is a large
+addition to a list §2 calls closed, and it earns the size for one reason: a subsystem a
+child agent must use *instead of* `knowledge.start` has to be fully reachable over MCP, or
+children fall back to re-orienting and the whole thing is prevented from working.
+
+*The guidance collapses to one place and four lines.* D-040 put the workflow in
+`scripts/agent-section.md`, `AGENTS.md`, `docs/08-mcp.md` §8 and a Claude skill — four
+copies of instructional prose, three of which would go stale, all of which are read at the
+start of every session in every project the brief is installed into. What agents now read
+is three command lines, one ten-word reason, and a pointer:
+
+```text
+`akr handoff worker` invokes a subagent. `akr handoff scout` invokes an independent
+agent. `akr handoff advisor` invokes a second opinion. `akr handoff reviewer` invokes
+an adversarial check.
+
+Because inherited facts are cheap and inherited conclusions are not.
+```
+
+The skill file is deleted rather than trimmed: a second place to learn the same thing is a
+second place for it to be wrong.
+
+*The project capsule is derived, not written.* Everything in it is already in the checkout,
+which is exactly why deriving it is right — the question is deterministic, so it is answered
+once and keyed by a digest that changes when the project's shape does. It is deliberately
+shallow: a capsule summarising what the code *does* would be a model's judgement wearing a
+fact's clothes, and this whole subsystem rests on keeping those apart. `boundaries` is the
+one supplied field, and a refresh carries it forward rather than dropping the part a person
+wrote.
+
+**Honored by.** `crates/akr-cli/src/handoff/` (`mod.rs`, `capsule.rs`, `packet.rs`,
+`result.rs`, `ops.rs`, `snapshot.rs`, `session_head.rs`), `crates/akr-cli/src/args.rs`
+(`parse_handoff`), `crates/akr-cli/src/commands.rs` (`delegation_notice`),
+`crates/akr-mcp/src/schema.rs`, `crates/akr-mcp/src/tools.rs`,
+`crates/akr-mcp/src/budget.rs`, `crates/akr-cli/tests/handoff.rs`,
+`crates/akr-mcp/tests/differential.rs`, `docs/17-handoff.md`, `docs/07-cli.md`,
+`docs/08-mcp.md`, `docs/13-implementation-roadmap.md`,
+`spec/diagnostics/codes-runtime.md` (`AKR-C044`), `scripts/agent-section.md`, `AGENTS.md`.

@@ -164,49 +164,94 @@ pub const TOOLS: &[Tool] = &[
         writes: true,
     },
     Tool {
+        name: "knowledge.handoff_capsule",
+        description: "The project capsule: toolchain, layout, build and test commands, namespaces,\
+                      what is authoritative and what is generated. Derived from the workspace, so\
+                      no agent has to rediscover it.",
+        writes: false,
+    },
+    Tool {
+        name: "knowledge.handoff_session_begin",
+        description: "Open a handoff session. `request` is the user's request VERBATIM; every\
+                      packet cut afterwards inherits it, and a narrowed assignment renders beneath\
+                      it so the narrowing stays visible. Call this once, before delegating.",
+        writes: true,
+    },
+    Tool {
+        name: "knowledge.handoff_session_show",
+        description: "The open session: its verbatim request, workspace drift, and every packet\
+                      cut from it with whether it has answered.",
+        writes: false,
+    },
+    Tool {
+        name: "knowledge.handoff_session_end",
+        description: "Close the open session. Its capsule and packets stay readable.",
+        writes: true,
+    },
+    Tool {
         name: "knowledge.handoff_create",
-        description: "Prepare an advisor packet: hand a task to a second model without handing over\
-                      the judgement it is being brought in to make. `task` is the user's request\
-                      VERBATIM — never a restatement, because a restatement substitutes your\
-                      conclusion for the problem. `search_envelope` defaults to the whole project;\
-                      narrow it only when the user did. Your own findings go in `worker_notes`,\
-                      which the advisor cannot see until knowledge.handoff_reveal.",
+        description: "Cut a packet for another agent. `mode` decides what it sees of YOUR\
+                      judgement: worker (sees your notes - continuing your job), scout (withheld -\
+                      exploring independently), reviewer (withheld - checking your output),\
+                      advisor (withheld, then a recorded reveal and a comparison). `scope`\
+                      defaults to the whole project; narrow it only when the user did. Your\
+                      findings go in `worker_notes`.",
         writes: true,
     },
     Tool {
         name: "knowledge.handoff_list",
-        description: "List the advisor packets this workspace holds.",
+        description: "The packets this workspace holds, with mode, role, and whether each is\
+                      answered.",
         writes: false,
     },
     Tool {
         name: "knowledge.handoff_open",
-        description: "Open an advisor packet: the task verbatim, the workspace and whether it has\
-                      drifted, the independent search scope, the session head, governing records,\
-                      commands and baselines. Worker notes are withheld — review independently\
-                      first, then knowledge.handoff_reveal.",
+        description: "Open a packet: the mode's contract, the verbatim request, your assignment\
+                      and scope, the inherited project and session capsules, what is already\
+                      established, what not to repeat, and what to return. A child agent calls\
+                      this INSTEAD of knowledge.start - the orientation is already in the packet.",
         writes: false,
     },
     Tool {
         name: "knowledge.handoff_expand",
-        description: "Read one section of a packet: task, workspace, project, governing, envelope or\
-                      execution. Use it instead of re-opening the whole packet.",
+        description: "Read one section of a packet: task, workspace, project, session, scope or\
+                      assignment. Cheaper than re-opening the whole packet.",
         writes: false,
     },
     Tool {
         name: "knowledge.handoff_reveal",
-        description: "Release the packet's worker notes, and record that it happened. Call it after\
-                      an independent pass, then compare: what did either side miss?",
+        description: "Release the parent's worker notes, and record that it happened. Call it\
+                      after your own pass, then compare: what did either side miss?",
         writes: true,
     },
     Tool {
         name: "knowledge.handoff_verify",
-        description: "Does the packet still describe this tree? Reports exact or drifted, and names\
-                      what moved.",
+        description: "Does the packet still describe this tree? Reports exact or drifted, and\
+                      names what moved.",
+        writes: false,
+    },
+    Tool {
+        name: "knowledge.handoff_result",
+        description: "File what you found. Findings, evidence, changes, uncertainties, follow-up -\
+                      and COVERAGE: what you read, searched, ran, and deliberately did not open.\
+                      Coverage is what stops the next agent re-reading what you already read.",
+        writes: true,
+    },
+    Tool {
+        name: "knowledge.handoff_results",
+        description: "Read what came back, for one packet or for the whole open session.",
+        writes: false,
+    },
+    Tool {
+        name: "knowledge.handoff_coverage",
+        description: "What the session has and has not looked at, rolled up across every result.\
+                      Delegate the next wave against this rather than against a hunch.",
         writes: false,
     },
     Tool {
         name: "knowledge.handoff_discard",
-        description: "Delete an advisor packet. Packets are disposable; nothing durable is lost.",
+        description: "Delete a packet, capsule or result. All of it is disposable; nothing durable\
+                      is lost.",
         writes: true,
     },
     Tool {
@@ -566,61 +611,125 @@ pub fn input_schema(name: &str) -> Option<Value> {
             )],
             &["evidence"],
         ),
-        "knowledge.handoff_create" => object(
+        "knowledge.handoff_capsule" => object(
             vec![
                 (
-                    "task",
-                    string(
-                        "The user's request, VERBATIM. Not a restatement, not your \
-                         reading of it: an advisor hired for what you did not notice \
-                         cannot be handed your noticing as the definition of the task.",
-                    ),
+                    "refresh",
+                    boolean("Re-derive from the workspace instead of reading the stored capsule."),
                 ),
                 (
-                    "question",
-                    string(
-                        "What the advisor is specifically asked, when that is narrower than the task.",
+                    "boundaries",
+                    string_array(
+                        "Architectural boundaries. The one field nothing derives, so it is \
+                         carried forward across refreshes.",
                     ),
                 ),
+            ],
+            &[],
+        ),
+        "knowledge.handoff_session_begin" => object(
+            vec![
                 (
-                    "by",
-                    string("Who prepared the packet: a model or harness name."),
+                    "request",
+                    string(
+                        "The user's request, VERBATIM. Every packet cut from this session \
+                         inherits it. A parent may narrow a child's assignment, and the \
+                         narrowing renders beneath this so the child can see it happened.",
+                    ),
                 ),
                 (
                     "goal",
                     string("The governing planning key, if the work has one."),
                 ),
+                ("governing", string_array("Records that govern the work.")),
                 (
-                    "governing",
-                    string_array("Records that govern or constrain the work."),
-                ),
-                (
-                    "search_envelope",
-                    string_array(
-                        "The advisor's independent search scope, as path globs. Defaults \
-                         to the whole project. Narrowing it to what you examined hands \
-                         the advisor your blind spot as a boundary.",
-                    ),
+                    "constraints",
+                    string_array("Constraints the work must respect."),
                 ),
                 (
                     "commands",
-                    string_array("Commands the advisor can run, as `command` or `command=result`."),
+                    string_array("Commands run this session, as `command` or `command=result`."),
                 ),
                 (
                     "baselines",
                     string_array("Measurements already established."),
                 ),
                 (
-                    "constraints",
-                    string_array("Constraints the answer must respect."),
-                ),
-                (
                     "evidence",
                     string_array("Evidence records already written."),
                 ),
+                ("artifacts", string_array("Artefacts already produced.")),
                 (
-                    "artifacts",
-                    string_array("Artefacts already produced, by repository path."),
+                    "budget_tokens",
+                    integer("Approximate token budget for the embedded session head."),
+                ),
+            ],
+            &["request"],
+        ),
+        "knowledge.handoff_session_show" => object(Vec::new(), &[]),
+        "knowledge.handoff_session_end" => object(Vec::new(), &[]),
+        "knowledge.handoff_create" => object(
+            vec![
+                (
+                    "mode",
+                    string(
+                        "worker (sees your notes; continuing your job), scout (notes \
+                         withheld; exploring independently), reviewer (notes withheld; \
+                         checking your output), advisor (notes withheld, then revealed and \
+                         compared).",
+                    ),
+                ),
+                (
+                    "task",
+                    string(
+                        "The assignment. May be narrower than the session request, which is \
+                         inherited and rendered above it. Omit for `advisor` to inherit the \
+                         request unchanged.",
+                    ),
+                ),
+                (
+                    "role",
+                    string("What the child is: `performance-scout`, `api-reviewer`."),
+                ),
+                (
+                    "by",
+                    string("Who is cutting the packet: a model or harness name."),
+                ),
+                (
+                    "inherits",
+                    string_array(
+                        "Extra ids to inherit beyond the open session — usually an earlier \
+                         packet, so a follow-up sees what its predecessor examined.",
+                    ),
+                ),
+                (
+                    "scope",
+                    string_array(
+                        "Where the child may look, as path globs. Defaults to the whole \
+                         project. Narrowing it to what you examined hands the child your \
+                         blind spot as a boundary.",
+                    ),
+                ),
+                (
+                    "known",
+                    string_array(
+                        "Facts already established, so the child does not re-establish them.",
+                    ),
+                ),
+                (
+                    "skip",
+                    string_array(
+                        "Work the child must not repeat: expensive commands, discovery \
+                         already done, a dependency build.",
+                    ),
+                ),
+                (
+                    "expect",
+                    string_array("What the child should return. Defaults to the mode's list."),
+                ),
+                (
+                    "commands",
+                    string_array("Commands specific to this assignment."),
                 ),
                 (
                     "worker_notes",
@@ -641,23 +750,19 @@ pub fn input_schema(name: &str) -> Option<Value> {
                             (
                                 "searches",
                                 string_array(
-                                    "Searches you ran, so a query that found nothing is not repeated.",
+                                    "Searches you ran, so one that found nothing is not run twice.",
                                 ),
                             ),
                         ],
                         &[],
                     ),
                 ),
-                (
-                    "budget_tokens",
-                    integer("Approximate token budget for the embedded session head."),
-                ),
             ],
-            &["task"],
+            &["mode"],
         ),
         "knowledge.handoff_list" => object(Vec::new(), &[]),
         "knowledge.handoff_open" => object(
-            vec![("packet", string("The packet id, e.g. ap-7f29d3a10b44."))],
+            vec![("packet", string("The packet id, e.g. sc-7f29d3a10b44."))],
             &["packet"],
         ),
         "knowledge.handoff_expand" => object(
@@ -665,7 +770,7 @@ pub fn input_schema(name: &str) -> Option<Value> {
                 ("packet", string("The packet id.")),
                 (
                     "section",
-                    string("One of: task, workspace, project, governing, envelope, execution."),
+                    string("One of: task, workspace, project, session, scope, assignment."),
                 ),
             ],
             &["packet", "section"],
@@ -676,9 +781,66 @@ pub fn input_schema(name: &str) -> Option<Value> {
         "knowledge.handoff_verify" => {
             object(vec![("packet", string("The packet id."))], &["packet"])
         }
-        "knowledge.handoff_discard" => {
-            object(vec![("packet", string("The packet id."))], &["packet"])
-        }
+        "knowledge.handoff_result" => object(
+            vec![
+                ("packet", string("The packet this answers.")),
+                ("by", string("Who is filing.")),
+                (
+                    "findings",
+                    string_array("Findings, most significant first."),
+                ),
+                (
+                    "evidence",
+                    string_array("Source locations, records or artefacts backing them."),
+                ),
+                (
+                    "changes",
+                    string_array("What you changed. Empty means you changed nothing."),
+                ),
+                (
+                    "uncertainties",
+                    string_array("What you are not sure about."),
+                ),
+                (
+                    "follow_up",
+                    string_array("What you would do next, or have somebody else do."),
+                ),
+                (
+                    "commands",
+                    string_array("Commands you ran, as `command` or `command=result`."),
+                ),
+                (
+                    "read",
+                    string_array("Files you read, optionally `path:start-end`."),
+                ),
+                ("searched", string_array("Queries you ran.")),
+                ("tested", string_array("Suites or benchmarks you ran.")),
+                (
+                    "not_examined",
+                    string_array(
+                        "What was in scope and you deliberately did not open. As important \
+                         as `read`: a file nobody names might have been ruled out in a \
+                         second or never noticed, and only one of those is delegable.",
+                    ),
+                ),
+            ],
+            &["packet"],
+        ),
+        "knowledge.handoff_results" => object(
+            vec![(
+                "packet",
+                string("One packet's results. Omit for every packet of the open session."),
+            )],
+            &[],
+        ),
+        "knowledge.handoff_coverage" => object(Vec::new(), &[]),
+        "knowledge.handoff_discard" => object(
+            vec![(
+                "packet",
+                string("The id of the packet, capsule or result to remove."),
+            )],
+            &["packet"],
+        ),
         "knowledge.papercut" => object(
             vec![
                 (
