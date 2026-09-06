@@ -396,10 +396,26 @@ function Install-AgentSection {
     }
 }
 
+function Refresh-MarkedAgentSection {
+    param([string]$Target)
+    if (-not (Test-Path -LiteralPath $Target)) { return }
+    $text = [System.IO.File]::ReadAllText($Target)
+    $beginLine = '(?m)^[ \t]*' + [regex]::Escape($AgentBegin) + '[ \t]*\r?$'
+    $endLine   = '(?m)^[ \t]*' + [regex]::Escape($AgentEnd)   + '[ \t]*\r?$'
+    $nBegin = [regex]::Matches($text, $beginLine).Count
+    $nEnd   = [regex]::Matches($text, $endLine).Count
+    if ($nBegin -gt 0 -and $nBegin -eq $nEnd) {
+        Install-AgentSection $Target
+    }
+}
+
 if (-not $NoAgents) {
     Install-AgentSection (Join-Path $HOME ".claude\CLAUDE.md")
     Install-AgentSection (Join-Path $HOME ".codex\AGENTS.md")
     Install-AgentSection (Join-Path $HOME ".config\opencode\AGENTS.md")
+    # Project files that already carry the marked block.
+    Refresh-MarkedAgentSection (Join-Path (Get-Location) "AGENTS.md")
+    Refresh-MarkedAgentSection (Join-Path (Get-Location) "CLAUDE.md")
 }
 
 # Register Claude MCP server

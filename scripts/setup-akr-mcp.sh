@@ -357,10 +357,29 @@ install_agent_section() {
   fi
 }
 
+# Refresh a file only when it already opted in with markers. Unlike
+# install_agent_section, this will not append a block to a project AGENTS.md
+# that does not have one.
+refresh_marked_agent_section() {
+  local target="$1"
+  [[ -f "$target" ]] || return 0
+  local begins ends
+  begins="$(grep -cF "$AGENT_BEGIN" "$target" || true)"
+  ends="$(grep -cF "$AGENT_END" "$target" || true)"
+  if [[ "$begins" -gt 0 && "$begins" -eq "$ends" ]]; then
+    install_agent_section "$target"
+  fi
+}
+
 if [[ "$DO_AGENTS" -eq 1 ]]; then
   install_agent_section "$HOME/.claude/CLAUDE.md"
   install_agent_section "$HOME/.codex/AGENTS.md"
   install_agent_section "$HOME/.config/opencode/AGENTS.md"
+  # Project files that already carry the marked block, so a setup run from
+  # the workspace rewrites the same short protocol rather than leaving a
+  # stale copy in AGENTS.md.
+  refresh_marked_agent_section "$PWD/AGENTS.md"
+  refresh_marked_agent_section "$PWD/CLAUDE.md"
 fi
 
 # Register Claude MCP server

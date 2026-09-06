@@ -606,49 +606,50 @@ no philosophy, no data model, no examples — because an agent reads it every se
 every extra line competes with the task. Everything it needs to know beyond this is
 reachable through the tools themselves.
 
+The installed text is `scripts/agent-section.md`. Keep that file and this
+section in sync; the setup scripts copy it between `<!-- AKR_START -->` and
+`<!-- AKR_END -->`.
+
 ```markdown
-## Project knowledge (AKR)
+## AKR (project knowledge)
 
-Durable project knowledge lives in `.akr/` as typed records, not in Markdown.
-`docs/generated/` is build output. Follow this protocol.
+A `.akr/` directory is a typed ledger of what the project decided, observed, and planned. Use the `knowledge.*` MCP tools, or the `akr` CLI (`knowledge.context` → `akr context`, `knowledge.validate` → `akr check` / `akr validate`). No `.akr/`: skip this, and do not run `akr init` uninvited.
 
-**Before starting any task**
-1. If you know the exact planning key, call `knowledge.context` with that key and the
-   paths you expect to touch.
-2. Otherwise call `knowledge.start` with the task and paths. Read its session head, pick
-   a live candidate (or an explicitly relevant proposal), then call `knowledge.context`
-   with that exact key.
-3. Read context bundles in full. Contradictions and staleness warnings are always
-   included and are never noise.
+### Before a task
 
-**While working**
-- Look things up with `knowledge.get`; find them with `knowledge.search`.
-  Search ranks results; it never grants authority. A record's standing comes from its
-  state, its scope, and its relations.
-- Scratch notes go in `.agent/scratch/`. Nobody reviews them and nothing depends on them.
-- When you hit a small friction — a retried tool call, a confusing setup step, a flaky
-  command, a stale cache, a misleading error — log it with `knowledge.papercut`, in the
-  moment. One or two sentences; a guess at the cause/fix is a bonus.
+- Known planning key: `knowledge.context` with that key and the `paths` you will touch.
+- Otherwise: `knowledge.start` with the task and those paths. Read the bundle, including contradiction and staleness warnings.
+- Do not browse `.akr/records/` or `docs/generated/`. If the tools miss, log a papercut.
 
-**When something becomes durable**
-- New knowledge: `knowledge.propose`. Observations need `observed_at` and, if they can
-  go out of date, `watches`.
-- Changed knowledge: `knowledge.revise`. Never edit a `.akr` file directly, and never
-  edit a record that is not `proposed`.
-- Replacing a plan: `knowledge.supersede`, with a disposition for every unfinished
-  child. The tool will list them; answer each one.
-- Finishing work: record what you observed with `knowledge.evidence_add` (or
-  `knowledge.evidence_add_many` for several proofs), then
-  `knowledge.complete` with evidence for every acceptance check. Evidence records
-  state what was observed; they never state what they verify.
+Consult at task and state-transition boundaries, not after every edit.
 
-**Never**
-- Never edit `docs/generated/` — it is regenerated and CI checks it.
-- Never read `.akr/cache/` — it is a private cache.
-- Never delete a record. Move it to a terminal state instead.
+- Mechanical (fmt, a comment, a lock refresh): no planning read.
+- Known work: one summary, implement, one batched update.
+- Ambiguous: `knowledge.start`, one targeted read, one update.
+- Planning or reconciliation: the full bundle.
 
-**Before handing back**
-- `knowledge.validate`. If it reports diagnostics, fix them or say so explicitly.
+### While working
+
+- `knowledge.get` reads a record; `knowledge.search` finds one. Ranking is not authority.
+- Outside advice is `sources/`. `knowledge.source_search` / `knowledge.source_get` are **non-authoritative** until a record adopts them. Never edit a registered source.
+- Never hand-edit `.akr/` or `docs/generated/`.
+
+### When knowledge changes
+
+- New: `knowledge.propose`. Observations need `observed_at`, and `watches` if they can go stale.
+- Changed: `knowledge.revise`. Never edit a record that is not `proposed`.
+- Replacing a plan: `knowledge.supersede`, with a disposition for every unfinished child.
+- Finished work: `knowledge.evidence_add`, then `knowledge.complete`. An evidence `artifact` must not be under `.agent/scratch`; move it or `akr scratch keep` it first.
+- Friction: `knowledge.papercut`.
+- Handoff: `knowledge.validate`.
+
+### Scratch
+
+`.agent/scratch/` is gitignored and never auto-deleted. Before handoff: `akr scratch prune`; `akr scratch keep <name> --reason "..."` to retain; `akr scratch list`. `akr check --scratch-clean` fails on prunable leftovers and deletes nothing. Same for any persistent scratch directory if the workspace has no AKR.
+
+### Cost
+
+The first `knowledge.*` call derives git freshness (~1–2s). Later calls are cheap until `HEAD` or the working tree changes. Batch reads; do not poll a slow call.
 ```
 
 That is the whole protocol. One collated first read replaces chronological record
