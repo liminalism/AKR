@@ -676,7 +676,7 @@ record akr.evidence.design-coherence-clean/1 : evidence {
 
 record akr.evidence.discover-shape-accepted-by-rmcp3/1 : evidence {
     title "A real rmcp 3.1.2 client now connects to akr-mcp on both lifecycles. Before: the Auto (pre-initialize server/discover) path failed 'expect initialized result' because the discovery response was an initialize result under a discovery method name, and the post-initialize peer.discover() path failed 'Unexpected response type' - the error Codex 0.149 reported. After: Auto connects at 2026-07-28 and legacy+discover() connects at 2025-11-25, both listing 23 tools, with supportedVersions ['2026-07-28','2025-11-25','2025-06-18','2025-03-26','2024-11-05']. Adding 2025-11-25 also stops every rmcp 3.x host being silently answered 2024-11-05."
-    state verified
+    state superseded
     result pass
     method command
     observed_at git:30572b35946db07a711d0b88d0719483f9f3f6d9
@@ -684,6 +684,18 @@ record akr.evidence.discover-shape-accepted-by-rmcp3/1 : evidence {
     summary """
         A real rmcp 3.1.2 client now connects to akr-mcp on both lifecycles. Before: the Auto (pre-initialize server/discover) path failed 'expect initialized result' because the discovery response was an initialize result under a discovery method name, and the post-initialize peer.discover() path failed 'Unexpected response type' - the error Codex 0.149 reported. After: Auto connects at 2026-07-28 and legacy+discover() connects at 2025-11-25, both listing 23 tools, with supportedVersions ['2026-07-28','2025-11-25','2025-06-18','2025-03-26','2024-11-05']. Adding 2025-11-25 also stops every rmcp 3.x host being silently answered 2024-11-05.
         """
+}
+
+record akr.evidence.discover-shape-accepted-by-rmcp3/2 : evidence {
+    title "A real rmcp 3.1.2 client now connects to akr-mcp on both lifecycles. Before: the Auto (pre-initialize server/discover) path failed 'expect initialized result' because the discovery response was an initialize result under a discovery method name, and the post-initialize peer.discover() path failed 'Unexpected response type' - the error Codex 0.149 reported. After: Auto connects at 2026-07-28 and legacy+discover() connects at 2025-11-25, both listing 23 tools, with supportedVersions ['2026-07-28','2025-11-25','2025-06-18','2025-03-26','2024-11-05']. Adding 2025-11-25 also stops every rmcp 3.x host being silently answered 2024-11-05."
+    state verified
+    result pass
+    method manual
+    observed_at git:30572b35946db07a711d0b88d0719483f9f3f6d9
+    summary """
+        A real rmcp 3.1.2 client now connects to akr-mcp on both lifecycles. Before: the Auto (pre-initialize server/discover) path failed 'expect initialized result' because the discovery response was an initialize result under a discovery method name, and the post-initialize peer.discover() path failed 'Unexpected response type' - the error Codex 0.149 reported. After: Auto connects at 2026-07-28 and legacy+discover() connects at 2025-11-25, both listing 23 tools, with supportedVersions ['2026-07-28','2025-11-25','2025-06-18','2025-03-26','2024-11-05']. Adding 2025-11-25 also stops every rmcp 3.x host being silently answered 2024-11-05. Verified manually with mcpprobe against a local akr-mcp binary (rmcp 3.1.2 client), not by an automated test.
+        """
+    supersedes [ @akr.evidence.discover-shape-accepted-by-rmcp3/1 ]
 }
 
 record akr.evidence.fmt-clean/1 : evidence {
@@ -1440,7 +1452,7 @@ record akr.evidence.search-auto-refresh-suite/1 : evidence {
 
 record akr.evidence.search-stale-warning/1 : evidence {
     title "akr search flags a stale index after a write instead of silently returning old rows"
-    state verified
+    state superseded
     result pass
     method command
     observed_at git:30579aeb4960ca7b4de2659953ce0694541bfa96
@@ -1448,6 +1460,20 @@ record akr.evidence.search-stale-warning/1 : evidence {
     summary """
         akr search flags a stale index after a write instead of silently returning old rows
         """
+    author "GitHub Uploader"
+}
+
+record akr.evidence.search-stale-warning/2 : evidence {
+    title "akr search flags a stale index after a write instead of silently returning old rows"
+    state verified
+    result pass
+    method command
+    observed_at git:30579aeb4960ca7b4de2659953ce0694541bfa96
+    command "cargo test -p akr-cli --features fts5 --test search a_write_between_build_and_search_refreshes_before_answering"
+    summary """
+        akr search flags a stale index after a write instead of silently returning old rows
+        """
+    supersedes [ @akr.evidence.search-stale-warning/1 ]
     author "GitHub Uploader"
 }
 
@@ -1553,7 +1579,7 @@ record akr.evidence.snapshot-suite-after-help-and-version-fixes/1 : evidence {
 
 record akr.evidence.tool-results-typed-for-mcp-clients/1 : evidence {
     title "Every tool result carried resultType 'tool', a value outside MCP's closed set (complete, input_required, task), so rmcp 3.x clients rejected the response itself and Codex 0.149 could call no knowledge tool at all. Now 'complete'. tests/conformance.rs asserts the envelope of all 23 tools plus the handshakes against written-out closed sets; reintroducing the bug fails 2 of its 4 tests. A real rmcp 3.1.2 client now completes knowledge.start on both lifecycles."
-    state verified
+    state superseded
     result pass
     method command
     observed_at git:a0310800af849b29c60958ce1c506db0a2975036
@@ -1561,6 +1587,19 @@ record akr.evidence.tool-results-typed-for-mcp-clients/1 : evidence {
     summary """
         Every tool result carried resultType 'tool', a value outside MCP's closed set (complete, input_required, task), so rmcp 3.x clients rejected the response itself and Codex 0.149 could call no knowledge tool at all. Now 'complete'. tests/conformance.rs asserts the envelope of all 23 tools plus the handshakes against written-out closed sets; reintroducing the bug fails 2 of its 4 tests. A real rmcp 3.1.2 client now completes knowledge.start on both lifecycles.
         """
+}
+
+record akr.evidence.tool-results-typed-for-mcp-clients/2 : evidence {
+    title "Every tool result carried resultType 'tool', a value outside MCP's closed set (complete, input_required, task), so rmcp 3.x clients rejected the response itself and Codex 0.149 could call no knowledge tool at all. Now 'complete'. tests/conformance.rs asserts the envelope of all 23 tools plus the handshakes against written-out closed sets; reintroducing the bug fails 2 of its 4 tests. A real rmcp 3.1.2 client now completes knowledge.start on both lifecycles."
+    state verified
+    result pass
+    method command
+    observed_at git:a0310800af849b29c60958ce1c506db0a2975036
+    command "cargo test -p akr-mcp --test conformance"
+    summary """
+        Every tool result carried resultType 'tool', a value outside MCP's closed set (complete, input_required, task), so rmcp 3.x clients rejected the response itself and Codex 0.149 could call no knowledge tool at all. Now 'complete'. tests/conformance.rs asserts the envelope of all 23 tools plus the handshakes against written-out closed sets; reintroducing the bug fails 2 of its 4 tests. A real rmcp 3.1.2 client now completes knowledge.start on both lifecycles, corroborated manually with mcpprobe against a local akr-mcp binary (PROBE_TOOL=knowledge.start) on both the Auto and post-initialize discover() lifecycles.
+        """
+    supersedes [ @akr.evidence.tool-results-typed-for-mcp-clients/1 ]
 }
 
 record akr.evidence.v021-accepts-an-observation-20260908/1 : evidence {

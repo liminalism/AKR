@@ -819,6 +819,72 @@ fn a_stale_view_under_an_uncommitted_ledger_is_a_warning_not_an_error() {
 /// with no commit exercises nothing at all — which is how the first draft of these tests
 /// passed four cases while the detector never ran.
 fn gate_fixture(name: &str, command: &str, source_text: &str) -> Example {
+    let template = r#"
+record NS.work.gate-under-test/1 : work {
+    title "A gate under test"
+    state proposed
+    intent """
+        Exists only to carry one acceptance command.
+        """
+    acceptance {
+        check the-gate {
+            statement """
+                Whatever the command proves.
+                """
+            method command
+            command "CMD"
+        }
+    }
+}
+"#;
+    gate_fixture_with_template(name, source_text, &template.replace("CMD", command))
+}
+
+/// Same shape as [`gate_fixture`], but the phantom command lands on a superseded
+/// revision rather than the live head.
+///
+/// Nobody can revise a non-head revision to repoint a renamed test — only the head is
+/// writable — so if the gate fired here it would be permanent noise on a papercut that
+/// was already fixed on the successor.
+fn superseded_gate_fixture(name: &str, command: &str, source_text: &str) -> Example {
+    let template = r#"
+record NS.work.gate-under-test/1 : work {
+    title "A gate under test"
+    state superseded
+    intent """
+        Exists only to carry one acceptance command, later superseded.
+        """
+    acceptance {
+        check the-gate {
+            statement """
+                Whatever the command proves.
+                """
+            method command
+            command "CMD"
+        }
+    }
+}
+
+record NS.work.gate-under-test/2 : work {
+    title "A gate under test, restated"
+    state proposed
+    intent """
+        Supersedes the revision that carried the phantom command.
+        """
+}
+"#;
+    gate_fixture_with_template(name, source_text, &template.replace("CMD", command))
+}
+
+/// Sets up a fixture carrying `template` (with `NS` standing for the example's real
+/// namespace) plus a committed source file holding `source_text`.
+///
+/// Self-contained on purpose. The shipped fixtures hold placeholder content, so a test
+/// that borrowed a token from them would assert on something incidental. Committing
+/// matters too: the detector searches the tracked tree at a resolved commit, so a fixture
+/// with no commit exercises nothing at all — which is how the first draft of these tests
+/// passed four cases while the detector never ran.
+fn gate_fixture_with_template(name: &str, source_text: &str, template: &str) -> Example {
     let example = Example::materialise(name);
     let src = example.root().join("src/gate_fixture.rs");
     std::fs::create_dir_all(src.parent().expect("parent")).expect("create src dir");
@@ -844,25 +910,7 @@ fn gate_fixture(name: &str, command: &str, source_text: &str) -> Example {
         .unwrap_or("sys")
         .to_owned();
 
-    let template = r#"
-record NS.work.gate-under-test/1 : work {
-    title "A gate under test"
-    state proposed
-    intent """
-        Exists only to carry one acceptance command.
-        """
-    acceptance {
-        check the-gate {
-            statement """
-                Whatever the command proves.
-                """
-            method command
-            command "CMD"
-        }
-    }
-}
-"#;
-    let added = template.replace("NS", &namespace).replace("CMD", command);
+    let added = template.replace("NS", &namespace);
     std::fs::write(&file, format!("{existing}{added}")).expect("write record file");
 
     example.git(&["add", "-A"]);
@@ -883,6 +931,25 @@ fn a_command_naming_a_test_that_does_not_exist_is_reported() {
     assert!(
         check.output().contains("AKR-G024"),
         "a phantom test filter must be reported:\n{}",
+        check.output()
+    );
+}
+
+/// A superseded revision's phantom command must not be reported: nobody can revise a
+/// non-head revision to repoint a renamed test, so this would otherwise be permanent
+/// noise on a papercut that was already fixed on the successor.
+#[test]
+fn a_superseded_revisions_phantom_command_is_silent() {
+    let example = superseded_gate_fixture(
+        "g024-superseded",
+        "cargo test -p sys_present a_test_name_that_exists_nowhere",
+        "nothing relevant here",
+    );
+    assert_eq!(example.run(&["build"]).code, 0);
+    let check = example.run(&["check"]);
+    assert!(
+        !check.output().contains("AKR-G024"),
+        "a superseded revision's phantom command must stay silent:\n{}",
         check.output()
     );
 }

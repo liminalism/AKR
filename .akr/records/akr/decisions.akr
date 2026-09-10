@@ -896,7 +896,7 @@ record akr.decision.search-refreshes-disposable-index/1 : decision {
     decision """
         akr search and knowledge.search must rebuild a missing or source-graph-stale record index from the currently loaded ledger before querying it. This cache refresh may occur as a side effect of a read because the cache is disposable and non-authoritative; it must not modify records, the lock, or generated views. When --no-rebuild is set, a needed refresh fails with AKR-I031 and leaves the cache untouched.
         """
-    supported_by [ @akr.evidence.search-stale-warning/1 ]
+    supported_by [ @akr.evidence.search-stale-warning/2 ]
 }
 
 record akr.decision.start-collates-session-head/1 : decision {

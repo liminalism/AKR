@@ -130,6 +130,12 @@ fn recorded_commands(ledger: &Ledger) -> Vec<Recorded> {
     let mut records: Vec<_> = ledger.records().iter().collect();
     records.sort_by(|a, b| a.id.cmp(&b.id));
     for record in records {
+        // A superseded or otherwise non-live revision is frozen: nobody can revise it to
+        // repoint a renamed test, and its successor (if any) already carries the fix.
+        // Checking it anyway would make a corrected papercut warn forever.
+        if !record.is_live() {
+            continue;
+        }
         if let Some(acceptance) = &record.acceptance {
             for check in &acceptance.checks {
                 if check.method == CheckMethod::Command

@@ -5,7 +5,7 @@ build {
     tool "akr 0.5.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:7d1d6eb1d7d7194019a4a952ca111626e8f8ca3ffbd271c693a13c440bfc3114"
+    source_graph "sha256:ba849f22e6f80b97379c5a83e787686144b9f7a7a4f333ae36a01b24a1dd5bc0"
 }
 
 source ".akr/project.akr" {
@@ -19,13 +19,13 @@ source ".akr/records/akr/assessments.akr" {
 }
 
 source ".akr/records/akr/decisions.akr" {
-    hash "sha256:a76c5bd96148fba94782f20abc6cb8069a145b0d109c9c733daa09060a063a0e"
+    hash "sha256:7da79bda1b77f2220533166221a50f7527739ce8cd3e67cb4da31d8600ab299d"
     records 34
 }
 
 source ".akr/records/akr/evidence.akr" {
-    hash "sha256:8c48e97ed50151bafe195a6579ee45e69225987cffb14653cfd6595bd81f003a"
-    records 76
+    hash "sha256:b9d9b5fb37d6b42ad3a0ef4ec3ead258e3060befba0b3eb10c83bd3cf519f301"
+    records 79
 }
 
 source ".akr/records/akr/milestones.akr" {
@@ -474,7 +474,7 @@ seal @akr.decision.revision-is-not-redefinition/1 {
 
 seal @akr.decision.search-refreshes-disposable-index/1 {
     state active
-    hash "sha256:acfa8ef377bfeb3983548a38cadaeb7ff0833cca28a39c6b6dd271deae9cac2a"
+    hash "sha256:1ac9faac2ce9dd33eeee65a66157d31d3f0551fb8d3e925050648cab0fbebbbc"
 }
 
 seal @akr.decision.start-collates-session-head/1 {
@@ -568,8 +568,13 @@ seal @akr.evidence.design-coherence-clean/1 {
 }
 
 seal @akr.evidence.discover-shape-accepted-by-rmcp3/1 {
+    state superseded
+    hash "sha256:13f9d42f2b7d7b8d688f4d81ff4cdf43f22410b7337caf81b5f5dd9356e33ea8"
+}
+
+seal @akr.evidence.discover-shape-accepted-by-rmcp3/2 {
     state verified
-    hash "sha256:95de30a114ed576aa5aa094e6b1f70db63af217b0f3fcfb09d85179ab5d3a1b7"
+    hash "sha256:f0ce21d06f4bb6b96753c08e9af890b099a7af373a119aeb52996eb2ac845c9a"
 }
 
 seal @akr.evidence.fmt-clean/1 {
@@ -808,8 +813,13 @@ seal @akr.evidence.search-auto-refresh-suite/1 {
 }
 
 seal @akr.evidence.search-stale-warning/1 {
+    state superseded
+    hash "sha256:dc085419684c3ed03d0909dd7d5ec003fb94acc08c59fcc15cbe756bd5cdb857"
+}
+
+seal @akr.evidence.search-stale-warning/2 {
     state verified
-    hash "sha256:7b554238825972436b05387c7a0eb3cc3f78fd703e3464c47fe242c21b4e6a56"
+    hash "sha256:1305668985740c61f5dab89dd63c36a423b69784727f697e91f9f4cf93a0c039"
 }
 
 seal @akr.evidence.session-head-briefing-suite/1 {
@@ -838,8 +848,13 @@ seal @akr.evidence.snapshot-suite-after-help-and-version-fixes/1 {
 }
 
 seal @akr.evidence.tool-results-typed-for-mcp-clients/1 {
+    state superseded
+    hash "sha256:29440e9b6401562582cb72f247263905c34f0a023b671bec10218fe33011c6fb"
+}
+
+seal @akr.evidence.tool-results-typed-for-mcp-clients/2 {
     state verified
-    hash "sha256:4d98cc03ba9e8b127f9874e4fc7b98c4bca3f223063aadd81474692811c71782"
+    hash "sha256:73823c2f0db8822e1fa75eed6510ad48f557e592bb95a0b7ab1e0f4d85f8fcf5"
 }
 
 seal @akr.evidence.v021-accepts-an-observation-20260908/1 {
