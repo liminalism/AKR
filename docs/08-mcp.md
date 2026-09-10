@@ -20,6 +20,17 @@ CLI uses. It runs in the workspace, over stdio, with no network and no state:
                                     └────> .akr/cache/index.sqlite (private)
 ```
 
+**Tool names.** The catalogue names in §2 (`knowledge.search`, …) are the contract.
+`tools/call` accepts those names and the underscored form (`knowledge_search`) that
+hosts whose tool-name regex forbids `.` require. Grok Build 1.0.25 is one: it
+validates advertised names against `^[a-zA-Z_][a-zA-Z0-9_-]{0,63}$`, silently
+drops every dotted name, and attaches with `tool_count: 0` while `grok mcp doctor`
+still reports the full list. `initialize` with `clientInfo.name` starting `grok`
+therefore advertises the underscored names (canonical dotted form in `title`);
+`--tool-names underscore` does the same for a host we do not fingerprint. Other
+clients keep seeing the dotted names. MCP 2025-11-25 allows dots; this is a host
+quirk, not a rename of the catalogue.
+
 Two invariants make the surface trustworthy:
 
 - **One implementation.** `knowledge.context` and `akr context` call the same function

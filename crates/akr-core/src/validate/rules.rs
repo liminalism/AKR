@@ -466,6 +466,25 @@ pub fn v006_historical_references(ledger: &Ledger) -> Vec<Diagnostic> {
             if relation == Relation::DependsOn && target.state == State::Completed {
                 continue;
             }
+            // The same shape, one relation over: resolution *satisfies* a question, so an
+            // answer pinned to the question it answered is not building on a terminal
+            // record — it is the record of what answered it. Without this, V-011 demands a
+            // `resolves` edge before a question may be resolved and V-006 then rejects the
+            // pinned form of the edge it demanded, with the error landing on the answering
+            // record rather than on the write the author was making.
+            //
+            // `Superseded` and not only `Resolved`, because resolving a question creates a
+            // revision: `/2` becomes `resolved` and `/1` becomes `superseded`. A pin at the
+            // revision that was actually open when the answer was written therefore lands
+            // on the superseded one, and the help told the author to "use a historical
+            // relation and pin it" — which is what they had done. Exempting only `Resolved`
+            // passes every test and fails every user, because `akr revise` auto-repoints
+            // live pins and rewrites `@q/1` to `@q/2` before `check` ever sees it.
+            if relation == Relation::Resolves
+                && matches!(target.state, State::Resolved | State::Superseded)
+            {
+                continue;
+            }
             if relation == Relation::PartOf {
                 if target.state == State::Completed {
                     continue;
@@ -487,6 +506,83 @@ pub fn v006_historical_references(ledger: &Ledger) -> Vec<Diagnostic> {
                     ),
                 )
                 .help(pinned_reference_help(ledger, target)),
+            );
+        }
+    }
+    out.extend(supersedes_a_live_record(ledger));
+    out
+}
+
+/// V-006's other half: a `supersedes` edge that has not superseded anything.
+///
+/// Within one key, supersession is the revision chain and `head()` computes it. Across
+/// keys it is not computed at all: the edge is documentation, and `akr supersede` is what
+/// actually moves the target's state. So a hand-authored cross-key `supersedes` naming a
+/// live record does nothing whatsoever, and nothing said so — an openarc observation
+/// carried such an edge from 2026-08-26 and `akr why-current` still resolved the target as
+/// LIVE, re-entering the review queue every build until somebody set the state by hand.
+///
+/// Verified 2026-09-08 to be true of the pinned form as well as the unversioned one, which
+/// narrows the defect usefully: it was never about whether the reference names a revision.
+///
+/// Part of V-006 rather than a rule of its own: "terminal records are cited, not built on"
+/// and "an edge claiming a record is terminal must be telling the truth" are the same rule
+/// read from either end.
+fn supersedes_a_live_record(ledger: &Ledger) -> Vec<Diagnostic> {
+    const RULE: RuleId = RuleId(6);
+    let mut out = Vec::new();
+    for record in ordered(ledger) {
+        if !record.is_live() {
+            continue;
+        }
+        for reference in record.targets(Relation::Supersedes) {
+            if reference.key == record.id.key {
+                continue; // the revision chain, which `head()` does compute
+            }
+            // `Supersedes` is one of the three historical relations (D-044,
+            // `Relation::is_historical`): they "exist to point backwards". An unversioned
+            // reference is by D-009 forward-tracking — it resolves to whichever revision is
+            // live at build time. A forward-tracking historical reference is incoherent in
+            // AKR's own terms, and it does not stay wrong quietly: a LegeOS decision
+            // carried `supersedes [ @legeos.decision.toolchain-licence-namespace ]` written
+            // against an early revision, and as that key gained revisions the edge re-aimed
+            // until it named revision 3, which was `active`. Nobody edited either record.
+            if reference.revision.is_none() {
+                out.push(
+                    Diagnostic::error(
+                        c::L021,
+                        RULE,
+                        slot_subject(record, SlotRef::Relation(Relation::Supersedes)),
+                        format!(
+                            "slot `supersedes` names {} with no revision; a historical relation names a revision, and an unversioned reference follows the head",
+                            reference.key
+                        ),
+                    )
+                    .help(
+                        "pin the revision this one replaced, as `@key/N` — an unversioned supersedes re-aims itself every time its target is revised",
+                    ),
+                );
+                continue;
+            }
+            let Some(target) = target_of(ledger, reference) else {
+                continue;
+            };
+            if !target.is_live() {
+                continue;
+            }
+            out.push(
+                Diagnostic::warning(
+                    c::L021,
+                    RULE,
+                    slot_subject(record, SlotRef::Relation(Relation::Supersedes)),
+                    format!(
+                        "slot `supersedes` names {}, which is still {} — a cross-key supersedes edge records the replacement, it does not perform it",
+                        target.id, target.state
+                    ),
+                )
+                .help(
+                    "run `akr supersede <old> --with <new>`, or move the target's state yourself; the edge alone leaves it live",
+                ),
             );
         }
     }
@@ -1337,7 +1433,15 @@ fn commit_order(ledger: &Ledger, record: &Record, evidence: &Record) -> CommitOr
 // V-021 / V-022 / V-023
 // ---------------------------------------------------------------------------------
 
-/// V-021: an `active` decision cites a requirement, policy, constraint or evidence.
+/// V-021: an `active` decision cites a requirement, policy, constraint, observation or
+/// evidence.
+///
+/// `Observation` was added by D-042. It is the citation an author reaches for first — a
+/// decision usually rests on the measurement that motivated it — and excluding it was
+/// what left normative layers stuck at `proposed` across fifteen audited workspaces: the
+/// rule refused the one thing people were already writing, and said only that the
+/// decision "cites nothing". What V-021 forbids is a decision resting on *nothing*, a
+/// preference wearing a record's clothes. An observation is not nothing.
 #[must_use]
 pub fn v021_decision_cites(ledger: &Ledger) -> Vec<Diagnostic> {
     const RULE: RuleId = RuleId(21);
@@ -1346,6 +1450,7 @@ pub fn v021_decision_cites(ledger: &Ledger) -> Vec<Diagnostic> {
         Kind::Policy,
         Kind::Constraint,
         Kind::Evidence,
+        Kind::Observation,
     ];
     ordered(ledger)
         .into_iter()
@@ -1367,11 +1472,14 @@ pub fn v021_decision_cites(ledger: &Ledger) -> Vec<Diagnostic> {
                 RULE,
                 subject(record),
                 format!(
-                    "active decision {} cites no requirement, policy, constraint, or evidence",
+                    "active decision {} cites no requirement, policy, constraint, observation, or evidence",
                     record.id
                 ),
             )
-            .help("a decision resting on nothing is a preference; cite what motivated it")
+            .help(
+                "a decision resting on nothing is a preference; cite what motivated it \
+                 — an observation, evidence, or the requirement, policy or constraint it serves",
+            )
         })
         .collect()
 }

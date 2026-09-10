@@ -1,6 +1,6 @@
 //! The ledger: a set of record revisions, plus the facts later phases attach to it.
 
-use super::ident::{Commit, LogicalKey, Segment};
+use super::ident::{Commit, Glob, LogicalKey, Segment};
 use super::record::Record;
 use super::refs::{Reference, RevisionId};
 use super::relation::Relation;
@@ -8,13 +8,24 @@ use super::state::State;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-/// The project declaration: its name and its declared namespaces.
+/// The project declaration: its name, its declared namespaces, and the paths it keeps
+/// out of git on purpose.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Project {
     /// The project name, matching the `project` line of every source file.
     pub name: String,
     /// Declared namespaces. A key whose first segment is absent here fails V-002.
     pub namespaces: BTreeSet<Segment>,
+    /// Trees this project deliberately keeps out of git, from the `untracked` block.
+    ///
+    /// A scope may correctly name a directory that exists on disk and is not in the
+    /// repository — SaveYourSkin keeps its character art out of source history (commit
+    /// 280211c) while eleven records scope into it. Such a scope is right, and until this
+    /// existed there was no way to say so: the author's only options were a permanent
+    /// warning or falsifying a correct scope. Declared here rather than on each record
+    /// because the fact is about the repository, not about the records that happen to
+    /// point into it (V-102).
+    pub untracked: Vec<Glob>,
 }
 
 impl Project {
@@ -31,6 +42,7 @@ impl Project {
                 .iter()
                 .map(|n| Segment::new(n).expect("valid namespace segment"))
                 .collect(),
+            untracked: Vec::new(),
         }
     }
 }

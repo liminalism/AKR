@@ -28,7 +28,7 @@ pub fn render_active_work(cx: RenderContext<'_>) -> String {
             .to_owned(),
     );
 
-    let live = live_work(ledger);
+    let live = live_work(ledger, cx);
     let mut by_parent: BTreeMap<RevisionId, Vec<&Record>> = BTreeMap::new();
     let mut unparented: Vec<&Record> = Vec::new();
     for item in &live {
@@ -251,10 +251,96 @@ fn direct_parent(cx: RenderContext<'_>, record: &Record) -> Option<RevisionId> {
         .map(|t| t.id.clone())
 }
 
-fn live_work(ledger: &Ledger) -> Vec<&Record> {
+fn live_work<'a>(ledger: &'a Ledger, cx: RenderContext<'a>) -> Vec<&'a Record> {
+    let undispositioned = undispositioned_import_drafts(cx);
     ledger
         .records()
         .iter()
         .filter(|r| r.kind == Kind::Work && r.is_live() && !is_archived(r))
+        .filter(|r| !undispositioned.contains(&r.id.key.to_string()))
         .collect()
+}
+
+/// The keys of import drafts nobody has dispositioned yet.
+///
+/// `akr import`'s `classify` has a catch-all of `work`, so every heading of a discursive
+/// document becomes a live `proposed` work record. One 2026-08 bulk import turned five
+/// reports into 125 of them and a 1291-line `ACTIVE-WORK.md`, where "Executive verdict",
+/// "Wall times (median of 5 runs)" and "Peak RSS" each read as something the project
+/// intends to do.
+///
+/// The signal is one the ledger already holds and no other predicate can substitute for.
+/// D-022 has `akr import` write a tracking record whose acceptance enumerates the claims,
+/// one check each, reading *"<title>" is dispositioned: promoted as `<key>` or declined
+/// with evidence*. A draft is undispositioned **exactly while its tracking check is
+/// unsatisfied**, computed by the same acceptance machinery every other view uses, and it
+/// becomes false the moment somebody actually dispositions the claim.
+///
+/// The tempting predicate — hide a `proposed` work record with only a `legacy` source at
+/// revision 1 — is WRONG, and expensively so. Per D-015 only a *sealed* record needs a new
+/// revision, so **a `proposed` record is edited in place**: a draft that has been read,
+/// rewritten and adopted as the project's live plan is still revision 1, still `proposed`,
+/// and still cites only the document it came from. That predicate was tested against
+/// `lege-ecosystem.work.jp2lam-jpeg-2000-decoder-optimization-plan` — the single live
+/// account of that whole effort — and would have hidden it while leaving all 125 phantoms
+/// visible. Acceptance blocks and relations do not rescue it either: that record has
+/// neither, and genuine drafts often acquire a `part_of` edge from the importer itself.
+/// The general lesson is worth keeping: a state machine that edits in place cannot be
+/// asked "has anyone touched this?", and a predicate that assumes it can will be
+/// confidently wrong.
+///
+/// Fails OPEN. A statement that does not parse, or a tracker that cannot be identified,
+/// hides nothing — showing a draft is noise, hiding an adopted plan is loss, and those
+/// are not symmetric.
+fn undispositioned_import_drafts(cx: RenderContext<'_>) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::new();
+    for record in cx.ledger().records() {
+        // A tracking record is D-022's shape: live work, a non-empty acceptance block, and
+        // a legacy source naming the document under migration. `import::audit` identifies
+        // it the same way.
+        if record.kind != Kind::Work || !record.is_live() {
+            continue;
+        }
+        if !record
+            .acceptance
+            .as_ref()
+            .is_some_and(|a| !a.checks.is_empty())
+        {
+            continue;
+        }
+        if !record
+            .sources
+            .iter()
+            .any(|s| s.kind == crate::model::SourceKind::Legacy)
+        {
+            continue;
+        }
+        for entry in cx.model.checks_of(&record.id) {
+            if entry.verdict.is_satisfied() {
+                continue;
+            }
+            let Some(check) = record
+                .acceptance
+                .as_ref()
+                .and_then(|a| a.checks.iter().find(|c| c.id == entry.check))
+            else {
+                continue;
+            };
+            if let Some(key) = promoted_key(&check.statement) {
+                out.insert(key);
+            }
+        }
+    }
+    out
+}
+
+/// The key a tracking check names, from *promoted as `<key>` or declined*.
+///
+/// The statement is the only link the ledger holds between a tracking check and the draft
+/// it tracks, so it is parsed rather than inferred. Anything that does not match this
+/// exact shape yields `None` and hides nothing.
+fn promoted_key(statement: &str) -> Option<String> {
+    let rest = statement.split_once("promoted as ")?.1;
+    let key = rest.split_once(" or declined")?.0.trim();
+    (!key.is_empty() && key.contains('.')).then(|| key.to_owned())
 }

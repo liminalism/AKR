@@ -17,6 +17,7 @@ fn main() -> std::process::ExitCode {
     let mut root = PathBuf::from(".");
     let mut surface = Surface::Full;
     let mut accounting: Option<PathBuf> = None;
+    let mut host_safe_tool_names = false;
     let mut args = std::env::args().skip(1);
     while let Some(argument) = args.next() {
         match argument.as_str() {
@@ -31,6 +32,14 @@ fn main() -> std::process::ExitCode {
                 Some(Some(value)) => surface = value,
                 _ => {
                     eprintln!("error[AKR-C004]: --surface takes `read` or `full`");
+                    return std::process::ExitCode::from(2);
+                }
+            },
+            "--tool-names" => match args.next().as_deref() {
+                Some("underscore") => host_safe_tool_names = true,
+                Some("dotted") => host_safe_tool_names = false,
+                _ => {
+                    eprintln!("error[AKR-C004]: --tool-names takes `dotted` or `underscore`");
                     return std::process::ExitCode::from(2);
                 }
             },
@@ -49,13 +58,16 @@ fn main() -> std::process::ExitCode {
                 println!(
                     "akr-mcp — the AKR knowledge tools over MCP\n\n\
                      USAGE\n    akr-mcp [--dir <path>] [--surface read|full] \
-                     [--accounting <path>]\n\n\
+                     [--tool-names dotted|underscore] [--accounting <path>]\n\n\
                      Speaks JSON-RPC 2.0 over stdio, one document per line. The MCP tools \
                      of docs/08-mcp.md §2 are listed by `tools/list`; every one of them \
                      calls the function `akr` calls.\n\n\
                      --surface read exposes only the tools that answer questions. Tool \
                      schemas are a fixed cost in every session that loads them, and an \
                      agent that will only ever read should not pay for the writers.\n\n\
+                     --tool-names underscore advertises `knowledge_search` instead of \
+                     `knowledge.search`. Grok Build is detected from initialize and gets \
+                     this automatically; `tools/call` accepts both forms either way.\n\n\
                      --accounting appends one JSON line per call: sizes, estimated \
                      tokens, duration, whether the output budget withheld it. `akr mcp \
                      stats` aggregates it.\n"
@@ -69,7 +81,9 @@ fn main() -> std::process::ExitCode {
         }
     }
 
-    let mut server = Server::new(root).with_surface(surface);
+    let mut server = Server::new(root)
+        .with_surface(surface)
+        .with_host_safe_tool_names(host_safe_tool_names);
     if let Some(path) = accounting {
         server = server.with_accounting(path);
     }

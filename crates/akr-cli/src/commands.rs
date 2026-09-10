@@ -404,6 +404,99 @@ const SCRATCH_DEFAULT_AGE: u64 = 14;
 /// A line rather than a diagnostic, and printed even when there is nothing to say, because
 /// the whole problem is that scratch is invisible: an agent that never sees the directory
 /// mentioned has no reason to believe it persists.
+/// The build-fact line for scope paths git cannot answer for.
+///
+/// Not a diagnostic. An ignored path or a submodule may be exactly what the author
+/// meant, so this reports rather than fails — but it does report, because staying silent
+/// is what let 103 of them accumulate unseen across fifteen ledgers (V-102, D-024).
+/// Whether any `.akr/` record file has uncommitted changes.
+///
+/// The discriminator between "this session has unsaved work" and "this repository ships
+/// views that do not match its ledger". Best effort: when git cannot answer, the answer is
+/// "committed", which keeps the stricter reading rather than silently softening the gate.
+fn ledger_is_uncommitted(session: &Session) -> bool {
+    session.repository.as_ref().is_some_and(|repository| {
+        repository.working_tree_changes().is_ok_and(|changed| {
+            changed
+                .iter()
+                .any(|path| path.starts_with(".akr/") && path.ends_with(".akr"))
+        })
+    })
+}
+
+/// The one-line view-currency fact for the default check's build-facts block.
+///
+/// Silent when the views are current, so the ordinary case stays quiet; otherwise it says
+/// how many views are stale and which kind of stale, because the fix differs: a `tool:`
+/// stamp needs a rebuild whenever convenient, a content difference needs one now.
+fn views_fact(diagnostics: &[Diagnostic]) -> String {
+    let stamp = diagnostics
+        .iter()
+        .filter(|d| d.code.as_str() == "AKR-E015")
+        .count();
+    let stale = diagnostics.len() - stamp;
+    match (stale, stamp) {
+        (0, 0) => String::new(),
+        (0, n) => format!("    {n} view(s) carry an older `tool:` stamp — run `akr build`\n"),
+        (n, 0) => format!("    {n} view(s) do not match the ledger — run `akr build`\n"),
+        (n, m) => format!(
+            "    {n} view(s) do not match the ledger, {m} carry an older `tool:` stamp \
+             — run `akr build`\n"
+        ),
+    }
+}
+
+fn unverifiable_scope_fact(scopes: &[akr_core::freshness::UnverifiableScope]) -> String {
+    use akr_core::freshness::UnverifiableReason;
+    if scopes.is_empty() {
+        return String::new();
+    }
+    // Counted per reason rather than by subtracting from the total: with three reasons a
+    // subtraction silently files every new one under whichever arm it was written against.
+    let count = |reason: UnverifiableReason| scopes.iter().filter(|s| s.reason == reason).count();
+    let ignored = count(UnverifiableReason::Ignored);
+    let submodule = count(UnverifiableReason::Submodule);
+    let declared = count(UnverifiableReason::Declared);
+    let records = scopes
+        .iter()
+        .map(|s| &s.id.key)
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
+    let mut parts = Vec::new();
+    if ignored > 0 {
+        parts.push(format!("{ignored} the repository ignores"));
+    }
+    if submodule > 0 {
+        parts.push(format!("{submodule} inside a submodule"));
+    }
+    if declared > 0 {
+        parts.push(format!("{declared} declared untracked in project.akr"));
+    }
+    // Named, not just counted. The staleness fact earns its one line by ending in
+    // `see `akr review-queue``; this one has no such command, and a fact nobody can act
+    // on decays into a number people stop reading — which is how these globs accumulated.
+    // A few examples cost four lines and make it actionable; the rest are a count.
+    const SHOWN: usize = 4;
+    let mut text = format!(
+        "    {} scope path(s) on {records} record(s) git cannot answer for — {} — so those scopes cannot be verified\n",
+        scopes.len(),
+        parts.join(", ")
+    );
+    for scope in scopes.iter().take(SHOWN) {
+        text.push_str(&format!(
+            "      {} — {:?}, {}\n",
+            scope.id, scope.glob, scope.reason
+        ));
+    }
+    if scopes.len() > SHOWN {
+        text.push_str(&format!(
+            "      … and {} more\n",
+            scopes.len() - SHOWN
+        ));
+    }
+    text
+}
+
 fn scratch_fact(scratch: &akr_core::scratch::Scratch) -> String {
     use akr_core::scratch::human_bytes;
     if !scratch.present {
@@ -759,13 +852,62 @@ fn check(
     text.push_str(&summary_lines(session, &model));
     text.push('\n');
 
+    // View currency is part of every check, not an opt-in (A1/A2). `akr check` reporting
+    // "no diagnostics" on a workspace whose committed views do not match its ledger was
+    // the single most common defect in a 2026-09 sweep of fifteen workspaces: ten were
+    // shipping mismatched views and every one of them passed a plain check. The two
+    // causes are separated by severity, not by flag — a `tool:`-only difference is
+    // AKR-E015 (warning, never fatal), anything else is AKR-E011/E012 (error). `--views-
+    // current` now selects the per-view stage-F REPORT; it no longer decides whether the
+    // comparison happens, because a gate you have to remember to ask for is not a gate.
+    //
+    // A ledger with no records owes no projections. `akr init` scaffolds a workspace and
+    // tells the reader to write a record next; greeting them with seven missing-view
+    // errors before they have written anything would make a correct scaffold look broken.
+    // Views become owed at the first record, which is also the first moment a view could
+    // say anything.
+    let freshness = session.freshness(&queue);
+    let context = akr_core::render::RenderContext::new(&model, &freshness);
+    let mut view_diagnostics = if counts_of(session, &model).records == 0 {
+        Vec::new()
+    } else {
+        check_views_current(&session.view_dir(), context)
+            .map_err(|e| EnvError::new("AKR-E001", format!("cannot read the view directory: {e}")))?
+    };
+
+    // An agent that has just written a record has stale views BY CONSTRUCTION, and has not
+    // reached the point in its session where it would rebuild. Failing here would make
+    // "akr check is clean" unreachable mid-task and leave the same two bad ways out that
+    // AKR-G004 was exempted for: rebuild prematurely, or drop to --lenient and lose every
+    // other signal. So while the ledger itself is uncommitted, a stale view is AKR-E016 at
+    // warning severity — you have unsaved work — rather than AKR-E011/E012.
+    //
+    // A COMMITTED ledger whose committed views do not match it is the defect A1 is about,
+    // and stays a hard error. `akr build --check` is unaffected either way: it is the CI
+    // gate of D-025 and reports the difference regardless of what is committed.
+    if ledger_is_uncommitted(session) {
+        for diagnostic in &mut view_diagnostics {
+            if matches!(diagnostic.code.as_str(), "AKR-E011" | "AKR-E012") {
+                diagnostic.code = akr_core::diagnostics::Code::new("AKR-E016");
+                diagnostic.severity = akr_core::diagnostics::Severity::Warning;
+                // Say WHICH of the two situations this is. A reader who cannot tell
+                // "behind my own unsaved edits" from "this repository ships views that do
+                // not match its ledger" has been told nothing useful.
+                if let akr_core::diagnostics::Subject::File(path) = &diagnostic.primary.subject {
+                    diagnostic.message =
+                        format!("{path} is behind uncommitted ledger changes in the working tree");
+                }
+                diagnostic.help = Some(
+                    "run `akr build` before committing; until then the views describe the \
+                     ledger as it was last built, not as it stands"
+                        .to_owned(),
+                );
+            }
+        }
+    }
+
     if views_current {
         text.push_str("  stages A-D                                 ok\n");
-        let freshness = session.freshness(&queue);
-        let context = akr_core::render::RenderContext::new(&model, &freshness);
-        let view_diagnostics = check_views_current(&session.view_dir(), context).map_err(|e| {
-            EnvError::new("AKR-E001", format!("cannot read the view directory: {e}"))
-        })?;
         text.push_str(&format!(
             "  stage F  emit (in memory)   {} views        {}\n",
             View::ALL.len(),
@@ -786,7 +928,6 @@ fn check(
             };
             text.push_str(&format!("    {:<24} {state}\n", view.file_name()));
         }
-        diagnostics.extend(view_diagnostics);
     } else {
         text.push_str(&stage_lines(session, &model));
         text.push('\n');
@@ -799,6 +940,28 @@ fn check(
             queue.at_risk.len()
         ));
         text.push_str(&scratch_fact(&scratch));
+        text.push_str(&unverifiable_scope_fact(&session.unverifiable_scopes()));
+        let missing = crate::init::missing_gitignore_entries(&session.root);
+        if !missing.is_empty() {
+            text.push_str(&format!(
+                "    .gitignore is missing {} entry(ies) `akr init` now writes: {} — add them, or these paths accumulate untracked\n",
+                missing.len(),
+                missing.join(", ")
+            ));
+        }
+        text.push_str(&views_fact(&view_diagnostics));
+    }
+
+    diagnostics.extend(view_diagnostics);
+
+    // V-105: a recorded command that names a test which no longer exists (AKR-G024).
+    // Warning only — see `akr_core::gate` for why this is decay rather than carelessness.
+    if let (Some(repository), Some(head)) =
+        (session.repository.as_ref(), session.inputs.commit.as_ref())
+        && let Ok(gate_diagnostics) =
+            akr_core::gate::phantom_command_tokens(&session.ledger, repository, head)
+    {
+        diagnostics.extend(gate_diagnostics);
     }
 
     // Scratch is a fact about the working tree, never a ledger contradiction, so it is
@@ -1537,6 +1700,24 @@ fn get(
     {
         text.push_str(&format!("\n  {}\n", slot.name()));
         for line in body.lines() {
+            text.push_str(&format!("    {line}\n"));
+        }
+    }
+    // The note, which used to be invisible here. `akr revise --from` is a slot overlay
+    // and keeps every slot the overlay does not mention — but a reader who cannot see
+    // `note` reads a preserved note as a lost one, and diagnoses a merge bug that is not
+    // there. It is also the slot that says why a plan stopped (D-026).
+    if detail != Detail::Summary
+        && let Some(note) = match record.get(akr_core::model::ContentSlot::Note) {
+            Some(
+                akr_core::model::ContentValue::Prose(text)
+                | akr_core::model::ContentValue::Text(text),
+            ) if !text.trim().is_empty() => Some(text.clone()),
+            _ => None,
+        }
+    {
+        text.push_str("\n  note\n");
+        for line in note.lines() {
             text.push_str(&format!("    {line}\n"));
         }
     }

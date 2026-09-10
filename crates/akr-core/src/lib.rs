@@ -35,6 +35,7 @@ pub mod context;
 pub mod diagnostics;
 pub mod evidence;
 pub mod freshness;
+pub mod gate;
 pub mod git;
 pub mod graph;
 pub mod hash;

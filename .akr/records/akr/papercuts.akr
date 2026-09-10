@@ -1079,6 +1079,159 @@ record akr.papercut.collated-20-papercuts-from-kitchen-concept-lege/1 : papercut
     created_at 2026-08-08
 }
 
+record akr.papercut.collated-35-papercuts-from-kitchen-concept-lege/1 : papercut {
+    title "Collated 35 papercuts from Kitchen-Concept, Lege-ecosystem, LegeOS, SaveYourSkin and 1 more"
+    state verified
+    statement """
+        Collated 35 papercuts from /mnt/Samsung980_1TB/Rust-projects on 2026-09-08 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
+
+        ## Kitchen-Concept @kitchen.papercut.while-scoping-a-read-only-hardware [about akr]
+        While scoping a read-only hardware investigation, knowledge.context rejected a !docs/generated/** path although exclusions are natural alongside repository search globs; the accepted path subset or error prevention could be clearer.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.akr-import-ingest-of-a-long-planning-document [about akr]
+        akr import/ingest of a long planning document promotes essentially every markdown heading to its own live work record, and attaches the wrong body text to it. The 2026-08 import of the five lege-codecs/jp2lam/decode-fix-plan documents produced 125 proposed work records, including pure report prose ('Executive verdict', 'Wall times (median of 5 runs)', 'Peak RSS, single representative run', 'Reproduce', 'Audit limitations', '1. Objective', '6. Quick reference') and negative guidance ('Do not start with', 'Two traps - do NOT fix these by loosening a check'). Many carried an unrelated adjacent paragraph as their intent: work.add-jp2decodestats, titled '3. Add Jp2DecodeStats', had the intent 'Do not start by optimizing MqDecoder merely because entropy decoding is normally expensive.' The result rendered a 1291-line ACTIVE-WORK.md that no one could use, and cleaning it up on 2026-09-08 took 125 separate akr abandon calls. Import should default to a review queue rather than live work records, should not promote a heading whose section body it cannot attribute, and should offer a bulk disposition (abandon/decline a list of keys with one reason) for undoing a bad import.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.akr-mcp-failed-to-connect-and-codegraph-mcp [about akr]
+        AKR MCP failed to connect and codegraph MCP timed out this session; akr get can hang on freshness rebuild, so Session 7 used akr search plus the implementation plan instead of knowledge.context.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.akr-supersede-old-with-new-refuses-with-akr [about akr]
+        'akr supersede <old> --with <new>' refuses with AKR-C032 when the successor already exists and is sealed, even when that record genuinely is the successor: three stale observations here were superseded by existing verified observations and the tool insisted on 'propose a new replacement key first'. The workaround is 'akr revise <old> --state superseded', which retires the old head but records no edge to the successor, so the successor relationship is lost. Separately, that same revise silently returned an active milestone to 'proposed' (it printed the hint, but sealed verified observations keep their state under the identical operation, so the behaviour differs by record class).
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.knowledge-propose-of-an-observation-with-a [about akr]
+        knowledge.propose of an observation with a `claims` array (one anchor + text) failed with AKR-P011 "unescaped newline in a quoted string" and AKR-P001 "unexpected character \\", though neither the statement nor the claim text contained a newline or backslash; the same record without `claims` was accepted. The diagnostics point at the wrong thing, so it took three attempts to find that `claims` was the trigger.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.lege-ecosystem-confirms-the-stale-by-tool [about akr]
+        Lege-ecosystem confirms the stale-by-tool-version view gap: at the start of the 2026-09-08 cleanup all seven docs/generated views carried 'tool: akr 0.4.0' while the installed binary was 0.5.0, and plain 'akr check' reported 'no diagnostics' throughout. Only rebuilding brought them current. A default check that never notices its own renderer is two versions behind undermines the guarantee that the generated docs are a faithful projection of the ledger.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.nothing-warns-when-a-scope-or-watch-glob [about akr]
+        Nothing warns when a scope or watch glob matches no tracked file, so the record it guards can never go stale. Nine of 302 distinct live scope/watch globs in this workspace match zero tracked files, including six pointing into lege-document-ocr/turboocr, a directory that exists on disk but is gitignored, so freshness for the TensorRT/WinSafe installer work records can never trip. Two more name files that were deleted or never existed (lege-process/**/tests/**, to-do-plans/auto-toc-plan.md). git ls-files -- ':(glob)<pattern>' finds all of them in under a second, so akr build could warn cheaply.
+
+        ## LegeOS @legeos.papercut.advisor-context-for-broad-code-doc-globs [about akr]
+        Advisor context for broad code/doc globs exceeded its requested budget and duplicated prose in structured tool output, so the first read was truncated; narrowing to the exact legacy docs yielded a complete readable bundle. A guessed project-semantics key also missed; exact search is required before get.
+
+        ## LegeOS @legeos.papercut.agents-md-and-the-global-instructions-describe [about akr]
+        AGENTS.md and the global instructions describe `akr handoff session begin` / `akr handoff worker|scout|advisor|reviewer` for cutting subagent packets, but the installed akr answers `error[AKR-C001]: unknown command "handoff"`. Packets are written by hand as Markdown under .agent/scratch/pre-iso/ instead, as the DE0.1 campaign did.
+
+        ## LegeOS @legeos.papercut.akr-mcp-failed-to-connect-this-session-so [about akr]
+        AKR MCP failed to connect this session, so knowledge.start/context had to go through the akr CLI. The CLI's start takes a positional task, not --task, which is the first guess from the MCP-shaped docs.
+
+        ## LegeOS @legeos.papercut.akr-requires-a-resolves-edge-before-a-question [about akr]
+        akr requires a resolves edge before a question may move to resolved (AKR-T031), but rejects a resolves edge that names the question by revision once the question is resolved (AKR-L021, 'may not reference .../2, which is resolved'). Proposing the answering observation with resolves [ @legeos.question.x/1 ] therefore succeeds, and then the akr revise that resolves the question fails, with nothing indicating that the revision suffix is the problem. The unversioned form resolves [ @legeos.question.x ] tracks the head and works, which is what the existing records in this ledger use — but propose accepted the pinned form without a word, so the failure surfaces one command later on a different record.
+
+        ## LegeOS @legeos.papercut.an-acceptance-check-whose-method-is-command-is [about akr]
+        An acceptance check whose method is command is satisfied by the command's exit status alone, so a check that runs nothing is indistinguishable from a check that passed. cargo test -p <crate> <filter> exits 0 when the filter matches no test ('running 0 tests ... ok. 0 passed; 0 failed; 373 filtered out'), and a sweep of this workspace at e6e1b1c3 found 12 of 104 distinct test-name filters on live records naming a test that exists nowhere in the tracked source — 11.5 percent of the command gates could not fail, two of them backing verified evidence records that record result pass. This is the same species as AKR-G022/G023 unmatched globs, one layer up: a check that is unfalsifiable by construction. akr cannot parse every command, but it could ask evidence with method command to record what the command reported, or warn when a check's command has never been paired with evidence whose summary shows a non-zero count. Detecting it externally took eleven lines of Python over .akr/records plus git grep, which suggests a cheap built-in sweep for the cargo case at least.
+
+        ## LegeOS @legeos.papercut.context-output-with-a-4000-token-budget-still [about akr]
+        Context output with a 4000-token budget still contained about 11433 tokens; 2500 was rejected as below mandatory 3473. Read the large bundle in sections.
+
+        ## LegeOS @legeos.papercut.creating-the-home-review-work-record-failed [about akr]
+        Creating the Home review work record failed because I supplied objective instead of work.intent; the schema error clearly listed valid slots and the retry succeeded.
+
+        ## LegeOS @legeos.papercut.home-audit-initially-scoped-crates-lege-shell [about akr]
+        Home audit initially scoped crates/lege-shell rather than shell/lege-shell; context accepted the nonexistent path without warning. Large context bundles also truncate normative prose at requested budget; retrieved the governing decisions individually.
+
+        ## LegeOS @legeos.papercut.knowledge-complete-refuses-a-check-whose [about akr]
+        `knowledge.complete` refuses a check whose evidence is an observation record rather than an evidence record with `result: pass`, but the error only says "does not record `result pass`" — it took a retry to work out that the fix was to author an evidence record, not to point the check at the observation that states the fact. A line in the help like "cite an evidence record; an observation cannot satisfy a check" would have saved the round trip.
+
+        ## LegeOS @legeos.papercut.knowledge-context-on-legeos-milestone-developer [about akr]
+        knowledge.context on @legeos.milestone.developer-edition-0-1 with 8 path globs truncated: it reported estimated_tokens 42168 against hard_limit_tokens 4000 and returned an empty `milestone` section, so the bundle carried no governing records at all. A milestone with 41 live heads seems to blow the cap before any per-path narrowing helps; had to fall back to knowledge.get on the two decisions named in the handoff packet.
+
+        ## LegeOS @legeos.papercut.knowledge-context-on-legeos-milestone-developer-2 [about akr]
+        knowledge.context on @legeos.milestone.developer-edition-0-1 with six path globs truncated at a 4000-token hard limit and returned an estimate of 42k, so the bundle carried no governing records at all — only the goal, the acceptance verdicts and one contradiction. The suggested continuation (a smaller budget_tokens) would return even less. I got what I needed from knowledge.get on two named records instead. A bundle that cannot fit should probably drop sections by relevance rather than truncate to nothing.
+
+        ## LegeOS @legeos.papercut.knowledge-context-on-legeos-work-home-surface [about akr]
+        knowledge.context on legeos.work.home-surface-usability-next returns a ~24k-token bundle against a 4k hard limit, so the first call always truncates and the suggested continuation (budget_tokens: 2000) drops most of it. Reading the nine named records with knowledge.get worked; a goal with this many descendants may need paths to narrow it more aggressively by default.
+
+        ## LegeOS @legeos.papercut.knowledge-evidence-add-many-returned-wrote [about akr]
+        knowledge.evidence_add_many returned wrote:false because an observed_at commit was mistyped, but both evidence records were nevertheless written with that invalid commit; the promised atomic/no-write failure behavior did not hold, requiring two corrective revisions.
+
+        ## LegeOS @legeos.papercut.knowledge-evidence-add-rejected-an-artifact [about akr]
+        knowledge.evidence_add rejected an artifact under .agent/scratch even though I had already run `akr scratch keep de01/D4-doctor-hardware.json` on that exact file; V-025 seems to recognise only top-level scratch entries, and its help text ("keep it with `akr scratch keep de01` first") pushes you to pin a whole shared directory other lanes are also writing into. Keeping one file should satisfy the rule.
+
+        ## LegeOS @legeos.papercut.knowledge-get-on-legeos-work-home-field [about akr]
+        knowledge.get on @legeos.work.home-field truncates at 2 of 9 acceptance checks even with relations:false — the 1500-token hard limit cannot surface a full acceptance block, and the suggested continuation (detail summary) drops acceptance entirely, leaving no tool path to the remaining checks' commands.
+
+        ## LegeOS @legeos.papercut.knowledge-revise-rejects-state-accepted-for-a [about akr]
+        `knowledge.revise` rejects `state: "accepted"` for a decision with "accepted is not a lifecycle state", but the tool schema does not list the valid states and the error does not name them either — `akr explain decision` does (proposed, active, rejected, superseded, withdrawn). Putting the lifecycle in the rejection message would make the retry unnecessary.
+
+        ## LegeOS @legeos.papercut.knowledge-revise-replaces-the-whole-sources [about akr]
+        knowledge.revise replaces the whole `sources` block, and re-supplying a citation with only kind/document/byte-range silently drops its `role`, `use` and `excerpt_hash`. For a source finalized with `--retain cited` (availability cited-only), losing excerpt_hash turns a valid citation into an AKR-S022 error, because retention is keyed on the hash and not on the byte range that is still present and unchanged. Worse, if the record was `proposed` the revise edits that revision in place, so the damage lands on rev 1 and cannot be undone by another revise (base_rev must equal the head, which is now rev 2) — it takes a git restore of the record file. Suggestion: either carry forward a citation's retained-fragment identity when a revise re-supplies the same document and byte range, or refuse the write with the same S022 message rather than accepting it and reporting the error only at the next validate.
+
+        ## LegeOS @legeos.papercut.knowledge-validate-resolved-the-shared-parent [about akr]
+        knowledge.validate resolved the shared parent directory instead of the LegeOS child workspace, so it reported no .akr; running the CLI from LegeOS worked.
+
+        ## LegeOS @legeos.papercut.the-akr-start-output-did-not-show-copyable [about akr]
+        The akr start output did not show copyable context CLI syntax; I retried context with a positional key and learned it requires --goal. A first papercut attempt also showed that example command backticks are unsafe through the shell.
+
+        ## LegeOS @legeos.papercut.the-output-suggested-a-ready-made-context [about akr]
+        The  output suggested a ready-made context request but did not print copyable CLI syntax; I retried  and learned the command requires .
+
+        ## LegeOS @legeos.papercut.while-proposing-an-assessment-with-an-internal [about akr]
+        While proposing an assessment with an internal source path plus line range, knowledge.propose rejected it because line citations also require a registered document; the schema accepts path alone but the distinction is easy to miss from the tool signature.
+
+        ## SaveYourSkin @saveyourskin.papercut.a-knowledge-context-call-rejected-src-engine [about akr]
+        A knowledge.context call rejected `src/engine/**office**`; the glob validator requires `**` to be a complete path segment. Retrying with exact paths worked, but the first call did not suggest the nearest valid glob.
+
+        ## SaveYourSkin @saveyourskin.papercut.akr-g023-fires-on-scope-paths-that-are-real [about akr]
+        AKR-G023 fires on scope paths that are real directories deliberately kept out of git (SYSEngine/assets/characters/{garments,human}, assets_external — excluded by 280211c 'keep binary art and media out of source history'). The scope is correct and the record even documents the choice, but there is no way to say 'this path exists and is untracked on purpose', so the warning is permanent noise that cannot be fixed without falsifying the scope.
+
+        ## SaveYourSkin @saveyourskin.papercut.knowledge-get-truncates-milestone-acceptance [about akr]
+        knowledge.get truncates milestone acceptance blocks at the token cap even with detail canonical — overhaul-g5 and -g6 returned 2 of 5 checks each, and the suggested continuation (detail body) drops the same ones, so an agent reconciling acceptance commands had to read .akr/records/*/milestones.akr directly to see the full block. A per-section continuation (or an acceptance-only detail) would keep the tools sufficient.
+
+        ## SaveYourSkin @saveyourskin.papercut.knowledge-propose-exposes-free-form-slots-in [about akr]
+        knowledge.propose exposes free-form slots in its schema, but assessment slots are kind-specific and only revealed after rejection. Publishing the valid slots per kind in the tool schema or help would avoid a failed write attempt.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.akr-propose-accepted-an-observation-whose [about akr]
+        `akr propose` accepted an observation whose observed_at was a well-formed 40-hex string that is not a commit in this repository, and wrote it without complaint. `akr evidence add` rejects the identical value immediately with AKR-G011. That asymmetry is the defect: two write paths for the same slot type, one validating existence and one validating shape only, so the mistake lands silently at the point where it is cheapest to catch and surfaces later as an AKR-G011 error on the next `akr check` ("observed_at git:... is not present in this repository", with help pointing at V-101 and rebase/force-push stranding). Corrected after a sandbox check: this is an ergonomics and consistency defect, NOT a correctness hole. I first wrote it up as producing an unfalsifiable freshness anchor; that is wrong, `akr check` does catch it, and hard under --strict. The cost is only that a bad write survives until the next check and is then attributed to whoever runs it rather than to whoever made it. I hit this myself by fabricating a plausible-looking hash and caught it by re-reading my own record, not because propose objected.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.knowledge-propose-for-an-assessment-rejected [about akr]
+        knowledge.propose for an assessment rejected the generic `method` slot; the tool schema exposes generic `slots` but not the kind-specific slot set until rejection. The diagnostic did provide the valid assessment slots, so retry is straightforward.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.knowledge-propose-rejected-a-work-record [about akr]
+        knowledge.propose rejected a work record because the schema expects slot `intent`, not the natural `summary`; the tool schema exposes slots as an untyped map and does not surface valid per-kind slots until failure.
+        """
+    observed_at git:0dd6057aafb21ef86ae8d2bc7a659ed3c7fd1ebc
+    about "akr"
+    collated [
+        "kitchen.papercut.while-scoping-a-read-only-hardware",
+        "lege-ecosystem.papercut.akr-import-ingest-of-a-long-planning-document",
+        "lege-ecosystem.papercut.akr-mcp-failed-to-connect-and-codegraph-mcp",
+        "lege-ecosystem.papercut.akr-supersede-old-with-new-refuses-with-akr",
+        "lege-ecosystem.papercut.knowledge-propose-of-an-observation-with-a",
+        "lege-ecosystem.papercut.lege-ecosystem-confirms-the-stale-by-tool",
+        "lege-ecosystem.papercut.nothing-warns-when-a-scope-or-watch-glob",
+        "legeos.papercut.advisor-context-for-broad-code-doc-globs",
+        "legeos.papercut.agents-md-and-the-global-instructions-describe",
+        "legeos.papercut.akr-mcp-failed-to-connect-this-session-so",
+        "legeos.papercut.akr-requires-a-resolves-edge-before-a-question",
+        "legeos.papercut.an-acceptance-check-whose-method-is-command-is",
+        "legeos.papercut.context-output-with-a-4000-token-budget-still",
+        "legeos.papercut.creating-the-home-review-work-record-failed",
+        "legeos.papercut.home-audit-initially-scoped-crates-lege-shell",
+        "legeos.papercut.knowledge-complete-refuses-a-check-whose",
+        "legeos.papercut.knowledge-context-on-legeos-milestone-developer",
+        "legeos.papercut.knowledge-context-on-legeos-milestone-developer-2",
+        "legeos.papercut.knowledge-context-on-legeos-work-home-surface",
+        "legeos.papercut.knowledge-evidence-add-many-returned-wrote",
+        "legeos.papercut.knowledge-evidence-add-rejected-an-artifact",
+        "legeos.papercut.knowledge-get-on-legeos-work-home-field",
+        "legeos.papercut.knowledge-revise-rejects-state-accepted-for-a",
+        "legeos.papercut.knowledge-revise-replaces-the-whole-sources",
+        "legeos.papercut.knowledge-validate-resolved-the-shared-parent",
+        "legeos.papercut.the-akr-start-output-did-not-show-copyable",
+        "legeos.papercut.the-output-suggested-a-ready-made-context",
+        "legeos.papercut.while-proposing-an-assessment-with-an-internal",
+        "saveyourskin.papercut.a-knowledge-context-call-rejected-src-engine",
+        "saveyourskin.papercut.akr-g023-fires-on-scope-paths-that-are-real",
+        "saveyourskin.papercut.knowledge-get-truncates-milestone-acceptance",
+        "saveyourskin.papercut.knowledge-propose-exposes-free-form-slots-in",
+        "jpegxl-rs.papercut.akr-propose-accepted-an-observation-whose",
+        "jpegxl-rs.papercut.knowledge-propose-for-an-assessment-rejected",
+        "jpegxl-rs.papercut.knowledge-propose-rejected-a-work-record"
+    ]
+    created_at 2026-09-08
+}
+
 record akr.papercut.collated-7-papercuts-from-lege-ecosystem-jpegxl/1 : papercut {
     title "Collated 7 papercuts from Lege-ecosystem, jpegXL-rs and raw-autotune"
     state verified
@@ -1364,6 +1517,18 @@ record akr.papercut.evidence-recorded-after-tests-but-before/2 : papercut {
     supersedes [ @akr.papercut.evidence-recorded-after-tests-but-before/1 ]
     author "codex"
     created_at 2026-08-11
+}
+
+record akr.papercut.grok-build-1-0-25-mcp-client-validates/1 : papercut {
+    title "Grok Build 1.0.25 MCP client validates advertised tool names against…"
+    state verified
+    statement """
+        Grok Build 1.0.25 MCP client validates advertised tool names against ^[a-zA-Z_][a-zA-Z0-9_-]{0,63}$ and silently skips dotted names, so akr-mcp knowledge.* attached with tool_count:0 while grok mcp doctor reported 37 tools and no decode error. Workaround: advertise knowledge_* when clientInfo.name starts with grok; tools/call accepts both forms.
+        """
+    observed_at git:0dd6057aafb21ef86ae8d2bc7a659ed3c7fd1ebc
+    about "grok"
+    author "grok"
+    created_at 2026-09-10
 }
 
 record akr.papercut.historical-port-design-gap-recovered-from-a/1 : papercut {

@@ -243,7 +243,9 @@ it to `/1` would mean the work item implements a policy nobody follows any more.
 1. **Evidence and provenance.** `derived_from [ @lege.obs.viewer-imports-engine/1 ]` —
    the decision was derived from that observation, not from whatever replaces it.
 2. **Supersession.** `supersedes [ @sys.work.m3-plan/1 ]` is always pinned; superseding
-   "the current head" is meaningless.
+   "the current head" is meaningless. **This one is enforced (D-044):** an unversioned
+   `supersedes` is `AKR-L021`. It is the one case where the guidance below was not merely
+   ignored but silently undone by the reference following its target.
 3. **Narrating history.** Anything in a `context` or `consequences` slot that describes
    what was true at the time.
 4. **Contradiction.** `contradicts` names a specific claim that conflicts, and the
@@ -252,6 +254,35 @@ it to `/1` would mean the work item implements a policy nobody follows any more.
 
 The general shape: **normative references float, historical references pin.** If the
 sentence is "we follow X", float. If it is "we did this because X said Y", pin.
+
+**"Not enforced" governs the choice, not the use.** D-009 defines what a reference
+*means* — `@key` is the head at build time, `@key/2` is that revision for good — and
+leaves the choice between them to judgement, which is this section. V-006 governs where a
+reference may be *used*: a live record may not pin a terminal target, because that is
+building on something that has been retired. The two do not conflict, and the reason is
+worth stating because reading them together suggests they do. Nothing forces you to pin a
+`supersedes` edge; if you pin one, the target being terminal is then expected rather than
+a fault, which is why `supersedes` and the other historical relations are exempt from
+V-006 outright.
+
+**Case 2 was guidance and case 2 was also a trap, which is why it is now enforced.**
+`supersedes` naming a key with no revision meant "the current head", so it re-aimed as its
+target gained revisions. On 2026-09-08 a LegeOS decision was found carrying `supersedes
+[ @legeos.decision.toolchain-licence-namespace ]`, written when that key was at an earlier
+revision and by then naming revision 3, which was `active` — the ledger asserting that one
+live decision had replaced another live decision, with nobody having edited either. Worse,
+a cross-key `supersedes` edge does not retire anything in *either* form: within one key
+supersession is the revision chain and head resolution computes it, but across keys the
+edge is documentation and `akr supersede` is what moves the target's state. V-006 now
+refuses the unversioned form outright (D-044) and separately reports a `supersedes` edge
+whose cross-key target is still live. The two are distinct: the refusal stops an edge
+re-aiming later, the warning catches one that was inert from the day it was written.
+
+The same argument applies to `contradicts` and `derived_from`, which are historical
+relations by the same classification, and the migration does not: fifteen workspaces held
+nine unversioned `supersedes` edges and **510 unversioned `derived_from`** ones. That is
+its own piece of work with its own plan, and case 1 above already states the rule those
+510 break.
 
 ### 4.2 Anchors
 

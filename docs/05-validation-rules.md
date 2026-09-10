@@ -692,11 +692,23 @@ available at all.
 **Stage** resolve · **Code** `AKR-R031`
 
 **Statement.** A `decision` in state `active` has at least one live `implements`,
-`depends_on`, or `supported_by` edge to a `requirement`, `policy`, `constraint`, or
-evidence-bearing record.
+`depends_on`, or `supported_by` edge to a `requirement`, `policy`, `constraint`,
+`observation`, or evidence-bearing record.
 
 **Why.** A decision resting on nothing is a preference. The rule exists to make you notice
 which one you have — not to forbid preferences, but to make them visible as such.
+
+**`observation` counts (D-042).** It did not until 2026-09-08, and the omission was
+expensive: an author's first instinct is to cite the measurement that motivated the
+decision, so the rule refused the one citation people were already writing and reported
+only that the decision "cites nothing". Across fifteen audited workspaces that left whole
+normative layers stuck at `proposed`, with four separate agents examining them and
+correctly declining to invent citations to get past the validator. The rule keeps its
+teeth: an empty `supported_by`, or one naming only other decisions, is still `AKR-R031`.
+
+**`proposed` is not a defect (D-042).** A normative record at `proposed` means *recorded*,
+not *pending*. Nothing counts them as outstanding work and no view presents them as a
+backlog.
 
 ```
 # fails

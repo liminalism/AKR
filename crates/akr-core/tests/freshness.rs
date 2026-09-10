@@ -425,6 +425,42 @@ fn a_watch_glob_matching_nothing_is_g022() {
     assert_eq!(diagnostics[0].code, codes::G022);
 }
 
+/// A bare directory means the directory, with or without a trailing slash. Before
+/// 2026-09-08 both matched nothing, and the author of `path "tools/"` was told the path
+/// had moved or been deleted about a directory holding twenty-five tracked files.
+#[test]
+fn a_directory_scope_matches_what_is_under_it() {
+    let mut repo = TempRepo::new("dir-scope");
+    let head = repo.commit_file("tools/build.py", "1\n", "base");
+    let git = Repository::open(repo.root()).expect("opens");
+    for written in ["tools/", "tools", "tools/**", "tools/*", "tools/build.py"] {
+        let mut ledger = Ledger::new(Project::new("p", &["fx"]));
+        ledger.insert(
+            RecordBuilder::new("fx.work.tooling", 1, Kind::Work)
+                .filled()
+                .state(State::Active)
+                .path_scope(written)
+                .build(),
+        );
+        let diagnostics = unmatched_watches(&ledger, &git, &commit(&head)).expect("lists");
+        assert!(
+            !diagnostics.iter().any(|d| d.code == codes::G023),
+            "{written:?} should match tools/build.py: {diagnostics:?}"
+        );
+    }
+    // And a directory that really is not there still reports.
+    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
+    ledger.insert(
+        RecordBuilder::new("fx.work.gone", 1, Kind::Work)
+            .filled()
+            .state(State::Active)
+            .path_scope("toolsmiths/")
+            .build(),
+    );
+    let diagnostics = unmatched_watches(&ledger, &git, &commit(&head)).expect("lists");
+    assert!(diagnostics.iter().any(|d| d.code == codes::G023));
+}
+
 #[test]
 fn a_scope_glob_matching_nothing_is_g023() {
     let mut repo = TempRepo::new("g023");
@@ -435,18 +471,103 @@ fn a_scope_glob_matching_nothing_is_g023() {
         RecordBuilder::new("fx.policy.mis-scoped", 1, Kind::Policy)
             .filled()
             .state(State::Active)
-            .path_scope("path src/**")
+            .path_scope("engine/gone/**")
             .build(),
     );
     let diagnostics = unmatched_watches(&ledger, &git, &commit(&head)).expect("lists");
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].code, codes::G023);
-    assert!(
-        diagnostics[0]
-            .help
-            .as_deref()
-            .is_some_and(|help| help.contains("copied `path ` prefix"))
+}
+
+/// The two authoring slips that used to be stored, matched nothing, and reported as a
+/// dead scope: the slot keyword pasted into the value, and a quoted string nested in
+/// another one. Both are malformed globs, and saying so is more use than saying the path
+/// does not exist — it does not exist because it is not a path.
+#[test]
+fn a_malformed_scope_glob_is_g021_and_not_a_dead_scope() {
+    for written in ["path src/**", "path \"src/**\""] {
+        let mut repo = TempRepo::new("g021-scope");
+        let head = repo.commit_file("src/lib.rs", "1\n", "base");
+        let git = Repository::open(repo.root()).expect("opens");
+        let mut ledger = Ledger::new(Project::new("p", &["fx"]));
+        ledger.insert(
+            RecordBuilder::new("fx.policy.mis-scoped", 1, Kind::Policy)
+                .filled()
+                .state(State::Active)
+                .path_scope(written)
+                .build(),
+        );
+        let diagnostics = unmatched_watches(&ledger, &git, &commit(&head)).expect("lists");
+        assert_eq!(diagnostics.len(), 1, "for {written:?}");
+        assert_eq!(diagnostics[0].code, codes::G021, "for {written:?}");
+        assert!(!diagnostics.iter().any(|d| d.code == codes::G023));
+    }
+}
+
+/// Freshness stops at the live set, but a scope is a different claim: it says what this
+/// work touched, and a reader consults it long after the work finished. A census of 15
+/// ledgers found 88 of 254 dead scope globs sitting on completed records, unreported.
+#[test]
+fn a_completed_records_dead_scope_is_still_reported() {
+    let mut repo = TempRepo::new("g023-completed");
+    let head = repo.commit_file("src/lib.rs", "1\n", "base");
+    let git = Repository::open(repo.root()).expect("opens");
+    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
+    ledger.insert(
+        RecordBuilder::new("fx.work.finished", 1, Kind::Work)
+            .filled()
+            .state(State::Completed)
+            .path_scope("engine/gone/**")
+            .build(),
     );
+    let diagnostics = unmatched_watches(&ledger, &git, &commit(&head)).expect("lists");
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].code, codes::G023);
+}
+
+/// The other end of the same state machine. A sealed superseded record cannot be edited,
+/// so warning about its scope names a defect with no available remedy.
+#[test]
+fn a_superseded_records_dead_scope_is_not_reported() {
+    let mut repo = TempRepo::new("g023-superseded");
+    let head = repo.commit_file("src/lib.rs", "1\n", "base");
+    let git = Repository::open(repo.root()).expect("opens");
+    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
+    ledger.insert(
+        RecordBuilder::new("fx.work.retired", 1, Kind::Work)
+            .filled()
+            .state(State::Superseded)
+            .path_scope("engine/gone/**")
+            .build(),
+    );
+    let diagnostics = unmatched_watches(&ledger, &git, &commit(&head)).expect("lists");
+    assert!(!diagnostics.iter().any(|d| d.code == codes::G023));
+}
+
+/// An ignored path is not an authoring mistake, so it is not a diagnostic — but it is
+/// also not verifiable, and staying silent about it is what let 96 of them accumulate
+/// unseen across fifteen ledgers. It is reported as a build fact instead.
+#[test]
+fn an_ignored_scope_is_a_build_fact_rather_than_a_diagnostic() {
+    use akr_core::freshness::{UnverifiableReason, unverifiable_scopes};
+    let mut repo = TempRepo::new("unverifiable-ignored");
+    repo.write(".gitignore", ".cache/\n");
+    let head = repo.commit_file("src/lib.rs", "1\n", "base");
+    let git = Repository::open(repo.root()).expect("opens");
+    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
+    ledger.insert(
+        RecordBuilder::new("fx.decision.cache", 1, Kind::Decision)
+            .filled()
+            .state(State::Active)
+            .path_scope(".cache/index.sqlite")
+            .build(),
+    );
+    let diagnostics = unmatched_watches(&ledger, &git, &commit(&head)).expect("lists");
+    assert!(!diagnostics.iter().any(|d| d.code == codes::G023));
+    let facts = unverifiable_scopes(&ledger, &git, &commit(&head)).expect("lists");
+    assert_eq!(facts.len(), 1);
+    assert_eq!(facts[0].glob, ".cache/index.sqlite");
+    assert_eq!(facts[0].reason, UnverifiableReason::Ignored);
 }
 
 #[test]

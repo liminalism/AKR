@@ -373,6 +373,143 @@ fn validate_inputs(
     Ok(out)
 }
 
+/// Whether a record still asserts the scope it names.
+///
+/// Wider than [`Record::is_live`] on purpose. Freshness is about what may still go
+/// stale, so it stops at the live set; a scope is a different claim — it says what this
+/// work touched — and a reader consults it long after the work finished. A census of
+/// fifteen ledgers on 2026-09-08 found 88 of 254 dead scope globs sitting on `completed`
+/// records, silently unreported for exactly this reason (D-010, V-102).
+fn asserts_its_scope(record: &crate::model::Record) -> bool {
+    record.is_live() || record.state == crate::model::State::Completed
+}
+
+/// A scope path that names something git cannot report a change to, so the record it
+/// governs can never be checked against it. Not a diagnostic: the scope may be perfectly
+/// correct and the exclusion perfectly deliberate. It is a build fact, in the same sense
+/// staleness and scratch are (D-024, D-036).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnverifiableScope {
+    /// The record whose scope names it.
+    pub id: crate::model::RevisionId,
+    /// The glob as written.
+    pub glob: String,
+    /// Why git cannot answer for it.
+    pub reason: UnverifiableReason,
+}
+
+/// Why a scope path cannot be verified against git.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnverifiableReason {
+    /// The repository ignores the path, so no commit will ever touch it.
+    Ignored,
+    /// The path lies inside a submodule, which `ls-tree` never recurses into.
+    Submodule,
+    /// `project.akr` declares the tree deliberately untracked.
+    Declared,
+}
+
+impl std::fmt::Display for UnverifiableReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Ignored => "the repository ignores it",
+            Self::Submodule => "it lies inside a submodule",
+            Self::Declared => "project.akr declares it untracked",
+        })
+    }
+}
+
+/// Whether a glob lies at or under a tree `project.akr` declares untracked.
+///
+/// Compares literal prefixes, exactly as [`inside_submodule`] does: the declaration names
+/// a tree, and any scope reaching into that tree inherits it. A declaration is a claim
+/// about the repository, so it is checked against git in [`unmatched_watches`] — declaring
+/// a tree that is in fact tracked is an authoring mistake, not a licence to go quiet.
+fn is_declared_untracked(declared: &[crate::model::Glob], glob: &str) -> bool {
+    let literal = literal_prefix(glob);
+    if literal.is_empty() {
+        return false;
+    }
+    declared.iter().any(|d| {
+        let root = literal_prefix(d.as_str());
+        !root.is_empty() && (literal == root || literal.starts_with(&format!("{root}/")))
+    })
+}
+
+/// The part of a glob before its first wildcard segment.
+fn literal_prefix(glob: &str) -> String {
+    glob.split('/')
+        .take_while(|s| !s.contains(['*', '?', '[']))
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// Scope paths git cannot answer for, reported as facts rather than as diagnostics.
+///
+/// These are the two cases [`unmatched_watches`] deliberately stays quiet about, because
+/// neither is an authoring mistake: an ignored path may be excluded from the repository
+/// on purpose, and a submodule is tracked as a gitlink that `ls-tree` never enters. But
+/// staying quiet is what let them accumulate unseen — 96 ignored and 7 submodule cases in
+/// the 2026-09-08 census — so they are surfaced here, where a build fact belongs.
+///
+/// # Errors
+/// Propagates any git failure.
+pub fn unverifiable_scopes(
+    ledger: &Ledger,
+    repository: &Repository,
+    head: &Commit,
+) -> Result<Vec<UnverifiableScope>, GitError> {
+    let submodules = repository.run_ls_tree_submodules(head)?;
+    let mut out = Vec::new();
+    for record in sorted_records(ledger) {
+        if !asserts_its_scope(record) {
+            continue;
+        }
+        for term in &record.scope {
+            let crate::model::ScopeTerm::Path(glob) = term else {
+                continue;
+            };
+            if validate_glob(glob).is_err() {
+                continue;
+            }
+            // `.agent/scratch/**` is AKR's own working directory. It is gitignored by
+            // `akr init`, `akr scratch keep` invites records to cite into it, and `akr
+            // check` already reports it on its own line. Counting it here buried the real
+            // findings: one workspace contributed 64 of 78 from nine scratch globs alone.
+            if glob.as_str().starts_with(".agent/scratch") {
+                continue;
+            }
+            let reason = if inside_submodule(&submodules, glob.as_str()) {
+                UnverifiableReason::Submodule
+            } else if is_declared_untracked(&ledger.project.untracked, glob.as_str()) {
+                UnverifiableReason::Declared
+            } else if repository.is_ignored(glob.as_str())? {
+                UnverifiableReason::Ignored
+            } else {
+                continue;
+            };
+            out.push(UnverifiableScope {
+                id: record.id.clone(),
+                glob: glob.as_str().to_owned(),
+                reason,
+            });
+        }
+    }
+    out.sort_by(|a, b| (&a.id, &a.glob).cmp(&(&b.id, &b.glob)));
+    Ok(out)
+}
+
+/// Whether a glob's literal prefix lies at or under a submodule path.
+fn inside_submodule(submodules: &std::collections::BTreeSet<String>, glob: &str) -> bool {
+    let literal = literal_prefix(glob);
+    if literal.is_empty() {
+        return false;
+    }
+    submodules
+        .iter()
+        .any(|m| literal == *m || literal.starts_with(&format!("{m}/")))
+}
+
 /// V-102's second half, which needs the file list rather than the history: a glob that
 /// matches nothing at the resolved commit can never fire again.
 ///
@@ -392,17 +529,24 @@ pub fn unmatched_watches(
     repository.prime_ignored(
         sorted_records(ledger)
             .iter()
-            .filter(|r| r.is_live())
+            .filter(|r| asserts_its_scope(r))
             .flat_map(|record| {
                 record.scope.iter().filter_map(|term| match term {
-                    crate::model::ScopeTerm::Path(glob) => Some(glob.as_str()),
+                    // Validated first, deliberately. `git check-ignore -- /abs/path/**`
+                    // exits 128 `fatal: Invalid path`, and one such glob anywhere in the
+                    // ledger used to fail this whole function — taking every scope and
+                    // watch diagnostic in the workspace with it, silently.
+                    crate::model::ScopeTerm::Path(glob) if validate_glob(glob).is_ok() => {
+                        Some(glob.as_str())
+                    }
                     _ => None,
                 })
             }),
     );
+    let submodules = repository.run_ls_tree_submodules(head)?;
     let mut out = Vec::new();
     for record in sorted_records(ledger) {
-        if !record.is_live() {
+        if !asserts_its_scope(record) {
             continue;
         }
         for glob in watches(record) {
@@ -429,10 +573,28 @@ pub fn unmatched_watches(
             let crate::model::ScopeTerm::Path(glob) = term else {
                 continue;
             };
-            if validate_glob(glob).is_err() {
+            // Until 0.5.0 a malformed scope glob was silently skipped, so `path "path
+            // src/**"` and a double-wrapped `path "path \"a/**\""` were stored, matched
+            // nothing, and surfaced — if at all — as a dead scope rather than as the
+            // authoring slip they are. A malformed glob is not a dead one; say which it
+            // is (D-008, V-102).
+            if let Err(error) = validate_glob(glob) {
+                out.push(Diagnostic::error(
+                    codes::G021,
+                    crate::git::V102,
+                    Subject::Revision(record.id.clone()),
+                    format!("{}: scope path {:?}: {error}", record.id, glob.as_str()),
+                ));
                 continue;
             }
-            if repository.is_ignored(glob.as_str())? {
+            // Three silences that are not mistakes, and are reported as build facts by
+            // [`unverifiable_scopes`] instead: a path the repository ignores, a path
+            // inside a submodule, which `ls-tree` never recurses into, and a tree
+            // `project.akr` declares deliberately untracked.
+            if repository.is_ignored(glob.as_str())?
+                || inside_submodule(&submodules, glob.as_str())
+                || is_declared_untracked(&ledger.project.untracked, glob.as_str())
+            {
                 continue;
             }
             if !listing.iter().any(|path| glob_matches(glob, path)) {
@@ -447,9 +609,38 @@ pub fn unmatched_watches(
                             glob.as_str()
                         ),
                     )
-                    .help("check for a copied `path ` prefix or a moved path; an unmatched scope cannot govern or become stale with its intended code"),
+                    .help("the path moved or was deleted; an unmatched scope cannot govern or become stale with its intended code"),
                 );
             }
+        }
+    }
+    // An `untracked` declaration silences every scope beneath it, so it is the one place
+    // in the ledger where being wrong is invisible by construction. Check it against git
+    // rather than taking the author's word: if the tree is in fact tracked, the
+    // declaration is muting scopes that git could have answered for all along.
+    for glob in &ledger.project.untracked {
+        let root = literal_prefix(glob.as_str());
+        if root.is_empty() {
+            continue;
+        }
+        if listing
+            .iter()
+            .any(|path| path == &root || path.starts_with(&format!("{root}/")))
+        {
+            out.push(
+                Diagnostic::warning(
+                    codes::G026,
+                    crate::git::V102,
+                    Subject::Ledger,
+                    format!(
+                        "project.akr declares {:?} untracked, but {root:?} is tracked at {head}",
+                        glob.as_str()
+                    ),
+                )
+                .help(
+                    "the declaration silences every scope beneath it; drop it, or narrow it to the part git really does not hold",
+                ),
+            );
         }
     }
     out.sort_by_key(Diagnostic::sort_key);
@@ -580,4 +771,69 @@ pub const fn is_evaluated(state: State) -> bool {
         state,
         State::Disproven | State::Superseded | State::Withdrawn
     )
+}
+
+#[cfg(test)]
+mod declared_untracked_tests {
+    use super::is_declared_untracked;
+    use crate::model::Glob;
+
+    #[test]
+    fn a_declared_tree_covers_the_scopes_beneath_it_and_nothing_else() {
+        // SaveYourSkin's shape: character art is real, on disk, and deliberately not in
+        // git (280211c), while eleven records scope into it.
+        let declared = [
+            Glob::new("SYSEngine/assets/characters/**"),
+            Glob::new("SYSEngine/assets_external/**"),
+        ];
+        assert!(is_declared_untracked(
+            &declared,
+            "SYSEngine/assets/characters/garments/**"
+        ));
+        assert!(is_declared_untracked(
+            &declared,
+            "SYSEngine/assets/characters/human/**"
+        ));
+        assert!(is_declared_untracked(&declared, "SYSEngine/assets_external/**"));
+        // A sibling under the same parent is not covered: the declaration names a tree,
+        // not a prefix of a path string.
+        assert!(!is_declared_untracked(
+            &declared,
+            "SYSEngine/assets/object_library/**"
+        ));
+        assert!(!is_declared_untracked(
+            &declared,
+            "SYSEngine/assets_external_notes/**"
+        ));
+        assert!(!is_declared_untracked(&declared, "src/**"));
+        // A glob that names no literal prefix cannot be matched against a tree, and must
+        // not be silenced by one — otherwise `**/x.rs` would inherit every declaration.
+        assert!(!is_declared_untracked(&declared, "**/lib.rs"));
+        // And a declaration that is itself all wildcard silences nothing.
+        assert!(!is_declared_untracked(&[Glob::new("**")], "src/**"));
+    }
+}
+
+#[cfg(test)]
+mod submodule_tests {
+    use super::inside_submodule;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn a_glob_under_a_gitlink_is_recognised_and_a_sibling_is_not() {
+        // `ls-tree` reports a submodule as one entry and never recurses into it, so
+        // `libbpg/**` matches nothing while `libbpg` itself is perfectly well tracked.
+        let submodules: BTreeSet<String> = ["libbpg".to_owned(), "vendor/x264".to_owned()]
+            .into_iter()
+            .collect();
+        assert!(inside_submodule(&submodules, "libbpg/**"));
+        assert!(inside_submodule(&submodules, "libbpg"));
+        assert!(inside_submodule(&submodules, "libbpg/src/*.c"));
+        assert!(inside_submodule(&submodules, "vendor/x264/**"));
+        assert!(!inside_submodule(&submodules, "libbpg-tools/**"));
+        assert!(!inside_submodule(&submodules, "vendor/**"));
+        assert!(!inside_submodule(&submodules, "src/**"));
+        // A glob whose first segment is already a wildcard names no literal prefix.
+        assert!(!inside_submodule(&submodules, "**/lib.rs"));
+    }
 }

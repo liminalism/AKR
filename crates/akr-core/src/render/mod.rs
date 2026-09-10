@@ -61,13 +61,18 @@ pub mod codes {
     pub const E013: Code = Code::new("AKR-E013");
     /// Unexpected file in the view output directory.
     pub const E014: Code = Code::new("AKR-E014");
+    /// Generated view differs only in the banner's `tool:` version line.
+    pub const E015: Code = Code::new("AKR-E015");
+    /// Generated view is behind ledger changes that are not committed yet.
+    pub const E016: Code = Code::new("AKR-E016");
     /// Record required by a view is absent from the resolved model.
     pub const E021: Code = Code::new("AKR-E021");
     /// Duplicate heading anchor in a view.
     pub const E022: Code = Code::new("AKR-E022");
 
     /// Every emission code this crate can raise.
-    pub const ALL: &[Code] = &[E001, E002, E003, E011, E012, E013, E014, E021, E022];
+    pub const ALL: &[Code] =
+        &[E001, E002, E003, E011, E012, E013, E014, E015, E016, E021, E022];
 }
 
 use crate::graph::{AtRisk, propagate_staleness};

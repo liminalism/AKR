@@ -21,6 +21,7 @@
 use akr_core::json::{Value, parse};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::errors::ToolError;
 use crate::schema::{TOOLS, input_schema, output_schema};
@@ -71,6 +72,11 @@ pub struct Server {
     root: PathBuf,
     surface: Surface,
     accounting: Option<PathBuf>,
+    /// Advertise `knowledge_search` instead of `knowledge.search`.
+    ///
+    /// Set by `--tool-names underscore` or when `initialize` names a host that
+    /// drops dotted MCP tool names (Grok Build 1.0.25).
+    host_safe_tool_names: AtomicBool,
 }
 
 /// Which half of the tool catalogue this server exposes.
@@ -116,6 +122,7 @@ impl Server {
             root: root.into(),
             surface: Surface::Full,
             accounting: None,
+            host_safe_tool_names: AtomicBool::new(false),
         }
     }
 
@@ -130,6 +137,16 @@ impl Server {
     #[must_use]
     pub fn with_accounting(mut self, path: impl Into<PathBuf>) -> Self {
         self.accounting = Some(path.into());
+        self
+    }
+
+    /// Advertises underscored tool names (`knowledge_search`) instead of dotted ones.
+    ///
+    /// `tools/call` accepts both forms either way. Use this when the host is known
+    /// ahead of `initialize`, or for hosts we do not fingerprint.
+    #[must_use]
+    pub fn with_host_safe_tool_names(self, enabled: bool) -> Self {
+        self.host_safe_tool_names.store(enabled, Ordering::Relaxed);
         self
     }
 
@@ -194,9 +211,14 @@ impl Server {
 
     /// The guidance every handshake carries.
     fn instructions(&self) -> Value {
+        let (context, validate) = if self.host_safe_tool_names.load(Ordering::Relaxed) {
+            ("knowledge_context", "knowledge_validate")
+        } else {
+            ("knowledge.context", "knowledge.validate")
+        };
         Value::string(format!(
-            "AKR knowledge ledger at {}. Call knowledge.context before touching \
-             code, and knowledge.validate before handing work back.",
+            "AKR knowledge ledger at {}. Call {context} before touching \
+             code, and {validate} before handing work back.",
             self.root.display()
         ))
     }
@@ -207,6 +229,9 @@ impl Server {
     }
 
     fn initialize(&self, params: &Value) -> Value {
+        if client_wants_host_safe_tool_names(params) {
+            self.host_safe_tool_names.store(true, Ordering::Relaxed);
+        }
         let protocol_version = select_protocol(params);
         Value::object(vec![
             ("protocolVersion", Value::string(protocol_version)),
@@ -256,6 +281,7 @@ impl Server {
     }
 
     fn tools_list(&self) -> Value {
+        let host_safe = self.host_safe_tool_names.load(Ordering::Relaxed);
         Value::object(vec![(
             "tools",
             Value::array(
@@ -263,9 +289,21 @@ impl Server {
                     .iter()
                     .filter(|tool| self.surface.exposes(tool))
                     .map(|tool| {
-                        Value::object(vec![
-                            ("name", Value::string(tool.name)),
+                        let mut fields = vec![
+                            (
+                                "name",
+                                Value::string(if host_safe {
+                                    crate::schema::host_safe_name(tool.name)
+                                } else {
+                                    tool.name.to_owned()
+                                }),
+                            ),
                             ("description", Value::string(tool.description)),
+                        ];
+                        if host_safe {
+                            fields.push(("title", Value::string(tool.name)));
+                        }
+                        fields.extend([
                             (
                                 "inputSchema",
                                 input_schema(tool.name).unwrap_or(Value::Object(Vec::new())),
@@ -288,7 +326,8 @@ impl Server {
                                     ),
                                 ]),
                             ),
-                        ])
+                        ]);
+                        Value::object(fields)
                     })
                     .collect(),
             ),
@@ -296,7 +335,8 @@ impl Server {
     }
 
     fn tools_call(&self, params: &Value) -> Value {
-        let name = params.get("name").and_then(Value::as_str).unwrap_or("");
+        let advertised = params.get("name").and_then(Value::as_str).unwrap_or("");
+        let name = crate::schema::canonical_tool_name(advertised).unwrap_or(advertised);
         let arguments = params
             .get("arguments")
             .cloned()
@@ -405,6 +445,15 @@ fn content(text: Option<&str>, structured: &Value, is_error: bool) -> Value {
         ("structuredContent", structured.clone()),
         ("isError", Value::bool(is_error)),
     ])
+}
+
+/// Grok Build 1.0.25 (clientInfo.name `grok`) silently drops dotted MCP tool names.
+fn client_wants_host_safe_tool_names(params: &Value) -> bool {
+    params
+        .get("clientInfo")
+        .and_then(|info| info.get("name"))
+        .and_then(Value::as_str)
+        .is_some_and(|name| name.to_ascii_lowercase().starts_with("grok"))
 }
 
 fn select_protocol(parameters: &Value) -> &'static str {
@@ -716,10 +765,13 @@ mod tests {
             .and_then(|result| result.get("tools"))
             .and_then(Value::as_array)
             .expect("tools array");
+        // Grok's clientInfo is why this fixture exists: that host drops dotted
+        // names, so the advertised catalogue must be the underscored form.
         assert!(
-            listed
-                .iter()
-                .any(|tool| tool.get("name").and_then(Value::as_str) == Some("knowledge.start")),
+            listed.iter().any(|tool| {
+                tool.get("name").and_then(Value::as_str) == Some("knowledge_start")
+                    && tool.get("title").and_then(Value::as_str) == Some("knowledge.start")
+            }),
             "{second}"
         );
     }

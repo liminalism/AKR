@@ -74,7 +74,30 @@ Durable project knowledge lives in `.akr/` as typed records, not in Markdown.
 
 /// The paths a workspace must not track: the rebuildable index cache, and the two
 /// disposable agent subtrees (D-036, D-040).
-const GITIGNORE_ENTRIES: &[&str] = &[".akr/cache/", ".agent/scratch/", ".agent/handoffs/"];
+pub(crate) const GITIGNORE_ENTRIES: &[&str] =
+    &[".akr/cache/", ".agent/scratch/", ".agent/handoffs/"];
+
+/// The entries `init` would write that `root`'s `.gitignore` does not have.
+///
+/// This list is project setup AKR authors on the project's behalf, and it is written once
+/// at `init` and never reconciled: a workspace scaffolded before `.agent/handoffs/` was
+/// added keeps the two-entry block forever. Checked on 2026-09-08, four of five sampled
+/// workspaces were missing it, one of them carrying 49 untracked handoff packets as a
+/// result — permanently noisy in `git status` and one `git add -A` from being committed
+/// by accident. Nobody re-runs `init` on a workspace that already works, so the
+/// reconciliation has to happen where every session already looks.
+pub(crate) fn missing_gitignore_entries(root: &std::path::Path) -> Vec<&'static str> {
+    let Ok(text) = std::fs::read_to_string(root.join(".gitignore")) else {
+        return Vec::new();
+    };
+    let present: std::collections::BTreeSet<&str> =
+        text.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    GITIGNORE_ENTRIES
+        .iter()
+        .filter(|entry| !present.contains(*entry))
+        .copied()
+        .collect()
+}
 
 /// Scaffolds a workspace in the current directory.
 ///

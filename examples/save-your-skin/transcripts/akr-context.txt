@@ -5,7 +5,7 @@ AKR CONTEXT BUNDLE
 goal        sys.milestone.m3-playable-day/1 — M3 — playable day
 commit      (none)
 paths       sim/src/project/**
-generated   akr 0.5.0, source-graph
+generated   akr 0.5.1, source-graph
             sha256:5159d2714f688627a85906b161def17b0358155fbfc2a3fc00b681d29a305f55
 
 ── 1. GOAL ──────────────────────────────────────────────────────────────────

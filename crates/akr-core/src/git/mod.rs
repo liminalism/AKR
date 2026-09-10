@@ -59,6 +59,12 @@ pub mod codes {
     pub const G022: Code = Code::new("AKR-G022");
     /// A scope glob that matches nothing.
     pub const G023: Code = Code::new("AKR-G023");
+    /// A recorded command names a test that exists nowhere in tracked source.
+    pub const G024: Code = Code::new("AKR-G024");
+    /// A recorded command's exit status cannot mean what the check rests on.
+    pub const G025: Code = Code::new("AKR-G025");
+    /// `project.akr` declares a tree untracked that git in fact tracks.
+    pub const G026: Code = Code::new("AKR-G026");
     /// `review_after` precedes `created_at`.
     pub const G031: Code = Code::new("AKR-G031");
     /// The review queue is not empty, under `--review-clean`.
@@ -66,7 +72,8 @@ pub mod codes {
 
     /// Every freshness code this crate can raise.
     pub const ALL: &[Code] = &[
-        G001, G002, G003, G004, G011, G012, G013, G014, G021, G022, G023, G031, G041,
+        G001, G002, G003, G004, G011, G012, G013, G014, G021, G022, G023, G024, G025, G026,
+        G031, G041,
     ];
 }
 
@@ -272,6 +279,8 @@ struct Memo {
     touches: BTreeMap<(String, String), Vec<Touch>>,
     /// Commit -> every path tracked at it.
     trees: BTreeMap<String, BTreeSet<String>>,
+    /// Commit -> every submodule (gitlink) path tracked at it.
+    submodules: BTreeMap<String, BTreeSet<String>>,
     /// A commit set -> that set in topological order.
     topological: BTreeMap<String, Vec<Commit>>,
     /// (head, commit set) -> which of them that head does not reach.
@@ -949,6 +958,89 @@ impl Repository {
                 .insert(commit.as_str().to_owned(), listing.clone())
         });
         Ok(listing)
+    }
+
+    /// Every submodule path at a commit, sorted.
+    ///
+    /// A submodule is a gitlink: `ls-tree` reports it with mode `160000` and never
+    /// recurses into it, so a glob like `libbpg/**` matches nothing even though `libbpg`
+    /// itself is perfectly well tracked. That is a third way a scope becomes impossible
+    /// to verify, and unlike a deleted path or an ignored one it looks entirely healthy
+    /// to a reader. V-102 needs to tell it apart from a genuine miss.
+    ///
+    /// # Errors
+    /// [`GitError::CommandFailed`] if git cannot read the tree.
+    pub fn run_ls_tree_submodules(&self, commit: &Commit) -> Result<BTreeSet<String>, GitError> {
+        if let Some(known) = self.memo(|memo| memo.submodules.get(commit.as_str()).cloned()) {
+            return Ok(known);
+        }
+        let canonical = self.canonical_commit(commit);
+        let text = self.run(&["ls-tree", "-r", "-t", canonical.as_str()])?;
+        let listing: BTreeSet<String> = text
+            .lines()
+            .filter_map(|line| {
+                let rest = line.strip_prefix("160000 commit ")?;
+                let (_, path) = rest.split_once('\t')?;
+                Some(path.trim().to_owned())
+            })
+            .filter(|p| !p.is_empty())
+            .collect();
+        self.memo(|memo| {
+            memo.submodules
+                .insert(commit.as_str().to_owned(), listing.clone())
+        });
+        Ok(listing)
+    }
+
+    /// Which of `needles` appear anywhere in tracked source at `commit`.
+    ///
+    /// One `git grep` process for every needle at once, for the same reason
+    /// [`Repository::prime_ignored`] batches: the per-needle form costs a process each and
+    /// the caller asks once per token in the ledger.
+    ///
+    /// `.akr/`, `docs/generated/` and `.agent/` are excluded. The first two are the ledger
+    /// quoting itself — a name found only in a record is exactly the case being looked for.
+    /// `.agent/` is the same category and worse: handoff packets and captured `just check`
+    /// logs contain the output of runs from back when a since-deleted test still existed,
+    /// so counting them as source would silently suppress a true positive. It also churns
+    /// while agents work.
+    ///
+    /// # Errors
+    /// [`GitError::CommandFailed`] if git cannot search the tree.
+    pub fn tracked_source_hits<'a>(
+        &self,
+        commit: &Commit,
+        needles: impl IntoIterator<Item = &'a str>,
+    ) -> Result<BTreeSet<String>, GitError> {
+        let needles: BTreeSet<&str> = needles.into_iter().collect();
+        if needles.is_empty() {
+            return Ok(BTreeSet::new());
+        }
+        let canonical = self.canonical_commit(commit);
+        let mut args: Vec<String> = vec![
+            "grep".into(),
+            "--no-color".into(),
+            "-h".into(),
+            "-o".into(),
+            "-F".into(),
+        ];
+        for needle in &needles {
+            args.push("-e".into());
+            args.push((*needle).to_string());
+        }
+        args.push(canonical.as_str().to_owned());
+        args.push("--".into());
+        for exclude in [":(exclude).akr", ":(exclude)docs/generated", ":(exclude).agent"] {
+            args.push(exclude.into());
+        }
+        let out = self.run_bytes_allowing_no_match(&args, "")?;
+        let text = String::from_utf8_lossy(&out);
+        Ok(text
+            .lines()
+            .map(str::trim)
+            .filter(|line| needles.contains(line))
+            .map(ToOwned::to_owned)
+            .collect())
     }
 
     /// Answers [`Repository::is_ignored`] for many paths in one invocation.

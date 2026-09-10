@@ -29,6 +29,7 @@ pub struct Lowered {
 pub fn lower_file(file: &File, path: &str) -> Lowered {
     let mut out = Lowered::default();
     let mut namespaces = Vec::new();
+    let mut untracked = Vec::new();
     for item in &file.items {
         match item {
             Item::Record(record) => {
@@ -42,12 +43,28 @@ pub fn lower_file(file: &File, path: &str) -> Lowered {
                 out.diagnostics.extend(ctx.diagnostics);
             }
             Item::Namespace(namespace) => namespaces.push(namespace.name.clone()),
+            // `untracked { path "a/**" ... }` — trees the project keeps out of git on
+            // purpose, so a scope naming one is reported as a build fact rather than as a
+            // dead glob. Written with the same `path` token a scope uses, so an author
+            // moving between the two writes the same thing. Any other top-level block
+            // (`defaults`, and the lock file's items) is still not the model's business.
+            Item::Block(block) if block.name == "untracked" => {
+                untracked.extend(block.body.iter().filter_map(|item| match item {
+                    BodyItem::Slot(slot) if slot.name == "path" => match &slot.value {
+                        Value::Str(text, _) => Some(Glob::new(text)),
+                        _ => None,
+                    },
+                    _ => None,
+                }));
+            }
             Item::Block(_) => {}
         }
     }
     if !namespaces.is_empty() {
         let refs: Vec<&str> = namespaces.iter().map(String::as_str).collect();
-        out.project = Some(Project::new(&file.project, &refs));
+        let mut project = Project::new(&file.project, &refs);
+        project.untracked = untracked;
+        out.project = Some(project);
     }
     out
 }

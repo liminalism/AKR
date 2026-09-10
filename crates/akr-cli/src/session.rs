@@ -133,17 +133,62 @@ pub fn locate(start: &Path) -> Result<(PathBuf, PathBuf), EnvError> {
         match cursor.parent() {
             Some(parent) => cursor = parent,
             None => {
-                return Err(EnvError::new(
+                // "None here" is true and useless when the workspaces are one level down.
+                // A shared parent holding many checkouts is the ordinary shape of an agent
+                // session, and suggesting `akr init` there is worse than unhelpful: it
+                // proposes scaffolding a ledger in a directory that is usually not a git
+                // repository at all, and so can never have git facts.
+                let below = workspaces_below(&start);
+                let mut error = EnvError::new(
                     "AKR-C011",
                     format!(
                         "no .akr directory found in {} or any parent",
                         start.display()
                     ),
-                )
-                .help("run `akr init` to create one"));
+                );
+                if below.is_empty() {
+                    if start.join(".git").exists() {
+                        error = error.help("run `akr init` to create one");
+                    } else {
+                        error = error.help(
+                            "run `akr init` in the git repository this workspace belongs to; a ledger outside a repository has no git facts",
+                        );
+                    }
+                } else {
+                    let shown: Vec<String> = below.iter().take(8).cloned().collect();
+                    let more = below.len().saturating_sub(shown.len());
+                    let mut help = format!(
+                        "no workspace here, but {} in subdirectories: {}",
+                        below.len(),
+                        shown.join(", ")
+                    );
+                    if more > 0 {
+                        help.push_str(&format!(", and {more} more"));
+                    }
+                    help.push_str(" — run `akr` from one of them, or pass `--dir`");
+                    error = error.help(help);
+                }
+                return Err(error);
             }
         }
     }
+}
+
+/// The immediate subdirectories of `root` that are AKR workspaces, sorted.
+///
+/// One level only, and deliberately: this exists to answer "you are one directory too
+/// high", not to search a filesystem.
+fn workspaces_below(root: &std::path::Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut found: Vec<String> = entries
+        .flatten()
+        .filter(|entry| entry.path().join(".akr").join("project.akr").is_file())
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .collect();
+    found.sort();
+    found
 }
 
 impl Session {
@@ -315,13 +360,35 @@ impl Session {
         };
         let mut queue = akr_core::freshness::derive(&self.ledger, repository, commit, self.today)
             .unwrap_or_default();
-        if let Ok(mut diagnostics) =
-            akr_core::freshness::unmatched_watches(&self.ledger, repository, commit)
-        {
-            queue.diagnostics.append(&mut diagnostics);
-            queue.diagnostics.sort_by_key(Diagnostic::sort_key);
+        // Not `if let Ok(..)`. One failing git call here used to discard every scope and
+        // watch diagnostic in the workspace without a word — which is how a working
+        // AKR-G021 could pass its own test and never once reach a user.
+        match akr_core::freshness::unmatched_watches(&self.ledger, repository, commit) {
+            Ok(mut diagnostics) => {
+                queue.diagnostics.append(&mut diagnostics);
+                queue.diagnostics.sort_by_key(Diagnostic::sort_key);
+            }
+            Err(error) => queue.diagnostics.push(
+                akr_core::diagnostics::Diagnostic::warning(
+                    akr_core::git::codes::G001,
+                    akr_core::diagnostics::RuleId(102),
+                    akr_core::diagnostics::Subject::Ledger,
+                    format!("scope and watch globs could not be checked against git: {error}"),
+                )
+                .help("a scope or watch glob may name a path git cannot parse; the rest of this check is unaffected"),
+            ),
         }
         queue
+    }
+
+    /// Scope paths git cannot answer for, as build facts rather than diagnostics.
+    #[must_use]
+    pub fn unverifiable_scopes(&self) -> Vec<akr_core::freshness::UnverifiableScope> {
+        let (Some(repository), Some(commit)) = (&self.repository, &self.commit) else {
+            return Vec::new();
+        };
+        akr_core::freshness::unverifiable_scopes(&self.ledger, repository, commit)
+            .unwrap_or_default()
     }
 
     /// The freshness a renderer needs.
@@ -437,7 +504,18 @@ pub fn is_fatal(diagnostic: &Diagnostic, profile: Profile) -> bool {
     // `--lenient` and lose every other strict signal along with this one — which is
     // exactly what was reported from a real session
     // (`jpegxl-rs.papercut.akr-check-strict-exits-1-on-akr-g004-alone-when`).
-    if matches!(diagnostic.code.as_str(), "AKR-G004" | "AKR-G023") {
+    //
+    // `AKR-E015` joins them for the same reason: a view whose only stale line is the
+    // banner's `tool:` stamp was rendered by an older binary against the same ledger. The
+    // content is current, no agent can clear it without rebuilding and committing, and it
+    // vanishes the first time anyone does. Promoting it would fail `akr check` across
+    // every workspace that has not been rebuilt since the last release, for a difference
+    // that says nothing about the knowledge. A real staleness — a source-graph hash, any
+    // other line, a missing view — stays `AKR-E011`/`E012` and stays fatal.
+    if matches!(
+        diagnostic.code.as_str(),
+        "AKR-G004" | "AKR-G023" | "AKR-E015" | "AKR-E016"
+    ) {
         return false;
     }
     match profile {
@@ -453,17 +531,25 @@ pub fn report(
     sources: &SourceMap,
     profile: Profile,
 ) -> (String, usize) {
-    let mut out = String::new();
     let mut fatal = 0;
     let mut promoted = 0;
     for diagnostic in diagnostics {
-        out.push_str(&render(diagnostic, sources));
-        out.push('\n');
         if is_fatal(diagnostic, profile) {
             fatal += 1;
             if diagnostic.severity == Severity::Warning {
                 promoted += 1;
             }
+        }
+    }
+    let mut out = String::new();
+    for (position, diagnostic) in diagnostics.iter().enumerate() {
+        out.push_str(&render(diagnostic, sources));
+        // The blank line between diagnostics, and before the summary line when there is
+        // one. With no fatal diagnostic the summary is never printed, so the last
+        // diagnostic gets no trailing separator — otherwise an all-warnings report (only
+        // reachable since AKR-E016) ended in a dangling blank line nothing consumed.
+        if position + 1 < diagnostics.len() || fatal > 0 {
+            out.push('\n');
         }
     }
     if fatal > 0 {

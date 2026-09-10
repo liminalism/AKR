@@ -420,9 +420,13 @@ fn revise_on_a_sealed_head_retires_it_in_the_same_write() {
     assert!(source.contains("state superseded"));
     assert!(source.contains("supersedes [ @sys.term.playable-day/1 ]"));
     assert!(
-        run.stdout.contains("starts proposed"),
-        "a sealed content-only revise must say the successor is unaccepted: {}",
+        run.stdout.contains("keeps state active from the sealed head"),
+        "a sealed content-only revise keeps the state it inherits and says so (D-043): {}",
         run.stdout
+    );
+    assert!(
+        source.contains("state active"),
+        "the successor keeps `active` rather than being returned to `proposed`: {source}"
     );
 
     let before_build = example.run(&["check"]);

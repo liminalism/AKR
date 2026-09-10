@@ -40,6 +40,87 @@ fn version_and_initialize_report_the_cargo_package_version() {
     );
 }
 
+fn list_tool_names(server: &akr_mcp::Server) -> Vec<String> {
+    let listed = server
+        .handle(&parse(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#).expect("list is JSON"))
+        .expect("list has an id");
+    listed
+        .get("result")
+        .and_then(|result| result.get("tools"))
+        .and_then(Value::as_array)
+        .expect("tools array")
+        .iter()
+        .map(|tool| {
+            tool.get("name")
+                .and_then(Value::as_str)
+                .expect("tool name")
+                .to_owned()
+        })
+        .collect()
+}
+
+#[test]
+fn grok_initialize_advertises_host_safe_tool_names() {
+    let server = akr_mcp::Server::new("/workspace-not-opened-by-this-test");
+    let init = parse(
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","clientInfo":{"name":"grok","version":"1.0.25"}}}"#,
+    )
+    .expect("request is JSON");
+    let response = server.handle(&init).expect("initialize has an id");
+    let instructions = response
+        .get("result")
+        .and_then(|result| result.get("instructions"))
+        .and_then(Value::as_str)
+        .expect("instructions");
+    assert!(instructions.contains("knowledge_context"), "{instructions}");
+    assert!(
+        !instructions.contains("knowledge.context"),
+        "{instructions}"
+    );
+
+    let names = list_tool_names(&server);
+    assert!(names.contains(&"knowledge_search".to_owned()), "{names:?}");
+    assert!(
+        names.contains(&"knowledge_papercut".to_owned()),
+        "{names:?}"
+    );
+    assert!(
+        names
+            .iter()
+            .all(|name| akr_mcp::schema::is_host_safe_name(name)),
+        "{names:?}"
+    );
+    assert!(names.iter().all(|name| !name.contains('.')), "{names:?}");
+}
+
+#[test]
+fn default_initialize_still_advertises_dotted_names() {
+    let server = akr_mcp::Server::new("/workspace-not-opened-by-this-test");
+    let init = parse(
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#,
+    )
+    .expect("request is JSON");
+    server.handle(&init).expect("initialize has an id");
+    let names = list_tool_names(&server);
+    assert!(names.contains(&"knowledge.search".to_owned()), "{names:?}");
+    assert!(names.iter().any(|name| name.contains('.')), "{names:?}");
+}
+
+#[test]
+fn tools_call_accepts_the_host_safe_name() {
+    let server = akr_mcp::Server::new("/workspace-not-opened-by-this-test");
+    let call = parse(
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"knowledge_explain","arguments":{"subject":"AKR-C003"}}}"#,
+    )
+    .expect("request is JSON");
+    let response = server.handle(&call).expect("call has an id");
+    let is_error = response
+        .get("result")
+        .and_then(|result| result.get("isError"))
+        .and_then(Value::as_bool);
+    assert_eq!(is_error, Some(false), "{}", response.to_pretty());
+}
+
 fn call(
     input: &mut impl Write,
     output: &mut impl BufRead,

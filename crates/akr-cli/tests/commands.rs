@@ -688,3 +688,328 @@ fn a_context_budget_is_a_promise_about_the_delivered_bundle() {
         unbudgeted.stdout
     );
 }
+
+/// A1/A2: view currency is checked by a PLAIN `akr check`, not only under
+/// `--views-current`. Ten of fifteen workspaces in a 2026-09 sweep were shipping views
+/// that did not match their ledger and every one of them passed a plain check.
+#[test]
+fn plain_check_reports_a_content_difference_in_a_view() {
+    let example = Example::materialise("plain-check-view-drift");
+    assert_eq!(example.run(&["build"]).code, 0);
+    // A committed ledger is what makes a stale view a shipped defect rather than unsaved
+    // work; uncommitted, the same difference is AKR-E016 (see the test below).
+    example.git(&["add", "-A"]);
+    example.git(&["commit", "--quiet", "-m", "build"]);
+
+    let roadmap = example.root().join("docs/generated/ROADMAP.md");
+    let mut text = std::fs::read_to_string(&roadmap).expect("roadmap view exists");
+    text.push_str("\n<!-- a hand edit -->\n");
+    std::fs::write(&roadmap, text).expect("mutate view");
+
+    // No `--views-current`: this is the whole point of the change.
+    let check = example.run(&["check"]);
+    assert_eq!(check.code, 1, "{}", check.output());
+    assert!(
+        check.output().contains("AKR-E011"),
+        "a content difference is an error:\n{}",
+        check.output()
+    );
+}
+
+/// A `tool:`-only difference is AKR-E015 at warning severity and does NOT fail the check,
+/// even under the default `--strict`. It is a migration artifact that disappears the
+/// first time anyone rebuilds, and no agent can clear it mid-session.
+#[test]
+fn plain_check_warns_but_does_not_fail_on_a_tool_version_difference() {
+    let example = Example::materialise("plain-check-tool-drift");
+    assert_eq!(example.run(&["build"]).code, 0);
+
+    let roadmap = example.root().join("docs/generated/ROADMAP.md");
+    let text = std::fs::read_to_string(&roadmap).expect("roadmap view exists");
+    let stamped: String = text
+        .lines()
+        .map(|line| {
+            if line.trim_start().starts_with("tool: ") {
+                "     tool: akr 0.0.1-from-an-older-binary".to_owned()
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    std::fs::write(&roadmap, stamped).expect("mutate view");
+
+    let check = example.run(&["check"]);
+    assert_eq!(
+        check.code, 0,
+        "a stale tool stamp must not fail the check:\n{}",
+        check.output()
+    );
+    assert!(
+        check.output().contains("AKR-E015"),
+        "it must still be reported:\n{}",
+        check.output()
+    );
+    assert!(
+        !check.output().contains("AKR-E011"),
+        "and must not be reported as a content difference:\n{}",
+        check.output()
+    );
+}
+
+/// A2: a workspace with no generated views at all passes a plain check today. pixelkit
+/// had six AKR-E012 under `--views-current` and none from `akr check`.
+#[test]
+fn plain_check_reports_a_missing_view() {
+    let example = Example::materialise("plain-check-missing-view");
+    assert_eq!(example.run(&["build"]).code, 0);
+    example.git(&["add", "-A"]);
+    example.git(&["commit", "--quiet", "-m", "build"]);
+
+    std::fs::remove_file(example.root().join("docs/generated/ROADMAP.md")).expect("remove view");
+
+    let check = example.run(&["check"]);
+    assert_eq!(check.code, 1, "{}", check.output());
+    assert!(
+        check.output().contains("AKR-E012"),
+        "a missing view is an error:\n{}",
+        check.output()
+    );
+}
+
+/// The mid-session case: an agent that has just written a record has stale views by
+/// construction. That is unsaved work, not a shipped defect, so it is AKR-E016 at warning
+/// severity rather than AKR-E011 — the same argument that exempts AKR-G004.
+///
+/// The exit code is deliberately not asserted: writing a record without rebuilding also
+/// leaves `akr.lock` stale (AKR-R052), which is a separate registered defect and would
+/// make the assertion test something other than its subject.
+#[test]
+fn a_stale_view_under_an_uncommitted_ledger_is_a_warning_not_an_error() {
+    let example = Example::materialise("plain-check-uncommitted-ledger");
+    assert_eq!(example.run(&["build"]).code, 0);
+    example.git(&["add", "-A"]);
+    example.git(&["commit", "--quiet", "-m", "build"]);
+    // Clean tree, current views: the baseline the rest of this rests on.
+    assert_eq!(example.run(&["check"]).code, 0);
+
+    // Write a record without rebuilding, exactly as a session in progress does.
+    let wrote = example.run(&["papercut", "-m", "tester", "A record written mid-session."]);
+    assert_eq!(wrote.code, 0, "{}", wrote.output());
+
+    let check = example.run(&["check"]);
+    assert!(
+        check.output().contains("AKR-E016"),
+        "a stale view under an uncommitted ledger is AKR-E016:\n{}",
+        check.output()
+    );
+    assert!(
+        !check.output().contains("AKR-E011") && !check.output().contains("AKR-E012"),
+        "and is never reported as a shipped stale view:\n{}",
+        check.output()
+    );
+}
+/// Sets up a fixture carrying one work record whose single acceptance check runs
+/// `command`, plus a committed source file holding `source_text`.
+///
+/// Self-contained on purpose. The shipped fixtures hold placeholder content, so a test
+/// that borrowed a token from them would assert on something incidental. Committing
+/// matters too: the detector searches the tracked tree at a resolved commit, so a fixture
+/// with no commit exercises nothing at all — which is how the first draft of these tests
+/// passed four cases while the detector never ran.
+fn gate_fixture(name: &str, command: &str, source_text: &str) -> Example {
+    let example = Example::materialise(name);
+    let src = example.root().join("src/gate_fixture.rs");
+    std::fs::create_dir_all(src.parent().expect("parent")).expect("create src dir");
+    std::fs::write(&src, format!("// {source_text}\n")).expect("write source");
+
+    let dir = std::fs::read_dir(example.root().join(".akr/records"))
+        .expect("records dir")
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .find(|p| p.is_dir())
+        .expect("a namespace directory");
+    let file = std::fs::read_dir(&dir)
+        .expect("namespace dir")
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .find(|p| p.extension().is_some_and(|x| x == "akr"))
+        .expect("a record file");
+    let existing = std::fs::read_to_string(&file).expect("read record file");
+    let namespace = existing
+        .lines()
+        .find_map(|l| l.strip_prefix("record "))
+        .and_then(|r| r.split('.').next())
+        .unwrap_or("sys")
+        .to_owned();
+
+    let template = r#"
+record NS.work.gate-under-test/1 : work {
+    title "A gate under test"
+    state proposed
+    intent """
+        Exists only to carry one acceptance command.
+        """
+    acceptance {
+        check the-gate {
+            statement """
+                Whatever the command proves.
+                """
+            method command
+            command "CMD"
+        }
+    }
+}
+"#;
+    let added = template.replace("NS", &namespace).replace("CMD", command);
+    std::fs::write(&file, format!("{existing}{added}")).expect("write record file");
+
+    example.git(&["add", "-A"]);
+    example.git(&["commit", "--quiet", "-m", "gate fixture"]);
+    example
+}
+
+/// A8: a gate naming a test that exists nowhere in tracked source passes having run
+/// nothing, because `cargo test <filter>` with a filter matching nothing exits 0.
+#[test]
+fn a_command_naming_a_test_that_does_not_exist_is_reported() {
+    let example = gate_fixture(
+        "g024-phantom",
+        "cargo test -p sys_present a_test_name_that_exists_nowhere",
+        "nothing relevant here",
+    );
+    let check = example.run(&["check"]);
+    assert!(
+        check.output().contains("AKR-G024"),
+        "a phantom test filter must be reported:\n{}",
+        check.output()
+    );
+}
+
+/// The same shape naming a test that really is in tracked source stays silent.
+#[test]
+fn a_command_naming_a_real_test_is_silent() {
+    let example = gate_fixture(
+        "g024-real",
+        "cargo test -p sys_present a_real_leaf_test",
+        "fn a_real_leaf_test",
+    );
+    let check = example.run(&["check"]);
+    assert!(
+        !check.output().contains("AKR-G024"),
+        "a real test name must not be reported:\n{}",
+        check.output()
+    );
+}
+
+/// A command with no identifier-shaped token is not a test filter and is never reported.
+/// `just check` and `cargo check --workspace` must stay silent, or the diagnostic becomes
+/// noise on every ledger that gates on a whole suite.
+#[test]
+fn a_command_with_no_test_filter_is_silent() {
+    let example = gate_fixture("g024-no-filter", "just check", "nothing relevant here");
+    let check = example.run(&["check"]);
+    assert!(
+        !check.output().contains("AKR-G024"),
+        "a command with no identifier-shaped token must not be reported:\n{}",
+        check.output()
+    );
+}
+
+/// Two tokens where only one exists: the gate can still run something, so it is silent.
+/// The rule is "none of them resolves", not "any of them fails".
+#[test]
+fn a_command_is_silent_when_any_of_its_tokens_exists() {
+    let example = gate_fixture(
+        "g024-one-of-two",
+        "cargo test -p sys_present a_real_leaf_test a_second_name_that_is_absent",
+        "fn a_real_leaf_test",
+    );
+    let check = example.run(&["check"]);
+    assert!(
+        !check.output().contains("AKR-G024"),
+        "one resolving token is enough to keep a gate silent:\n{}",
+        check.output()
+    );
+}
+
+/// THE REGRESSION THAT MATTERS. `cargo test` filters are SUBSTRING matches against the
+/// full test path, so a module-path filter never appears literally anywhere in source —
+/// `mod inventory_model;` sits in one file and `mod tests` in another, and the filter
+/// runs perfectly. Matching the whole token literally is what turned a true 4.2% into a
+/// reported 11.5% in the 2026-09 sweep, and Kitchen-Concept's zero real phantoms into
+/// eleven apparent ones. A `::` token must resolve segment by segment.
+#[test]
+fn a_module_path_filter_whose_segments_exist_separately_is_silent() {
+    let example = gate_fixture(
+        "g024-module-path",
+        "cargo test -p sys_present inventory_model::tests::a_leaf",
+        "mod inventory_model; mod tests; fn a_leaf",
+    );
+    let check = example.run(&["check"]);
+    assert!(
+        !check.output().contains("AKR-G024"),
+        "a module-path filter whose segments exist separately must stay silent, which is \
+         the false-positive class the check exists to avoid:\n{}",
+        check.output()
+    );
+}
+
+/// A25: a shell pipeline reports its LAST stage's status, so a recorded command ending in
+/// `| tail` exits 0 whenever `tail` succeeds — regardless of what the real command did.
+/// Three agents hit this independently in one afternoon during the 2026-09 sweep.
+#[test]
+fn a_recorded_command_whose_status_comes_from_a_pipe_is_reported() {
+    let example = gate_fixture(
+        "g025-pipe",
+        "cargo test -p sys_present a_real_leaf_test | tail -80",
+        "fn a_real_leaf_test",
+    );
+    let check = example.run(&["check"]);
+    assert!(
+        check.output().contains("AKR-G025"),
+        "a piped command's exit status is meaningless and must be reported:\n{}",
+        check.output()
+    );
+    // The test name is real, so this is NOT the phantom diagnostic. The two defects are
+    // independent: a gate can name a real test and still be unfalsifiable.
+    assert!(
+        !check.output().contains("AKR-G024"),
+        "and it is not a phantom-token report:\n{}",
+        check.output()
+    );
+}
+
+/// A27: a command slot carrying an HTML-escaped `&amp;&amp;` is not the command it looks
+/// like. Records authored through a surface that escapes text picked this up verbatim.
+#[test]
+fn a_recorded_command_with_an_html_escaped_operator_is_reported() {
+    let example = gate_fixture(
+        "g025-escaped",
+        "cargo fmt --check &amp;&amp; cargo test -p sys_present a_real_leaf_test",
+        "fn a_real_leaf_test",
+    );
+    let check = example.run(&["check"]);
+    assert!(
+        check.output().contains("AKR-G025"),
+        "an HTML-escaped operator must be reported:\n{}",
+        check.output()
+    );
+}
+
+/// A plain `&&` chain is the ordinary way to write a two-part gate and must stay silent.
+#[test]
+fn a_recorded_command_using_a_plain_and_chain_is_silent() {
+    let example = gate_fixture(
+        "g025-plain-and",
+        "cargo fmt --check && cargo test -p sys_present a_real_leaf_test",
+        "fn a_real_leaf_test",
+    );
+    let check = example.run(&["check"]);
+    assert!(
+        !check.output().contains("AKR-G025"),
+        "a plain && chain is not a pipe and must stay silent:\n{}",
+        check.output()
+    );
+}

@@ -43,3 +43,32 @@ fn formatting_is_idempotent_on_the_exemplar() {
     let (twice, _) = format_source(&once, FileId(0));
     assert_eq!(Some(once), twice);
 }
+
+#[test]
+fn a_comment_above_a_top_level_block_is_not_duplicated_by_formatting() {
+    // `Item::trivia()` returns a block's own trivia, and `emit_block` emits it itself
+    // because a nested block never passes through `emit_item`. Emitting in both places
+    // doubled the comment on every run — 1, 2, 4, 8 — so `akr fmt` was not idempotent for
+    // the one construct every `akr init` writes (`defaults`), and any project.akr
+    // documenting *why* a tree is declared untracked would have accumulated the reason.
+    let source = "akr 0.1\nproject p\n\nnamespace p \"P.\"\n\n\
+                  # Why this project keeps art out of git.\n\
+                  untracked {\n    path \"art/**\"\n}\n\n\
+                  # And a comment above defaults.\n\
+                  defaults {\n    review_after_days 90\n}\n";
+    let (once, _) = format_source(source, FileId(0));
+    let once = once.expect("formats");
+    let (twice, _) = format_source(&once, FileId(0));
+    let twice = twice.expect("formats");
+    assert_eq!(once, twice, "formatting is not idempotent");
+    for comment in [
+        "# Why this project keeps art out of git.",
+        "# And a comment above defaults.",
+    ] {
+        assert_eq!(
+            once.matches(comment).count(),
+            1,
+            "{comment:?} was duplicated by formatting:\n{once}"
+        );
+    }
+}

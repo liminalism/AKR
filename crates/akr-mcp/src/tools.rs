@@ -28,6 +28,7 @@ use crate::record;
 /// Whether a tool writes to `.akr/records/` (§2).
 #[must_use]
 pub fn is_write(name: &str) -> bool {
+    let name = crate::schema::canonical_tool_name(name).unwrap_or(name);
     crate::schema::TOOLS
         .iter()
         .find(|tool| tool.name == name)
@@ -94,6 +95,7 @@ impl ToolResult {
 /// # Errors
 /// [`ToolError`] carrying §5's class, summary and diagnostic array.
 pub fn call(root: &Path, name: &str, arguments: &Value) -> Result<ToolResult, ToolError> {
+    let name = crate::schema::canonical_tool_name(name).unwrap_or(name);
     match name {
         "knowledge.search" => search(root, arguments),
         "knowledge.start" => start(root, arguments),

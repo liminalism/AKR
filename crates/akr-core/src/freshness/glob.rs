@@ -33,6 +33,10 @@ pub enum GlobError {
     Empty,
     /// An absolute path; globs are repo-root-relative.
     Absolute,
+    /// A `"` inside the glob, which means a quoted string was nested inside another one.
+    Quoted,
+    /// A literal `path ` prefix, which means the slot keyword was copied into the value.
+    PathPrefix,
 }
 
 impl std::fmt::Display for GlobError {
@@ -45,6 +49,14 @@ impl std::fmt::Display for GlobError {
             Self::PartialGlobstar => "`**` must be a whole path segment",
             Self::Empty => "a glob may not be empty",
             Self::Absolute => "globs are repo-root-relative and may not start with `/`",
+            Self::Quoted => {
+                "a `\"` inside a glob means a quoted string was nested in another one; \
+                 write `path \"a/b/**\"`, not `path \"path \\\"a/b/**\\\"\"`"
+            }
+            Self::PathPrefix => {
+                "the `path ` keyword was copied into the value; write `path \"a/b/**\"`, \
+                 not `path \"path a/b/**\"`"
+            }
         })
     }
 }
@@ -63,6 +75,16 @@ pub fn validate(glob: &Glob) -> Result<(), GlobError> {
     }
     if text.starts_with('!') {
         return Err(GlobError::Negation);
+    }
+    // Both of these are the same authoring slip seen from two sides: the slot's own
+    // syntax pasted into the slot's value. `path "path \"a/**\""` stores the literal
+    // text `path "a/**"`, which then matches nothing and reports as a dead scope rather
+    // than as the malformed input it is (AKR-G021 is the honest answer, not AKR-G023).
+    if text.contains('"') {
+        return Err(GlobError::Quoted);
+    }
+    if text.starts_with("path ") {
+        return Err(GlobError::PathPrefix);
     }
     if text.contains('{') || text.contains('}') {
         return Err(GlobError::BraceExpansion);
@@ -95,11 +117,32 @@ pub fn validate(glob: &Glob) -> Result<(), GlobError> {
 /// — and, deliberately, `a` itself: a watch on `a/**` is a watch on the subtree, and a
 /// change that deletes the subtree and leaves a file named `a` has certainly invalidated
 /// anything observing it.
+///
+/// A pattern that names a directory matches everything under it, with or without a
+/// trailing slash: `tools/` and `tools` both match `tools/build.py`, the way git's
+/// pathspec does. Until 2026-09-08 they matched nothing at all, because this compares
+/// against file paths and `tools` is never equal to `tools/build.py` — so a record scoped
+/// `path "tools/"` was reported as naming a path that "moved or was deleted" while the
+/// directory sat there with twenty-five files in it. An author writing a bare directory
+/// means the directory.
 #[must_use]
 pub fn matches(glob: &Glob, path: &str) -> bool {
-    let pattern: Vec<&str> = glob.as_str().split('/').collect();
+    let pattern: Vec<&str> = glob
+        .as_str()
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
     let target: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-    match_segments(&pattern, &target)
+    if match_segments(&pattern, &target) {
+        return true;
+    }
+    // A directory prefix: every pattern segment consumed against the head of the target,
+    // with target segments left over. Only for a pattern with no `**` of its own, which
+    // already expresses the subtree and must keep its exact semantics.
+    !pattern.is_empty()
+        && !pattern.contains(&"**")
+        && pattern.len() < target.len()
+        && match_segments(&pattern, &target[..pattern.len()])
 }
 
 fn match_segments(pattern: &[&str], target: &[&str]) -> bool {

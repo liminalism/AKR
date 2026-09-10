@@ -1426,7 +1426,11 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
         }
         other => {
             let mut error = UsageError::new("AKR-C001", format!("unknown command {other:?}"));
-            if let Some(nearest) = nearest(other) {
+            if let Some(equivalent) = mcp_equivalent(other) {
+                error = error.with_help(format!(
+                    "`{other}` is an MCP tool name, not a CLI command; the CLI equivalent is `akr {equivalent}` (AGENTS.md has the whole mapping)"
+                ));
+            } else if let Some(nearest) = nearest(other) {
                 error = error.with_help(format!("did you mean `akr {nearest}`?"));
             }
             return Err(error);
@@ -2197,6 +2201,36 @@ fn repeated(tail: &[String], flag: &str) -> Vec<String> {
     out
 }
 
+/// The CLI equivalent of an MCP tool name, for the `help:` line of `AKR-C001`.
+///
+/// `knowledge.*` names are MCP tools, not CLI commands. AGENTS.md carries the whole
+/// mapping table and opens by saying exactly that — but an agent working in another
+/// project reads that project's guidance, or a global instruction file that spells the
+/// operation `knowledge.context`, and never opens this repository's AGENTS.md. So the
+/// mapping is written down in the one place the people who need it are not. Saying it at
+/// the point of failure costs nothing and saves the round trip that two ledgers have a
+/// papercut about.
+fn mcp_equivalent(name: &str) -> Option<String> {
+    let rest = name
+        .strip_prefix("knowledge.")
+        .or_else(|| name.strip_prefix("knowledge_"))?;
+    let (head, tail) = match rest.split_once('_') {
+        Some(("evidence", tail)) => ("evidence", Some(tail.replace('_', "-"))),
+        Some(("source", tail)) => ("source", Some(tail.replace('_', "-"))),
+        Some(("handoff", tail)) => ("handoff", Some(tail.replace('_', "-"))),
+        _ => (rest, None),
+    };
+    let command = match head {
+        "validate" => "check",
+        other if COMMANDS.contains(&other) => other,
+        _ => return None,
+    };
+    Some(match tail {
+        Some(tail) => format!("{command} {tail}"),
+        None => command.to_owned(),
+    })
+}
+
 /// The nearest known command by edit distance, for the `help:` line of `AKR-C001`.
 fn nearest(name: &str) -> Option<&'static str> {
     COMMANDS
@@ -2266,8 +2300,8 @@ pub fn help_for(name: &str) -> Option<String> {
              \n\
              FLAGS\n\
              \x20   --review-clean     also fail when the review queue is non-empty (AKR-G041)\n\
-             \x20   --views-current    also render stage F in memory and diff the committed\n\
-             \x20                      views (AKR-E011..E014) — the D-025 gate\n\
+             \x20   --views-current    report stage F per view; the comparison itself runs on\n\
+             \x20                      every check (AKR-E011..E015), this only shows it\n\
              \x20   --scratch-clean    also fail when .agent/scratch holds prunable\n\
              \x20                      entries (AKR-G042)\n"
         }

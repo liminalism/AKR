@@ -74,6 +74,9 @@ pub fn run(session: &Session, command: &Command) -> Result<Output, EnvError> {
             let key = parse_key(key)?;
             let kind = parse_kind(kind)?;
             let template = body_from(session, from.as_deref(), &key, kind)?.map(|body| body.record);
+            if let Some(record) = &template {
+                ensure_commits_exist(session, &commits_named_by(record))?;
+            }
             render(
                 session,
                 akr_core::ops::propose(
@@ -114,6 +117,7 @@ pub fn run(session: &Session, command: &Command) -> Result<Output, EnvError> {
                 .map(|head| head.kind)
                 .unwrap_or(Kind::Work);
             if let Some(body) = body_from(session, from.as_deref(), &key, kind)? {
+                ensure_commits_exist(session, &commits_named_by(&body.record))?;
                 if let Ok(head) = session.ledger.head(&key) {
                     if edits.state.is_none() && body.mentioned.contains("state") {
                         edits.state = Some(body.record.state);
@@ -353,6 +357,23 @@ pub fn evidence_record(
         built.author = Some(author.clone());
     }
     Ok((key, built.to_record(), commit))
+}
+
+/// Every commit a record's slots name, for [`ensure_commits_exist`].
+///
+/// `akr evidence add` has refused an absent `observed_at` since 0.4; `akr propose` and
+/// `akr revise` did not, so a well-formed 40-hex string that names no commit landed
+/// without a word and surfaced later as an AKR-G011 on the next `akr check` — on a write
+/// the author had already moved on from. Two write paths, one rule; this is the rule.
+fn commits_named_by(record: &akr_core::model::Record) -> Vec<Commit> {
+    record
+        .content
+        .values()
+        .filter_map(|value| match value {
+            akr_core::model::ContentValue::Commit(commit) => Some(commit.clone()),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Refuses a commit the repository does not have, checking each distinct one once.

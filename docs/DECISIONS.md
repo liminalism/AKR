@@ -1807,3 +1807,141 @@ wrote.
 `crates/akr-mcp/tests/differential.rs`, `docs/17-handoff.md`, `docs/07-cli.md`,
 `docs/08-mcp.md`, `docs/13-implementation-roadmap.md`,
 `spec/diagnostics/codes-runtime.md` (`AKR-C044`), `scripts/agent-section.md`, `AGENTS.md`.
+
+---
+
+## D-042 — `proposed` on a normative record means recorded, not pending; and an observation is support
+
+*Amendment, 2026-09-08.*
+
+**Question.** Two questions that turn out to be one. First: across fifteen workspaces
+audited on 2026-09-08, normative records sit at `proposed` in bulk and stay there —
+jpegXL-rs with six constraints, seventeen decisions and thirteen policies; Lege-ecosystem
+with thirteen of fourteen decisions, twelve policies and six requirements; LegeOS with
+eleven of thirty-four decisions; this repository with six. Four agents independently
+looked at that layer, judged it wrong, and each declined to fix it, because the fix
+requires knowing which requirement, policy, constraint or evidence each decision rests on
+and guessing is how a ledger acquires fiction. So the layer is not merely large, it is
+*stuck*: every future session will re-examine it and reach the same impasse.
+
+Second: why does it stick? V-021 (AKR-R031) refuses to activate a decision that "cites no
+requirement, policy, constraint, or evidence". The natural thing an author cites is the
+**observation** that motivated the decision — that is what a decision usually rests on and
+what its `supported_by` most often names — and an observation is exactly the kind V-021
+will not count. Demonstrated here: `akr.decision.one-writer-at-a-time` was `supported_by`
+`akr.observation.concurrent-writes-are-silently-lost`, its behaviour had shipped and was
+re-verified, and it still could not be activated until an evidence record was written and
+cited alongside. The rule is not wrong about what it wants; it is silent about the one
+citation an author will reach for first, and the diagnostic does not say "an observation
+is not enough".
+
+**Resolution, two parts.**
+
+*`proposed` on a normative record is a legitimate resting state and means "recorded".* It
+is not a defect queue and no agent should sweep it. A decision is `active` when the
+project has adopted it *and* can name what it rests on; until both hold, `proposed` is the
+honest state and carries no implication that anyone is behind. Consequently: nothing may
+report a count of proposed normative records as a problem, and no view may present them as
+outstanding work.
+
+*An observation may support an active decision, and V-021 accepts it.* A decision resting
+on a measurement is resting on something; that is precisely the shape D-016 wants
+elsewhere. What V-021 exists to forbid is a decision resting on *nothing* — a preference
+wearing a record's clothes — and an observation is not nothing. The rule keeps its teeth:
+a decision with an empty `supported_by`, or one citing only other decisions, is still
+AKR-R031. Its message gains the sentence it was missing, naming the kinds that count.
+
+**Consequences.** The stuck layer becomes activatable by the citation authors were already
+writing, without inventing a requirement to satisfy a validator. Where a decision genuinely
+rests on nothing recorded, it stays `proposed`, which is now a statement rather than a
+backlog entry. And the diagnostic stops being the reason four separate agents wrote the
+same paragraph explaining why they did not touch it.
+
+**Honored by.** `docs/05-validation-rules.md` (V-021), `spec/diagnostics/codes-lang.md`
+(`AKR-R031`), `crates/akr-core/src/validate/`, `AGENTS.md`.
+
+---
+
+## D-043 — A revision keeps the state it inherits
+
+*Amendment, 2026-09-08.*
+
+**Question.** `akr revise` on a sealed head created revision `n+1` in *the class's initial
+state*, and only `--state` kept it where it was. That reads as one uniform rule and is
+not. For the empirical class the initial state is `verified`, which is where an
+observation already was — so an observation appeared to keep its state, while a work
+record, a milestone or a decision was returned to `proposed` by the identical call. Three
+agents were caught by it on 2026-09-08, one of them across a batch of ten records that had
+to be re-passed; another watched an `active` milestone silently become `proposed` while
+editing its acceptance block. The write prints a hint, but the demotion was the default,
+and a hint after the fact is not the same as not doing it.
+
+It also contradicts D-038, which this project already decided: *revising a record is not
+redefining it*. A revision is not a fresh proposal. Returning it to `proposed` says it is.
+
+**Resolution.** Revision `n+1` inherits the head's `state`. `--state` is how a revision
+moves along the lifecycle, and it is the only way. The write's note changes from "starts
+proposed; pass `--state` to keep it live" to "keeps state `<s>` from the sealed head; pass
+`--state` to move it".
+
+Nothing is lost by this. The concern behind the old behaviour — that a revision might
+change what a `completed` record requires and quietly keep its completion — is already
+answered, and answered better, by D-029 and V-020: the acceptance references of a record
+that stays `completed` are re-compared against the commit the revision lands in, and the
+write lists every one of them so the author can see what is back in question. A state
+reset was a blunt instrument standing in for a precise check that already exists.
+
+**Consequences.** `akr revise <key> --from <body>` becomes safe to use for the ordinary
+thing people use it for — correcting or extending a record — without a second command to
+undo a demotion nobody asked for. Deliberately moving along the lifecycle still reads
+exactly as it should: `akr revise <key> --state superseded`.
+
+**Honored by.** `crates/akr-core/src/ops/mod.rs` (`revise`), `crates/akr-cli/tests/writes.rs`,
+`crates/akr-mcp/src/schema.rs`, `docs/07-cli.md`, `AGENTS.md`.
+
+---
+
+## D-044 — A historical relation names a revision
+
+*Amendment, 2026-09-08.*
+
+**Question.** `supersedes [ @key ]`, with no revision, is legal. D-009 says an unversioned
+reference resolves to whichever revision is live at build time, and D-009's pin-or-float
+guidance is explicitly *not enforced*, so nothing refuses it. The result is not a static
+mistake: the edge **re-aims itself**. A LegeOS decision carried `supersedes
+[ @legeos.decision.toolchain-licence-namespace ]`, written when that key was at an early
+revision; as the key gained revisions the edge followed, and by 2026-09-08 it named
+revision 3, which was `active`. The ledger asserted that one live decision had replaced
+another live decision, and nobody had edited either record. Nine such edges exist across
+the fifteen workspaces audited that day, in six of them — four written that same day by an
+agent who hit the resulting confusion, worked around it, and did not recognise it as a bug.
+
+**Resolution.** A `supersedes` reference names a revision. The unversioned form is
+`AKR-L021`.
+
+**This does not narrow D-009; it makes the reference form agree with a classification the
+model already asserts.** `Relation::is_historical` classes `supersedes` with `contradicts`
+and `derived_from`, commented "the three historical relations exist to point backwards". An
+unversioned reference points *forward* — to whatever is current. A forward-tracking
+historical reference is incoherent in AKR's own terms, and D-009's guidance already said as
+much in prose: "supersession is always pinned; superseding the current head is meaningless."
+What changes is that the tool now agrees with the sentence.
+
+**Scoped to `supersedes` alone, deliberately.** The same argument applies to the other two
+historical relations and the migration does not: across the same fifteen workspaces there
+is one unversioned `contradicts` and **510 unversioned `derived_from`**, in twelve
+workspaces. Nine edges is a mechanical migration; 510 is a project with its own plan, and
+bolting it onto this one would guarantee neither gets done properly. It is recorded
+separately, and D-009 §4.1 case 1 already states the rule it violates — provenance means
+"derived from that observation, not from whatever replaces it".
+
+**Consequences.** Six workspaces fail on pre-existing edges until each is pinned to the
+revision it replaced, which is the revision the author meant when they wrote it. This is
+paired with, and distinct from, V-006's warning that a `supersedes` edge naming a
+still-live record has recorded a replacement that never happened: the refusal prevents an
+edge from re-aiming, the warning catches an edge that was inert from the day it was
+written. Either can occur without the other.
+
+**Honored by.** `crates/akr-core/src/validate/rules.rs` (V-006),
+`crates/akr-core/tests/v_rules.rs`, `docs/04-references-and-versioning.md` §4.1,
+`spec/diagnostics/codes-lang.md` (`AKR-L021`).

@@ -399,3 +399,121 @@ fn the_sys_tandem_legacy_roadmap_imports() {
     assert_eq!(example.run(&["build"]).code, 0);
     assert_eq!(example.run(&["--lenient", "check"]).code, 0);
 }
+
+// -------------------------------------------------------------------------------------
+// A16 — ACTIVE-WORK hides import drafts nobody has dispositioned
+// -------------------------------------------------------------------------------------
+
+/// A report whose headings hit none of `classify`'s five keyword rules, so every one of
+/// them falls through the catch-all to `work`. This is the real shape: the 2026-08 bulk
+/// import that produced 125 live proposed work records turned headings like "Executive
+/// verdict", "Wall times (median of 5 runs)" and "Peak RSS" into things the project
+/// apparently intends to do.
+const REPORT: &str = "\
+# Decoder performance audit
+
+## Wall times
+
+The median of five runs, on the reference machine, at 4096x4096.
+
+## Peak RSS
+
+Resident set size at the high-water mark, sampled once a millisecond.
+";
+
+const REPORT_DOC: &str = "docs/legacy/AUDIT.md";
+
+fn with_report(name: &str) -> Example {
+    let example = Example::materialise(name);
+    example.write_file(REPORT_DOC, REPORT);
+    example
+}
+
+fn import_report(example: &Example) -> support::Run {
+    example.run(&[
+        "--lenient",
+        "import",
+        REPORT_DOC,
+        "--namespace",
+        "sys",
+    ])
+}
+
+/// Until somebody dispositions a claim, its draft is not the project's plan and does not
+/// belong in the view of what is being worked on.
+#[test]
+fn active_work_hides_an_undispositioned_import_draft() {
+    let example = with_report("import-active-work-hidden");
+    assert_eq!(import_report(&example).code, 0);
+    assert_eq!(example.run(&["build"]).code, 0);
+
+    let view = std::fs::read_to_string(example.root().join("docs/generated/ACTIVE-WORK.md"))
+        .expect("ACTIVE-WORK.md");
+    assert!(
+        !view.contains("Wall times") && !view.contains("Peak RSS"),
+        "undispositioned drafts must not appear in ACTIVE-WORK:\n{view}"
+    );
+    // The tracking record IS real work — "disposition every claim" — and stays visible.
+    assert!(
+        view.contains("audit-import"),
+        "the tracking record itself is real work and must stay visible:\n{view}"
+    );
+}
+
+/// THE REGRESSION THAT MATTERS, and the reason the obvious predicate was wrong.
+///
+/// Per D-015 only a *sealed* record needs a new revision, so a `proposed` record is edited
+/// IN PLACE. A draft that has been read, rewritten and adopted as the project's live plan
+/// is still revision 1, still `proposed`, and still cites only the document it came from —
+/// so "proposed + only a legacy source + revision 1" would hide the single most useful
+/// record in a ledger while leaving every phantom visible. That predicate was tested
+/// against exactly such a record in a real workspace and would have buried it.
+///
+/// What separates the two is a fact the ledger already holds: whether the tracking check
+/// is satisfied. Dispositioning a claim must bring its draft straight back into view.
+#[test]
+fn active_work_shows_a_draft_once_its_tracking_check_is_dispositioned() {
+    let example = with_report("import-active-work-adopted");
+    assert_eq!(import_report(&example).code, 0);
+    example.git(&["add", "-A"]);
+    example.git(&["commit", "--quiet", "-m", "import"]);
+
+    let added = example.run(&[
+        "evidence",
+        "add",
+        "sys.evidence.wall-times-dispositioned",
+        "--result",
+        "pass",
+        "--method",
+        "manual",
+        "--summary",
+        "The wall-times claim was read and adopted as the project's plan.",
+    ]);
+    assert_eq!(added.code, 0, "{}", added.output());
+
+    // A `proposed` record is edited in place, which is the whole point: adoption leaves no
+    // revision behind, only the disposition.
+    let tracker = example.root().join(".akr/records/sys/work.akr");
+    let text = std::fs::read_to_string(&tracker).expect("tracking record file");
+    // Anchored on THIS claim's key: the checks are canonically sorted, so patching the
+    // first one would disposition a different claim and prove nothing.
+    let anchor = "promoted as sys.work.wall-times or declined with evidence";
+    let patched = text.replacen(
+        &format!("{anchor}\n                \"\"\"\n            method manual"),
+        &format!(
+            "{anchor}\n                \"\"\"\n            method manual\n            \
+             verified_by [ @sys.evidence.wall-times-dispositioned/1 ]"
+        ),
+        1,
+    );
+    assert_ne!(patched, text, "the tracking check must have been patched");
+    std::fs::write(&tracker, patched).expect("write tracking record");
+
+    assert_eq!(example.run(&["build"]).code, 0);
+    let view = std::fs::read_to_string(example.root().join("docs/generated/ACTIVE-WORK.md"))
+        .expect("ACTIVE-WORK.md");
+    assert!(
+        view.contains("Wall times"),
+        "a dispositioned draft is the project's plan and must be visible again:\n{view}"
+    );
+}

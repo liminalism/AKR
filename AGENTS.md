@@ -93,6 +93,27 @@ Consult AKR at task and state-transition boundaries, not after every edit.
   that last changed the record. The write's `notes` list them; refresh all of them,
   not the ones you happened to rerun.
 - Unsure what a kind requires? `akr explain <kind>` prints its schema.
+- A normative record at `proposed` means **recorded**, not pending (D-042). It is not a
+  queue and there is nothing to sweep. Move a decision to `active` when the project has
+  adopted it *and* you can name what it rests on — a requirement, policy, constraint,
+  evidence, or the **observation** that motivated it, which counts.
+- **When the defect an observation reported has been fixed**, do not supersede the
+  observation if an active decision is `supported_by` it: AKR-R021 will refuse, and it is
+  right to — that observation is the decision's rationale and deleting it would leave the
+  decision resting on nothing. It has simply stopped being a claim about current code and
+  become history. Give it `watches [ ]` and a `review_after`, and leave it `verified`.
+  History should not be watched.
+- **A claim about the world outside this repository** — a library's behaviour, what a
+  registry publishes, what an operating system ships — has no glob that can see it change.
+  `watches` is the wrong instrument and leaving it empty is correct; give it a
+  `review_after` instead, and say in the statement what would falsify it. A watch on
+  `Cargo.toml` standing in for "no crate does X" goes stale on every unrelated dependency
+  bump and stays silent on the only change that matters.
+- **`--about` is what makes a papercut findable by the project that can fix it.** A
+  papercut about AKR's own behaviour, or about any tool that is not this project, needs
+  `--about <subject>`; without it `akr papercut collate` cannot route it and it stays where
+  it was written. Of 395 papercuts across fifteen workspaces on 2026-09-08, 278 carried no
+  subject at all.
 
 **Papercuts**
 - When you hit a small friction while working — a tool call that missed and had to be

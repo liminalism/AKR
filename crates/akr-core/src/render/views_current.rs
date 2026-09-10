@@ -73,6 +73,37 @@ pub fn check_views_current(dir: &Path, cx: RenderContext<'_>) -> io::Result<Vec<
         if committed != rendered {
             let (line, committed_line, rendered_line) = first_difference(&committed, &rendered);
             let differing = differing_lines(&committed, &rendered);
+
+            // A view whose ONLY difference is the banner's `tool:` line was rendered by an
+            // older binary against the same ledger. Its content is current; the stamp is
+            // not. That is a migration artifact which disappears the first time anyone
+            // rebuilds, and it is not the failure D-025 exists to catch — so it is
+            // AKR-E015 at warning severity, exempt from strict promotion, rather than
+            // AKR-E011. Ten of fifteen workspaces in one 2026-09 sweep were in exactly
+            // this state, every one of them reporting "no diagnostics" from a plain check.
+            if tool_line_only(&committed, &rendered) {
+                out.push(
+                    Diagnostic::warning(
+                        codes::E015,
+                        V112,
+                        Subject::File(display.clone()),
+                        format!(
+                            "{display} was rendered by a different `akr` version;                              its content matches the ledger but its banner does not"
+                        ),
+                    )
+                    .note(crate::diagnostics::Label::with_message(
+                        Subject::File(display.clone()),
+                        format!("line {line} committed: {committed_line:?}"),
+                    ))
+                    .note(crate::diagnostics::Label::with_message(
+                        Subject::File(display.clone()),
+                        format!("line {line} emitted:   {rendered_line:?}"),
+                    ))
+                    .help("run `akr build` and commit the result; nothing else in this view differs"),
+                );
+                continue;
+            }
+
             out.push(
                 Diagnostic::error(
                     codes::E011,
@@ -187,6 +218,31 @@ fn banner_problem(text: &str) -> Option<&'static str> {
         return Some("the banner is not closed on line 5");
     }
     None
+}
+
+/// Whether the only difference between two renderings is the banner's `tool:` line.
+///
+/// The banner occupies the first four lines (§4), so a `tool:` field outside it is not a
+/// banner field and does not qualify — a body line that happens to start with `tool: `
+/// must still be a hard difference.
+fn tool_line_only(committed: &str, rendered: &str) -> bool {
+    let left: Vec<&str> = committed.lines().collect();
+    let right: Vec<&str> = rendered.lines().collect();
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut differing = left
+        .iter()
+        .zip(right.iter())
+        .enumerate()
+        .filter(|(_, (a, b))| a != b);
+    let Some((index, (a, b))) = differing.next() else {
+        return false;
+    };
+    differing.next().is_none()
+        && index < 4
+        && a.trim_start().starts_with("tool: ")
+        && b.trim_start().starts_with("tool: ")
 }
 
 /// The 1-based line number of the first difference, with both sides' text.

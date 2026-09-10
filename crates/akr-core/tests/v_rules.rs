@@ -328,6 +328,139 @@ fn v006_passes_for_part_of_a_superseded_plan_when_dispositioned() {
     assert_clean(&validate::v006_historical_references(&l));
 }
 
+/// A11/A13. T031 demands a `resolves` edge before a question may be resolved, and V-006
+/// then rejected the pinned form of the edge it had demanded — with the error landing on
+/// the answering record rather than on the write the author was making. Resolution
+/// satisfies a question the way completion satisfies a prerequisite.
+#[test]
+fn v006_passes_for_resolves_pointing_at_the_question_it_resolved() {
+    let l = ledger(vec![
+        rec("fx.question.open-thing", 1, Kind::Question)
+            .state(State::Resolved)
+            .build(),
+        rec("fx.observation.the-answer", 1, Kind::Observation)
+            .state(State::Verified)
+            .rel(Relation::Resolves, "@fx.question.open-thing/1")
+            .build(),
+    ]);
+    assert_clean(&validate::v006_historical_references(&l));
+}
+
+/// The state the real flow actually produces, and the one the first version of this
+/// exemption missed. Resolving a question creates a revision: `/2` becomes `resolved` and
+/// `/1` becomes `superseded`. A pin at the revision that was open when the answer was
+/// written therefore lands on the superseded one — and V-006's help told the author to
+/// "use a historical relation and pin it", which is exactly what they had done.
+///
+/// The first version passed its test and failed every user, because `akr revise`
+/// auto-repoints live pins: `resolves [@q/1]` is silently rewritten to `/2` before `check`
+/// ever sees it, so a test that builds the record through the CLI never reaches the state
+/// the bug lives in. This one builds the ledger directly for that reason.
+#[test]
+fn v006_passes_for_resolves_pinned_at_the_revision_that_was_open() {
+    let l = ledger(vec![
+        rec("fx.question.open-thing", 1, Kind::Question)
+            .state(State::Superseded)
+            .build(),
+        rec("fx.question.open-thing", 2, Kind::Question)
+            .state(State::Resolved)
+            .rel(Relation::Supersedes, "@fx.question.open-thing/1")
+            .build(),
+        rec("fx.observation.the-answer", 1, Kind::Observation)
+            .state(State::Verified)
+            .rel(Relation::Resolves, "@fx.question.open-thing/1")
+            .build(),
+    ]);
+    assert_clean(&validate::v006_historical_references(&l));
+}
+
+/// D-044. `Supersedes` is a historical relation and an unversioned reference follows the
+/// head, so the unversioned form is incoherent in AKR's own terms — and it re-aims itself
+/// as its target gains revisions, which is how a LegeOS decision came to assert that one
+/// live decision had replaced another with nobody having edited either.
+#[test]
+fn v006_refuses_an_unversioned_supersedes() {
+    let l = ledger(vec![
+        rec("fx.decision.old", 1, Kind::Decision)
+            .state(State::Superseded)
+            .build(),
+        rec("fx.decision.new", 1, Kind::Decision)
+            .state(State::Active)
+            .rel(Relation::Supersedes, "@fx.decision.old")
+            .build(),
+    ]);
+    assert_raises(&validate::v006_historical_references(&l), c::L021);
+
+    // Pinned, at a retired target: the shape the rule is asking for.
+    let pinned = ledger(vec![
+        rec("fx.decision.old", 1, Kind::Decision)
+            .state(State::Superseded)
+            .build(),
+        rec("fx.decision.new", 1, Kind::Decision)
+            .state(State::Active)
+            .rel(Relation::Supersedes, "@fx.decision.old/1")
+            .build(),
+    ]);
+    assert_clean(&validate::v006_historical_references(&pinned));
+
+    // The revision chain within one key is untouched: `head()` computes that, and the
+    // unversioned form there is not a cross-key claim.
+    let chain = ledger(vec![
+        rec("fx.decision.x", 1, Kind::Decision)
+            .state(State::Superseded)
+            .build(),
+        rec("fx.decision.x", 2, Kind::Decision)
+            .state(State::Active)
+            .rel(Relation::Supersedes, "@fx.decision.x/1")
+            .build(),
+    ]);
+    assert_clean(&validate::v006_historical_references(&chain));
+}
+
+/// A12. A cross-key `supersedes` edge records the replacement; it does not perform it.
+/// Verified 2026-09-08 that neither the pinned nor the unversioned form retires the
+/// target, so the defect was never about whether the reference names a revision — and
+/// nothing said so, which is how an openarc observation kept re-entering the review queue
+/// carrying an edge that claimed it was gone.
+#[test]
+fn v006_reports_a_supersedes_edge_that_has_not_superseded_anything() {
+    let live_target = ledger(vec![
+        rec("fx.observation.old", 1, Kind::Observation)
+            .state(State::Verified)
+            .build(),
+        rec("fx.observation.new", 1, Kind::Observation)
+            .state(State::Verified)
+            .rel(Relation::Supersedes, "@fx.observation.old")
+            .build(),
+    ]);
+    assert_raises(&validate::v006_historical_references(&live_target), c::L021);
+
+    // The pinned form is no different, which is the part that narrows the defect.
+    let pinned = ledger(vec![
+        rec("fx.observation.old", 1, Kind::Observation)
+            .state(State::Verified)
+            .build(),
+        rec("fx.observation.new", 1, Kind::Observation)
+            .state(State::Verified)
+            .rel(Relation::Supersedes, "@fx.observation.old/1")
+            .build(),
+    ]);
+    assert_raises(&validate::v006_historical_references(&pinned), c::L021);
+
+    // Once the target really is retired, the edge is telling the truth and says nothing —
+    // pinned, which D-044 now requires of a historical relation anyway.
+    let retired = ledger(vec![
+        rec("fx.observation.old", 1, Kind::Observation)
+            .state(State::Superseded)
+            .build(),
+        rec("fx.observation.new", 1, Kind::Observation)
+            .state(State::Verified)
+            .rel(Relation::Supersedes, "@fx.observation.old/1")
+            .build(),
+    ]);
+    assert_clean(&validate::v006_historical_references(&retired));
+}
+
 #[test]
 fn v006_fails_for_part_of_a_superseded_plan_without_a_disposition() {
     let l = ledger(vec![
@@ -997,6 +1130,50 @@ fn v021_fails_when_an_active_decision_cites_nothing() {
             .build(),
     ]);
     assert_raises(&validate::v021_decision_cites(&l), c::R031);
+}
+
+/// D-042. The citation an author reaches for first is the measurement that motivated the
+/// decision, and until 2026-09-08 that was the one kind V-021 would not count — which is
+/// what left normative layers stuck at `proposed` across fifteen audited workspaces.
+#[test]
+fn v021_passes_when_it_cites_the_observation_that_motivated_it() {
+    let l = ledger(vec![
+        rec("fx.obs.measured", 1, Kind::Observation)
+            .state(State::Verified)
+            .build(),
+        rec("fx.decision.motivated", 1, Kind::Decision)
+            .state(State::Active)
+            .rel(Relation::SupportedBy, "@fx.obs.measured")
+            .build(),
+    ]);
+    assert_clean(&validate::v021_decision_cites(&l));
+}
+
+/// The rule keeps its teeth: citing only another decision is still citing nothing that
+/// grounds it.
+#[test]
+fn v021_still_fails_when_it_cites_only_another_decision() {
+    let l = ledger(vec![
+        rec("fx.decision.other", 1, Kind::Decision)
+            .state(State::Active)
+            .rel(Relation::SupportedBy, "@fx.obs.measured")
+            .build(),
+        rec("fx.obs.measured", 1, Kind::Observation)
+            .state(State::Verified)
+            .build(),
+        rec("fx.decision.derivative", 1, Kind::Decision)
+            .state(State::Active)
+            .rel(Relation::DependsOn, "@fx.decision.other")
+            .build(),
+    ]);
+    let raised = validate::v021_decision_cites(&l);
+    assert!(
+        raised
+            .iter()
+            .any(|d| d.code == c::R031
+                && d.primary.message.as_deref().is_none_or(|m| !m.is_empty())),
+        "expected AKR-R031 for the derivative decision: {raised:?}"
+    );
 }
 
 #[test]

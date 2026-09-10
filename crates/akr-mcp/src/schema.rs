@@ -270,9 +270,44 @@ pub const TOOLS: &[Tool] = &[
     },
 ];
 
+/// The name a host that rejects `.` in MCP tool names will accept.
+///
+/// MCP 2025-11-25 allows dots (`admin.tools.list`). Grok Build 1.0.25 still requires
+/// `^[a-zA-Z_][a-zA-Z0-9_-]{0,63}$` and silently drops the rest, so a session attaches
+/// with `tool_count: 0` while `grok mcp doctor` reports the full catalogue. The
+/// underscored form is what that host is advertised; [`canonical_tool_name`] maps it
+/// back so `tools/call` still hits the same arm.
+#[must_use]
+pub fn host_safe_name(name: &str) -> String {
+    name.replace('.', "_")
+}
+
+/// The catalogue name for a `tools/call`, whether the host sent the dotted form or
+/// the underscored one [`host_safe_name`] advertises.
+#[must_use]
+pub fn canonical_tool_name(name: &str) -> Option<&'static str> {
+    TOOLS.iter().find_map(|tool| {
+        (tool.name == name || host_safe_name(tool.name) == name).then_some(tool.name)
+    })
+}
+
+/// Whether `name` matches Grok Build 1.0.25's advertised-tool regex.
+#[must_use]
+pub fn is_host_safe_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first.is_ascii_alphabetic() || first == '_') || name.len() > 64 {
+        return false;
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
 /// The input schema for a tool, or `None` if the name is unknown.
 #[must_use]
 pub fn input_schema(name: &str) -> Option<Value> {
+    let name = canonical_tool_name(name).unwrap_or(name);
     let schema = match name {
         "knowledge.search" => object(
             vec![
@@ -897,6 +932,7 @@ pub fn input_schema(name: &str) -> Option<Value> {
 /// stays a per-tool `match`, because there the arms actually differ.
 #[must_use]
 pub fn output_schema(name: &str) -> Option<Value> {
+    let name = canonical_tool_name(name).unwrap_or(name);
     TOOLS
         .iter()
         .any(|tool| tool.name == name)
@@ -1459,6 +1495,22 @@ mod tests {
                 .map(|o| o.name())
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn host_safe_names_are_unique_and_match_grok_regex() {
+        let mut seen = std::collections::BTreeSet::new();
+        for tool in TOOLS {
+            let safe = host_safe_name(tool.name);
+            assert!(
+                is_host_safe_name(&safe),
+                "{safe} must match ^[a-zA-Z_][a-zA-Z0-9_-]{{0,63}}$"
+            );
+            assert!(seen.insert(safe.clone()), "host-safe name {safe} collides");
+            assert_eq!(canonical_tool_name(&safe), Some(tool.name));
+            assert_eq!(canonical_tool_name(tool.name), Some(tool.name));
+        }
+        assert!(canonical_tool_name("not-a-tool").is_none());
     }
 
     #[test]

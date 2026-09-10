@@ -454,8 +454,17 @@ pub fn revise_with_dispositions(
         // `docs/04` §2.1, which describes the unretired intermediate state.
         let mut record = edited(&head, edits);
         record.id = RevisionId::new(key.clone(), head.id.revision + 1);
-        let initial = head.kind.class().initial()[0];
-        record.state = initial;
+        // The successor keeps the state it inherits, and `--state` is how you move it
+        // (D-043). This used to reset to the class's initial state, which read as uniform
+        // and was not: for an empirical class the initial state is `verified`, which is
+        // where the record already was, so an observation appeared to keep its state while
+        // a work record, milestone or decision was silently returned to `proposed` by the
+        // identical call. The hint was printed, but the demotion was the default, and it
+        // contradicts D-038 — revising a record is not redefining it, so a revision is not
+        // a fresh proposal. The acceptance guard is unaffected and is the better one: V-020
+        // re-compares every acceptance reference against the commit this revision lands in,
+        // and the write lists them.
+        record.state = head.state;
         if let Some(state) = edits.state {
             record.state = state;
         }
@@ -471,7 +480,7 @@ pub fn revise_with_dispositions(
             applied.notes.insert(
                 0,
                 format!(
-                    "{} starts {initial} (sealed head was {}); pass --state to keep it live",
+                    "{} keeps state {} from the sealed head; pass --state to move it",
                     RevisionId::new(key.clone(), head.id.revision + 1),
                     head.state
                 ),
@@ -691,14 +700,24 @@ pub fn supersede_with(
         ));
     }
     if replacement.state != State::Proposed {
+        // The proposed-replacement requirement is deliberate: this operation is an atomic
+        // graph transition, and the replacement's body, title and scope are meant to be
+        // reviewable before it happens. What was missing is that the sealed case is the
+        // COMMON case — every observation starts `verified` — and the obvious workaround,
+        // `akr revise <old> --state superseded`, retires the old head while recording no
+        // edge to the successor at all. Following it loses the relationship silently. So
+        // the refusal now names the sequence that works.
         return Err(Refused::new(
             Operation::Supersede,
             cli::C032,
             format!(
-                "replacement {} is sealed ({}); propose a new replacement key first",
+                "replacement {} is sealed ({}); this operation edits the replacement in place, which D-015 allows only while it is `proposed`",
                 replacement.id, replacement.state
             ),
-        ));
+        )
+        .with_help(format!(
+            "revise the replacement to carry the edge, then retire the old head:\n  akr revise {new_key} --from <body with `supersedes [ @{old_key} ]`>\n  akr revise {old_key} --state superseded\nthe second command on its own retires {old_key} and records no edge to the successor"
+        )));
     }
 
     if old.kind.class() == Class::Planning {
@@ -832,7 +851,7 @@ pub fn complete(
         return Err(refusal);
     }
 
-    apply(
+    let mut applied = apply(
         context,
         staged_mut(&mut staged),
         Operation::Complete,
@@ -842,7 +861,23 @@ pub fn complete(
             from: head.state,
             to: State::Completed,
         },
-    )
+    )?;
+
+    // V-020 is satisfied vacuously by a record with no checks, so `complete` accepts it
+    // and the result is indistinguishable from a completion that was verified. Saying so
+    // is not a refusal — small work legitimately carries no acceptance — but the reader
+    // of a completed record is entitled to know which of the two they are looking at.
+    if record
+        .acceptance
+        .as_ref()
+        .is_none_or(|acceptance| acceptance.checks.is_empty())
+    {
+        applied.notes.push(format!(
+            "{} completed with no acceptance checks; nothing was verified",
+            record.id
+        ));
+    }
+    Ok(applied)
 }
 
 /// Moves a planning record to `abandoned`, demanding a disposition for every unfinished

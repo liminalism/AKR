@@ -1,9 +1,333 @@
 akr 0.1
 project akr
 
+record akr.work.a-scope-that-can-never-match/1 : work {
+    title "AKR-G022 and AKR-G023 are silent on most of what they were built to catch"
+    state superseded
+    scope [
+        path "crates/akr-core/src/**",
+        path "docs/05-validation-rules.md",
+        path "docs/10-freshness-and-git.md",
+        path "spec/diagnostics/**"
+    ]
+    intent """
+        A scope or watch glob that matches no tracked file makes its record unfalsifiable: nothing the
+        glob names can ever change, so the record can never go stale and never enter the review queue.
+        AKR 0.5.0 already has the right diagnostics for this — AKR-G022 for a watch glob and AKR-G023
+        for a scope path, with V-102's help text saying exactly the right thing: "the record can no
+        longer go stale by that glob". They are not the problem. The problem is that in a nine-agent
+        cleanup run across fifteen workspaces on 2026-09-08, not one agent saw either of them fire until
+        one was provoked deliberately in a throwaway workspace, while a hand scan of the same corpus
+        found 93 distinct dead globs.
+
+        THE CENSUS. A hand scan using `git ls-files -- ':(glob)<pattern>'` over every top-level scope
+        and watches block in every ledger under /mnt/Samsung980_1TB/Rust-projects, deliberately not
+        using AKR's own diagnostic: 93 distinct dead globs out of 1142 examined, across the 13
+        workspaces that have records and globs to test, cited by 254 record-occurrences. By
+        classification: 119 deleted or never-existed, 96 gitignored, 32 untracked-but-present, 7
+        wrong-shape. By kind: 214 scope, 40 watches. Dead rates per workspace range from 0% (Kitchen-
+        Concept, Thai-alphabet-app, openarc) to 27.6% (bpg-rs), with SaveYourSkin the largest ledger and
+        16.7%. This ledger is not exempt: 2 of AKR's own 73 globs are dead, and they happen to be one
+        instance of each suppression below.
+
+        SUPPRESSION 1 — the diagnostic stops once the record is completed. Proved in a throwaway
+        workspace: a work record with two zero-match scope paths raised two AKR-G023 warnings; running
+        `akr complete` on it, changing nothing else, made both vanish, and re-reading the record file
+        confirmed both dead paths were still there. The census measures the cost: 88 of the 254
+        occurrences, 35% of the corpus, sit on `completed` records. The freshness rationale does not
+        transfer. A completed record's scope is a durable claim about what that work touched, and it is
+        read by future agents long after completion — the whole reason this cleanup run existed was
+        that people trust the ledger's account of finished work. Silencing it buys a quiet queue at the
+        cost of the ledger's historical accuracy.
+
+        SUPPRESSION 2 — the diagnostic is suppressed for a git-ignored path and fires for a merely
+        untracked one. This was the confusing one, because it looked like the diagnostic firing at
+        random. It is an exact rule, confirmed in four workspaces with `git check-ignore -v` and with no
+        exceptions:
+          - FreeCAD, one record, four globs, three dead, only two reported: `FreeCAD/` is matched by
+            .gitignore:25 and is SILENT; `blwfish-freecad-mcp` and `yonosoft-freecad-mcp` are untracked
+            but not ignored and both FIRE. The apparent "a deeper glob escaped its shallower sibling"
+            had nothing to do with depth.
+          - SaveYourSkin: SYSEngine/assets/characters/{garments,human} exist on disk, are untracked and
+            are not ignored, and FIRE — its own papercut calls this permanent noise on a correct scope.
+          - Lege-ecosystem: lege-document-ocr/turboocr/** is matched by lege-document-ocr/.gitignore:3
+            and is SILENT.
+          - A deliberate probe: one gitignored directory that exists on disk, scoped five ways at once
+            (a plain file path, dir/sub/**, dir/**, a bare directory, a bare subdirectory). All five
+            silent. It is not glob shape, not depth, not file-versus-directory. It is ignore status.
+
+        The rule gets both ends backwards. A git-ignored path is the one that can NEVER match a tracked
+        file — the permanently unfalsifiable case, the one worth shouting about — and it is silenced: 96
+        of 254 occurrences. Untracked-but-not-ignored is the genuinely ambiguous case, and it is
+        reported: 32 occurrences, which include both real signal (a FreeCAD constraint requiring a
+        COMMITTED codegraph.json exclude list, where the file exists with the right content and was
+        simply never `git add`ed — silencing that would hide an unmet requirement) and pure noise
+        (SaveYourSkin's deliberately-untracked art tree). AKR is inferring authorial intent from
+        .gitignore and landing on the wrong side of both.
+
+        A THIRD WAY A SCOPE DIES, which no predicate above catches and which looks perfectly healthy to
+        a human reviewer: bpg-rs scopes `libbpg/**`, and libbpg is a git submodule. The parent repo
+        tracks the gitlink but never the submodule's contents, so `ls-files` never expands into it. Any
+        ls-files-based fix has to decide what it does at a submodule boundary.
+
+        A FOURTH THING, separate from dead globs but found by the same scan and belonging with the
+        validation work: jpegxl-rs.work.arch-phase4e-modular-effort-ramp/1's scope contains
+        double-wrapped glob strings — the stored value is literally the text `path "JPXL/crates/jpxl-
+        cli/**"`, quotes and keyword included. AKR parsed it, stored it, and never objected. Malformed
+        input accepted silently.
+
+        WHAT THE NEXT SESSION MUST DECIDE.
+
+        1. Whether a completed record's scope is still a claim. If it is, G023 must keep reporting after
+        completion, and 88 occurrences appear at once. If it is not, say so in the docs, because every
+        agent in this run assumed it was.
+
+        2. Stop inferring intent from .gitignore. Make the predicate `git ls-files` for every scope path
+        and watch glob — which is what AKR-G023's own message already promises, "matches no tracked
+        path" — and give the author a way to say "this path is deliberately untracked". That is the one
+        thing SaveYourSkin's papercut says it cannot express, and it is what separates a glob that
+        matches nothing because the work is not done yet (signal) from one that can never match (noise).
+        A naive "warn on every zero-match glob" flattens that distinction and will be turned off.
+
+        3. Decide the submodule case explicitly rather than by accident.
+
+        4. Reject a scope path that does not parse as a bare glob.
+
+        One thing this record does NOT claim, because it was checked and is false: the importer is not
+        the cause. `akr import` and `akr ingest` set neither `watches` nor `scope` on anything they
+        draft — neither string appears in either module. Every dead glob in the census was written by an
+        author, not emitted by a tool, which is why the fix has to be a check rather than a generator
+        change.
+        """
+    note """
+        LANDED 2026-09-08, all four parts, with tests: `asserts_its_scope()` replacing the `is_live()`
+        filter so a completed record's scope is still checked and a sealed superseded one is not;
+        `unverifiable_scopes()` reporting ignored and submodule paths as build facts;
+        `Repository::run_ls_tree_submodules()` and `inside_submodule()` for the gitlink case; and
+        `validate()` in freshness/glob.rs rejecting a glob containing a quote or beginning with the
+        slot keyword, with a malformed scope glob now raising AKR-G021 where it used to be skipped in
+        silence. AKR-G023's help no longer advertises the copied-prefix case, because AKR-G021 owns it
+        now.
+
+        The build-fact shape was the design call and it is worth stating why, because a warning was the
+        obvious choice and would have been wrong. Diagnostic severity here is Error or Warning only,
+        and `--strict` is the default, so any new warning would have failed the check of every project
+        whose scopes are correct and deliberately outside git — SaveYourSkin's art trees above all,
+        whose own papercut calls the existing noise unfixable-without-falsifying-a-correct-scope. A
+        fact reports without failing, which is the shape staleness and scratch already have (D-024,
+        D-036).
+
+        NOT CLOSED BY THIS RECORD: there is still no way for an author to say "this path exists and is
+        deliberately untracked". Ignored paths are now visible as facts, which removes the silence, but
+        an untracked-and-not-ignored path still warns and still cannot be declared. That is tracked
+        separately; it is a grammar question about `project.akr` rather than a matching-predicate
+        question, and it is the one piece of this cluster that is a design call rather than a bug.
+        """
+    acceptance {
+        check completed-records-are-reported {
+            statement """
+                A completed record's dead scope raises AKR-G023; a superseded record's does not, because a sealed record cannot be edited to fix it.
+                """
+            method command
+            command "cargo test -p akr-core --test freshness a_completed_records_dead_scope_is_still_reported && cargo test -p akr-core --test freshness a_superseded_records_dead_scope_is_not_reported"
+            verified_by [ @akr.evidence.scope-verifiability-suite-20260908/2 ]
+        }
+        check malformed-globs-say-so {
+            statement """
+                A scope glob carrying the slot keyword in its value, or a quoted string nested inside another, raises AKR-G021 rather than being silently skipped and later reported as a dead scope.
+                """
+            method command
+            command "cargo test -p akr-core --test freshness a_malformed_scope_glob_is_g021_and_not_a_dead_scope"
+            verified_by [ @akr.evidence.scope-verifiability-suite-20260908/2 ]
+        }
+        check unverifiable-scopes-are-facts {
+            statement """
+                A scope path the repository ignores, or one inside a submodule, is reported as a build fact rather than as a diagnostic, and appears in `akr check`'s build-facts block.
+                """
+            method command
+            command "cargo test -p akr-core --test freshness an_ignored_scope_is_a_build_fact_rather_than_a_diagnostic && cargo test -p akr-core --lib submodule"
+            verified_by [ @akr.evidence.scope-verifiability-suite-20260908/2 ]
+        }
+    }
+}
+
+record akr.work.a-scope-that-can-never-match/2 : work {
+    title "AKR-G022 and AKR-G023 are silent on most of what they were built to catch"
+    state completed
+    scope [
+        path "crates/akr-core/src/**",
+        path "docs/05-validation-rules.md",
+        path "docs/10-freshness-and-git.md",
+        path "spec/diagnostics/**"
+    ]
+    intent """
+        A scope or watch glob that matches no tracked file makes its record unfalsifiable: nothing the
+        glob names can ever change, so the record can never go stale and never enter the review queue.
+        AKR 0.5.0 already has the right diagnostics for this — AKR-G022 for a watch glob and AKR-G023
+        for a scope path, with V-102's help text saying exactly the right thing: "the record can no
+        longer go stale by that glob". They are not the problem. The problem is that in a nine-agent
+        cleanup run across fifteen workspaces on 2026-09-08, not one agent saw either of them fire until
+        one was provoked deliberately in a throwaway workspace, while a hand scan of the same corpus
+        found 93 distinct dead globs.
+
+        THE CENSUS. A hand scan using `git ls-files -- ':(glob)<pattern>'` over every top-level scope
+        and watches block in every ledger under /mnt/Samsung980_1TB/Rust-projects, deliberately not
+        using AKR's own diagnostic: 93 distinct dead globs out of 1142 examined, across the 13
+        workspaces that have records and globs to test, cited by 254 record-occurrences. By
+        classification: 119 deleted or never-existed, 96 gitignored, 32 untracked-but-present, 7
+        wrong-shape. By kind: 214 scope, 40 watches. Dead rates per workspace range from 0% (Kitchen-
+        Concept, Thai-alphabet-app, openarc) to 27.6% (bpg-rs), with SaveYourSkin the largest ledger and
+        16.7%. This ledger is not exempt: 2 of AKR's own 73 globs are dead, and they happen to be one
+        instance of each suppression below.
+
+        SUPPRESSION 1 — the diagnostic stops once the record is completed. Proved in a throwaway
+        workspace: a work record with two zero-match scope paths raised two AKR-G023 warnings; running
+        `akr complete` on it, changing nothing else, made both vanish, and re-reading the record file
+        confirmed both dead paths were still there. The census measures the cost: 88 of the 254
+        occurrences, 35% of the corpus, sit on `completed` records. The freshness rationale does not
+        transfer. A completed record's scope is a durable claim about what that work touched, and it is
+        read by future agents long after completion — the whole reason this cleanup run existed was
+        that people trust the ledger's account of finished work. Silencing it buys a quiet queue at the
+        cost of the ledger's historical accuracy.
+
+        SUPPRESSION 2 — the diagnostic is suppressed for a git-ignored path and fires for a merely
+        untracked one. This was the confusing one, because it looked like the diagnostic firing at
+        random. It is an exact rule, confirmed in four workspaces with `git check-ignore -v` and with no
+        exceptions:
+          - FreeCAD, one record, four globs, three dead, only two reported: `FreeCAD/` is matched by
+            .gitignore:25 and is SILENT; `blwfish-freecad-mcp` and `yonosoft-freecad-mcp` are untracked
+            but not ignored and both FIRE. The apparent "a deeper glob escaped its shallower sibling"
+            had nothing to do with depth.
+          - SaveYourSkin: SYSEngine/assets/characters/{garments,human} exist on disk, are untracked and
+            are not ignored, and FIRE — its own papercut calls this permanent noise on a correct scope.
+          - Lege-ecosystem: lege-document-ocr/turboocr/** is matched by lege-document-ocr/.gitignore:3
+            and is SILENT.
+          - A deliberate probe: one gitignored directory that exists on disk, scoped five ways at once
+            (a plain file path, dir/sub/**, dir/**, a bare directory, a bare subdirectory). All five
+            silent. It is not glob shape, not depth, not file-versus-directory. It is ignore status.
+
+        The rule gets both ends backwards. A git-ignored path is the one that can NEVER match a tracked
+        file — the permanently unfalsifiable case, the one worth shouting about — and it is silenced: 96
+        of 254 occurrences. Untracked-but-not-ignored is the genuinely ambiguous case, and it is
+        reported: 32 occurrences, which include both real signal (a FreeCAD constraint requiring a
+        COMMITTED codegraph.json exclude list, where the file exists with the right content and was
+        simply never `git add`ed — silencing that would hide an unmet requirement) and pure noise
+        (SaveYourSkin's deliberately-untracked art tree). AKR is inferring authorial intent from
+        .gitignore and landing on the wrong side of both.
+
+        A THIRD WAY A SCOPE DIES, which no predicate above catches and which looks perfectly healthy to
+        a human reviewer: bpg-rs scopes `libbpg/**`, and libbpg is a git submodule. The parent repo
+        tracks the gitlink but never the submodule's contents, so `ls-files` never expands into it. Any
+        ls-files-based fix has to decide what it does at a submodule boundary.
+
+        A FOURTH THING, separate from dead globs but found by the same scan and belonging with the
+        validation work: jpegxl-rs.work.arch-phase4e-modular-effort-ramp/1's scope contains
+        double-wrapped glob strings — the stored value is literally the text `path "JPXL/crates/jpxl-
+        cli/**"`, quotes and keyword included. AKR parsed it, stored it, and never objected. Malformed
+        input accepted silently.
+
+        WHAT THE NEXT SESSION MUST DECIDE.
+
+        1. Whether a completed record's scope is still a claim. If it is, G023 must keep reporting after
+        completion, and 88 occurrences appear at once. If it is not, say so in the docs, because every
+        agent in this run assumed it was.
+
+        2. Stop inferring intent from .gitignore. Make the predicate `git ls-files` for every scope path
+        and watch glob — which is what AKR-G023's own message already promises, "matches no tracked
+        path" — and give the author a way to say "this path is deliberately untracked". That is the one
+        thing SaveYourSkin's papercut says it cannot express, and it is what separates a glob that
+        matches nothing because the work is not done yet (signal) from one that can never match (noise).
+        A naive "warn on every zero-match glob" flattens that distinction and will be turned off.
+
+        3. Decide the submodule case explicitly rather than by accident.
+
+        4. Reject a scope path that does not parse as a bare glob.
+
+        One thing this record does NOT claim, because it was checked and is false: the importer is not
+        the cause. `akr import` and `akr ingest` set neither `watches` nor `scope` on anything they
+        draft — neither string appears in either module. Every dead glob in the census was written by an
+        author, not emitted by a tool, which is why the fix has to be a check rather than a generator
+        change.
+        """
+    note """
+        LANDED 2026-09-08, with tests: `asserts_its_scope()` replacing the `is_live()` filter so a
+        completed record's scope is still checked and a sealed superseded one is not;
+        `unverifiable_scopes()` reporting ignored, submodule and project-declared paths as build facts;
+        `Repository::run_ls_tree_submodules()` and `inside_submodule()` for the gitlink case; and
+        `validate()` in freshness/glob.rs rejecting a glob containing a quote or beginning with the slot
+        keyword, with a malformed scope glob now raising AKR-G021 where it used to be skipped in
+        silence. AKR-G023's help no longer advertises the copied-prefix case, because AKR-G021 owns it.
+
+        THE BUILD-FACT SHAPE WAS THE DESIGN CALL and a warning would have been wrong. Severity here is
+        Error or Warning only and `--strict` is the default, so a new warning would have failed the
+        check of every project whose scopes are correct and deliberately outside git. A fact reports
+        without failing, which is the shape staleness and scratch already have (D-024, D-036). Two
+        corrections followed from reviewing it against real ledgers rather than a sandbox:
+        `.agent/scratch/**` is excluded, because AKR manages that directory, `akr scratch keep` invites
+        records to cite into it, and `akr check` already reports it on its own line — counting it buried
+        the real findings under one workspace's 64 of 78; and the line now names the first four paths
+        with their records before falling back to a count, because the staleness fact earns its one line
+        by ending in a command to run and this one had none. A fact nobody can act on decays into a
+        number people stop reading, which is how these globs accumulated in the first place.
+
+        WHAT THE FIX UNCOVERED, and it is worse than what it was fixing. The new AKR-G021 passed its
+        unit test and never reached a user, because `Repository::prime_ignored` was handed every scope
+        glob in the ledger before any of them were validated. `git check-ignore -- /abs/path/**` exits
+        128 `fatal: Invalid path`, so `unmatched_watches` returned Err, and `session.rs` swallowed it
+        with `if let Ok(..)` — discarding every scope and watch diagnostic in the workspace, silently.
+        One malformed glob anywhere switched the whole class off. jpegXL-rs has five absolute-path
+        scopes pointing into sibling repositories. Both halves are fixed: git is never handed an
+        unvalidated glob, and the error is surfaced as an AKR-G001 warning rather than dropped. The
+        consequence for this project's own numbers is that any G02x reading taken before this fix,
+        including the "clean" workspaces in the 2026-09-08 census, may have been a silence rather than
+        an absence.
+
+        NOT CLOSED BY THIS RECORD, and deliberately not overstated. There is still no way for an author
+        to say "this path exists and is deliberately untracked"; that is a `project.akr` grammar
+        question rather than a matching-predicate one and it is tracked separately. And the
+        completed-record change is confirmed but not yet measured at scale: a sweep of four workspaces
+        found seven new true positives against a census of 88 occurrences across fifteen, so the
+        remaining eleven should be swept before anyone calls the number settled.
+
+        ONE CORRECTION TO AN EARLIER DRAFT OF THIS RECORD. It cited
+        saveyourskin.requirement.integration-bridge-jobs/3 as a superseded record carrying an
+        unfixable warning. That record is `active`, not superseded, and its dead glob is fixable by
+        ordinary revision. The predicate is still right — a sealed record cannot be edited, so warning
+        about its scope names a defect with no remedy — but it is right by construction and the example
+        was wrong.
+        """
+    acceptance {
+        check completed-records-are-reported {
+            statement """
+                A completed record's dead scope raises AKR-G023; a superseded record's does not, because a sealed record cannot be edited to fix it.
+                """
+            method command
+            command "cargo test -p akr-core --test freshness a_completed_records_dead_scope_is_still_reported && cargo test -p akr-core --test freshness a_superseded_records_dead_scope_is_not_reported"
+            verified_by [ @akr.evidence.scope-verifiability-suite-20260908/2 ]
+        }
+        check malformed-globs-say-so {
+            statement """
+                A scope glob carrying the slot keyword in its value, or a quoted string nested inside another, raises AKR-G021 rather than being silently skipped and later reported as a dead scope.
+                """
+            method command
+            command "cargo test -p akr-core --test freshness a_malformed_scope_glob_is_g021_and_not_a_dead_scope"
+            verified_by [ @akr.evidence.scope-verifiability-suite-20260908/2 ]
+        }
+        check unverifiable-scopes-are-facts {
+            statement """
+                A scope path the repository ignores, or one inside a submodule, is reported as a build fact rather than as a diagnostic, and appears in `akr check`'s build-facts block.
+                """
+            method command
+            command "cargo test -p akr-core --test freshness an_ignored_scope_is_a_build_fact_rather_than_a_diagnostic && cargo test -p akr-core --lib submodule"
+            verified_by [ @akr.evidence.scope-verifiability-suite-20260908/2 ]
+        }
+    }
+    supersedes [ @akr.work.a-scope-that-can-never-match/1 ]
+}
+
 record akr.work.advisor-packet-handoff/1 : work {
     title "Give AKR a formal worker-to-advisor handoff"
-    state completed
+    state superseded
     scope [
         path "crates/akr-cli/src/handoff/**",
         path "crates/akr-mcp/src/**",
@@ -58,6 +382,71 @@ record akr.work.advisor-packet-handoff/1 : work {
             verified_by [ @akr.evidence.advisor-packet-suite/1 ]
         }
     }
+    author "GitHub Uploader"
+}
+
+record akr.work.advisor-packet-handoff/2 : work {
+    title "Give AKR a formal worker-to-advisor handoff"
+    state completed
+    scope [
+        path "crates/akr-cli/src/handoff/**",
+        path "crates/akr-mcp/src/**",
+        path "docs/17-handoff.md",
+        path "scripts/agent-section.md"
+    ]
+    intent """
+        Make handing a task to a second model a first-class, addressable AKR operation rather than a hand-written summary. The packet separates administrative fact, which the preparing agent may compress, from worker interpretation, which it may record but not substitute for the problem; the interpretation is withheld until the advisor has reviewed independently, and the reveal is recorded so that independence is knowable afterwards. Delivered as akr handoff create/list/open/expand/reveal/verify/discard, the matching knowledge.handoff_* MCP tools, a workspace fingerprint that reports exact or drifted, and the agent guidance that makes call an advisor mean prepare a packet.
+        """
+    note """
+        Requested with a design brief that identified the failure mode directly: a summary handoff turns the preparing agent into a perceptual bottleneck, so the receiving model must retain independent discovery authority. Recorded as D-040.
+
+        REPOINTED 2026-09-08. Every command check named something that no longer existed and therefore passed without running anything: the test file moved from crates/akr-cli/tests/advisor_packet.rs to crates/akr-cli/tests/handoff.rs, a_fresh_packet_is_exact_and_an_edited_tree_drifts became a_fresh_session_is_exact_and_an_edited_tree_drifts, the_envelope_defaults_to_the_whole_project became the_scope_defaults_to_the_whole_project, and the MCP differential's an_advisor_packet became a_handoff_opens_the_same_way_from_either_surface. The scope path docs/17-advisor-packets.md was corrected to docs/17-handoff.md. Re-run and re-completed against @akr.evidence.advisor-packet-gates-repointed-20260908.
+
+        This record was found by the fix it motivated: extending AKR-G023 to completed records surfaced the dead scope path, and reading the record to fix that showed every gate under it was vacuous. The tool's own ledger held a completed record whose acceptance could not fail.
+        """
+    acceptance {
+        check blind-read-holds {
+            statement """
+                akr handoff open and knowledge.handoff_open render the factual layer and leak no worker note; reveal releases them and records that it happened.
+                """
+            method command
+            command "cargo test -p akr-cli --test handoff"
+            verified_by [ @akr.evidence.advisor-packet-gates-repointed-20260908/1 ]
+        }
+        check design-set-coherent {
+            statement """
+                The spec set still coheres with D-040, docs/17 and AKR-C043 in it, and the library suites pass.
+                """
+            method command
+            command "python3 tools/check-design.py && cargo test -p akr-core -p akr-cli -p akr-mcp"
+            verified_by [ @akr.evidence.advisor-packet-gates-repointed-20260908/1 ]
+        }
+        check drift-is-reported-not-fatal {
+            statement """
+                A fresh packet verifies as exact, an edited tree verifies as drifted and names what moved, and neither changes the exit status.
+                """
+            method command
+            command "cargo test -p akr-cli --test handoff a_fresh_session_is_exact_and_an_edited_tree_drifts"
+            verified_by [ @akr.evidence.advisor-packet-gates-repointed-20260908/1 ]
+        }
+        check envelope-stays-project-wide {
+            statement """
+                A packet's search envelope defaults to the whole project rather than to what the preparing agent examined.
+                """
+            method command
+            command "cargo test -p akr-cli --test handoff the_scope_defaults_to_the_whole_project"
+            verified_by [ @akr.evidence.advisor-packet-gates-repointed-20260908/1 ]
+        }
+        check surfaces-agree {
+            statement """
+                knowledge.handoff_open and akr handoff open produce an identical result object, and opening over MCP does not stamp the packet.
+                """
+            method command
+            command "cargo test -p akr-mcp --test differential a_handoff_opens_the_same_way_from_either_surface"
+            verified_by [ @akr.evidence.advisor-packet-gates-repointed-20260908/1 ]
+        }
+    }
+    supersedes [ @akr.work.advisor-packet-handoff/1 ]
     author "GitHub Uploader"
 }
 
@@ -314,6 +703,74 @@ record akr.work.context-import-provenance-hardening/1 : work {
     }
 }
 
+record akr.work.default-check-does-not-validate-the-views/1 : work {
+    title "The default check does not validate the artifact the whole ledger exists to produce"
+    state proposed
+    scope [
+        path "crates/akr-cli/src/**",
+        path "crates/akr-core/src/**",
+        path "docs/07-cli.md",
+        path "docs/11-projections.md"
+    ]
+    intent """
+        `akr check` reports "no diagnostics" on a workspace whose docs/generated views do not match its
+        ledger. View currency is only checked behind `--views-current`. A survey on 2026-09-08 of the
+        fifteen workspaces under /mnt/Samsung980_1TB/Rust-projects found that ten of them were shipping
+        views that did not match, from two distinct causes, and that plain `akr check` was clean on
+        every single one.
+
+        THE MEASUREMENT.
+
+        Stale by tool version, nine workspaces: akr 0.3.3 in Evidence-intake-project, orderflower,
+        openarc and agent-pack; akr 0.4.0 in raw-autotune, Lege-ecosystem, Thai-alphabet-app and — this
+        repository. pixelkit had no views at all and raised six AKR-E012. Each of the others raised
+        seven AKR-E011 whose only differing line was line 3, the tool version.
+
+        Stale by source-graph hash, one workspace: Kitchen-Concept was already on 0.5.0, but an agent
+        added two papercuts and a work record on 2026-09-04 and never ran `akr build`, so all seven
+        views carried the pre-addition graph. Diffing a view before and after building confirmed the
+        only changed line was line 2, the hash.
+
+        Already current: bpg-rs, jpegXL-rs, LegeOS, FreeCAD, SaveYourSkin.
+
+        WHY THE SECOND CAUSE IS THE ARGUMENT. Version drift is a migration artifact: it disappears once
+        every workspace has been rebuilt on one binary, and it will not come back until the next
+        release. Hash drift is not. It is an agent finishing a session without a final `akr build`,
+        which is the ordinary end of an ordinary session, and it will recur forever. Both are invisible
+        to the default check and both are caught by the flag nobody passes.
+
+        There is an earlier instance worth keeping as provenance. A bpg-rs papercut from the 0.1.0 era
+        records five view renderers that did not exist yet, and `akr build` and `akr check
+        --views-current` treating the missing views as vacuously current rather than warning. That is
+        the same bug in its first form: the emitter does not notice what it failed to emit.
+
+        THE ARGUMENT, PLAINLY. AKR's value proposition is that docs/generated is a faithful projection
+        of the ledger — it is the artifact humans and agents actually read, and the one thing a reader
+        cannot verify by inspection. Today "akr check: no diagnostics" is compatible with those files
+        being absent, rendered by a two-versions-old binary, or three records behind. The check that CI
+        runs does not check the output.
+
+        WHAT THE NEXT SESSION MUST DECIDE, because this is a policy call and not a patch:
+
+        (a) Make view currency part of stage F of the default check, so AKR-E011 and AKR-E012 are
+        ordinary diagnostics. Cost: every workspace that has not rebuilt since its last write starts
+        failing, which is exactly the ten found above, and that is either the point or an unacceptable
+        migration, depending on whether `akr build` is considered cheap. It is: a full build of the
+        largest ledger in the survey took 2.2 seconds.
+
+        (b) Warn rather than error when the views' tool line does not match the running binary, and
+        error only on the hash. This separates the migration artifact from the recurring defect and
+        makes only the second one block. It is the smaller change and it fixes the cause that recurs.
+
+        (c) Have `akr build` be implied by a write, so hash drift cannot happen. Rejected here without
+        prejudice: writes are frequent and a build is not free at every write, and D-032 deliberately
+        keeps the commit and the ledger write separate.
+
+        Whichever is taken, `akr check`'s summary line should say when it last saw the views agree,
+        rather than being silent about a thing it did not look at.
+        """
+}
+
 record akr.work.desktop-review-gui/1 : work {
     title "Build the native AKR review workbench"
     state completed
@@ -335,6 +792,146 @@ record akr.work.desktop-review-gui/1 : work {
         }
     }
     part_of [ @akr.milestone.human-record-review/1 ]
+}
+
+record akr.work.errors-that-withhold-what-akr-already-knows/1 : work {
+    title "Two errors that withhold what akr already knows: the MCP name and the workspace one level down"
+    state completed
+    scope [ path "AGENTS.md", path "crates/akr-cli/src/**", path "spec/diagnostics/**" ]
+    intent """
+        Two failures that every agent in the 2026-09-08 nine-agent run hit, both one-line fixes, both
+        cases where the tool has the answer and prints something else.
+
+        ONE — an MCP tool name is not recognised as an MCP tool name.
+        `akr knowledge.context` answers `error[AKR-C001]: unknown command "knowledge.context"`, with no
+        help line. So does `akr knowledge_context`. AKR's own AGENTS.md lines 13-27 open with exactly
+        the right sentence — "`knowledge.*` names are MCP tools, not CLI commands" — and then give the
+        full mapping table: knowledge.context to `akr context --goal`, knowledge.start to `akr start`,
+        knowledge.propose to `akr propose --from`, and so on. The mapping is written down. It is written
+        down in the one place the people who need it are not: an agent working in bpg-rs or
+        Evidence-intake-project reads that project's guidance, or a global instruction file that spells
+        the operation `knowledge.context`, and never opens AKR's AGENTS.md. Papercuts in bpg-rs and
+        LegeOS both record an agent's first required context call simply failing for this reason.
+        Fix: when the unknown command matches `knowledge[._]<name>` and `<name>` resolves to a real
+        command, say so and print the equivalent invocation. `akr check --help` already does the
+        equivalent thing well for one case — "`validate` is the same command under the name the MCP tool
+        uses" — so the precedent and the tone already exist.
+
+        TWO — "no .akr directory" is true and useless when fifteen of them are one level down.
+        Run from /mnt/Samsung980_1TB/Rust-projects, `akr check` answers `error[AKR-C011]: no .akr
+        directory found in /mnt/Samsung980_1TB/Rust-projects or any parent`, help: "run `akr init` to
+        create one". That parent holds fifteen AKR workspaces and is not itself a git repository, so the
+        suggested remedy is actively wrong: `akr init` there would scaffold a ledger in a directory that
+        can never have git facts. This is how the entire nine-agent run was configured — the MCP server
+        was rooted at that parent, every `knowledge.*` call answered "no .akr directory", and every agent
+        independently fell back to driving the CLI with `cd` or `--dir`. An orderflower papercut records
+        the same discovery being made a second time.
+        Fix: on AKR-C011, scan one level of subdirectories for `.akr` and, if any are found, say so —
+        "no workspace here; found 15 in subdirectories: ..." — and suppress the `akr init` suggestion
+        when the current directory is not a git repository, since a workspace without git facts is not
+        what the author wants.
+
+        Neither of these is a design question. Both are the same shape: the tool performed a lookup, the
+        lookup failed, and the failure message reported the miss instead of the information the tool
+        already had in hand.
+        """
+    note """
+        LANDED 2026-09-08. `mcp_equivalent()` in args.rs maps `knowledge.` and `knowledge_` names onto
+        their CLI commands, including the `evidence_*`, `source_*` and `handoff_*` families and
+        `validate` to `check`, and falls through to the existing edit-distance suggestion otherwise.
+        `workspaces_below()` in session.rs scans one level — one deliberately, since this answers "you
+        are one directory too high" rather than searching a filesystem — and AKR-C011's help names what
+        it found. Where nothing is below, the `akr init` suggestion is now conditional on `.git`
+        existing; outside a repository it says so instead of inviting a workspace that can never have
+        git facts.
+
+        The part worth keeping is what the first half turned out to be. The mapping was never missing:
+        AGENTS.md carries the whole table and opens by saying "`knowledge.*` names are MCP tools, not
+        CLI commands". It is written down in the one place the people who need it are not — an agent
+        working in another project reads that project's guidance, or a global instruction file that
+        spells the operation `knowledge.context`, and never opens this repository's AGENTS.md. Two
+        ledgers carry a papercut about the resulting round trip. Documentation that only reaches people
+        who already know where to look is not documentation, and the fix was to say it at the point of
+        failure, where the tool already had the answer.
+        """
+    acceptance {
+        check mcp-names-are-recognised {
+            statement """
+                `akr knowledge.context`, `akr knowledge_evidence_add` and `akr knowledge.validate` each name their CLI equivalent in the help line, and an ordinary typo still gets the edit-distance suggestion.
+                """
+            method observation
+            verified_by [ @akr.evidence.six-point-of-failure-fixes-20260908/1 ]
+        }
+        check the-workspaces-below-are-named {
+            statement """
+                AKR-C011 from a directory holding AKR workspaces names how many are one level down and lists them, and outside a git repository it stops suggesting a ledger that could have no git facts.
+                """
+            method observation
+            verified_by [ @akr.evidence.six-point-of-failure-fixes-20260908/1 ]
+        }
+    }
+}
+
+record akr.work.four-guidance-gaps-answered/1 : work {
+    title "Four guidance gaps that cost agent time in every session, answered in the documents agents read"
+    state completed
+    scope [
+        path "AGENTS.md",
+        path "crates/akr-core/src/validate/**",
+        path "docs/05-validation-rules.md",
+        path "docs/DECISIONS.md",
+        path "spec/diagnostics/codes-lang.md"
+    ]
+    intent """
+        Four things this workspace's agents had to work out for themselves, repeatedly, because nothing
+        wrote them down. Each is now answered where an agent reads rather than where a maintainer
+        remembers.
+
+        THE NORMATIVE LAYER AT `proposed`, and why it was stuck. Answered by D-042, recorded in
+        docs/DECISIONS.md and mirrored as @akr.decision.proposed-means-recorded-and-an-observation-is-support.
+        `proposed` on a normative record means recorded, not pending; and V-021 now accepts an
+        observation as support, because that is the citation an author reaches for first and refusing
+        it silently is what manufactured the permanently-proposed layer measured in
+        @akr.observation.the-normative-layer-is-stuck-at-proposed. One entry added to CITEABLE in
+        validate/rules.rs, message and help rewritten to name the kinds that count, and two tests.
+
+        A MOTIVATING OBSERVATION WHOSE DEFECT IS FIXED. AKR-R021 refuses to supersede an observation an
+        active decision is `supported_by`, and it is right to: that observation is the decision's
+        rationale, and retiring it would leave the decision resting on nothing. But the observation has
+        stopped being a claim about current code, so re-observing it at HEAD would be false. The answer
+        is neither: it has become history, and history should not be watched. Give it `watches [ ]` and
+        a `review_after` and leave it `verified`. The tool guarded two agents into this answer today
+        with no way for either to know it was the answer; it is now in AGENTS.md.
+
+        A CLAIM ABOUT THE WORLD OUTSIDE THE REPOSITORY. A library's behaviour, what a registry
+        publishes, what an operating system ships: no glob can see any of it change. `watches` is the
+        wrong instrument and leaving it empty is correct; `review_after` is the lever, and the statement
+        should say what would falsify it. Named in AGENTS.md with the failure mode agent-pack hit — a
+        watch on `Cargo.toml` standing in for "no crate does X" goes stale on every unrelated dependency
+        bump and stays silent on the only change that matters.
+
+        `--about` ON A PAPERCUT. It is what makes a papercut findable by the project that can fix it;
+        without it `akr papercut collate` cannot route it and it stays where it was written. Of 395
+        papercuts across fifteen workspaces on 2026-09-08, 278 carried no subject at all. Now stated in
+        the papercut section of AGENTS.md rather than left to be inferred from the collate help.
+        """
+    acceptance {
+        check the-decision-is-recorded {
+            statement """
+                D-042 is in docs/DECISIONS.md with its Honored by list, V-021's statement in docs/05-validation-rules.md and AKR-R031's row in spec/diagnostics/codes-lang.md name `observation`, and AGENTS.md carries all four pieces of guidance.
+                """
+            method observation
+            verified_by [ @akr.evidence.v021-accepts-an-observation-20260908/1 ]
+        }
+        check v021-accepts-an-observation {
+            statement """
+                An active decision citing only the observation that motivated it validates; one citing only another decision still raises AKR-R031.
+                """
+            method command
+            command "cargo test -p akr-core --test v_rules v021"
+            verified_by [ @akr.evidence.v021-accepts-an-observation-20260908/1 ]
+        }
+    }
 }
 
 record akr.work.handoff-context-transport/1 : work {
@@ -464,6 +1061,159 @@ record akr.work.handoff-packet-fingerprint-and-result-inheritance/1 : work {
     }
     derived_from [ @akr.work.handoff-context-transport/1 ]
     author "GitHub Uploader"
+}
+
+record akr.work.import-drafts-land-as-live-work/1 : work {
+    title "akr import writes 125 live work items and never mentions akr ingest"
+    state proposed
+    scope [
+        path "crates/akr-cli/src/import.rs",
+        path "crates/akr-core/src/import/**",
+        path "crates/akr-core/src/ingest/**",
+        path "docs/12-migration.md"
+    ]
+    intent """
+        Importing five discursive planning documents into the Lege-ecosystem ledger in 2026-08 produced
+        125 live `proposed` work records and a 1291-line ACTIVE-WORK.md that no one could read. Clearing
+        it on 2026-09-08 took 125 separate `akr abandon` calls. The records were not wrong so much as
+        not work: "Executive verdict", "Wall times (median of 5 runs)", "Peak RSS, single representative
+        run", "Reproduce", "Audit limitations", "1. Objective", "6. Quick reference", and negative
+        guidance like "Do not start with" and "Two traps — do NOT fix these by loosening a check".
+
+        THE MECHANISM, read in the source rather than inferred from the output.
+        `import::extract_markdown` emits one claim per heading, unconditionally, skipping only an empty
+        title and a body-less level-1 heading when other headings exist. `import::classify` is five
+        keyword rules and a catch-all, and the catch-all is `work`. Its own comment gives the rationale:
+        "everything else is `work` — the state a durable claim of unknown kind is safest in, because a
+        `proposed` work record asserts nothing normative." That is true about normativity and false
+        about the work queue. A proposed work record is rendered into ACTIVE-WORK.md and reads as a live
+        commitment; safety from asserting a norm is not safety from filling the backlog.
+
+        TWO THINGS THIS RECORD DELIBERATELY DOES NOT CLAIM, because both were checked and are false.
+        First, the importer does not mis-attach body text: the excerpt is the section body's first
+        paragraph, taken verbatim by slicing, and the case that looked wrong is faithful — "## 3. Add
+        `Jp2DecodeStats`" genuinely opens with "Do not start by optimizing `MqDecoder`...". A discursive
+        document's first paragraph is simply a poor summary of its own heading, and the module's tests
+        correctly pin verbatim slicing. Second, the importer is not the source of the mis-shaped watch
+        globs seen in bulk-ported ledgers: neither `watches` nor `scope` appears anywhere in
+        import/ or ingest/.
+
+        THE SHARP PART. AKR already ships the review gate this needed, and `import` does not mention it.
+        `akr ingest` is preview, start, show, `mark <candidate> <disposition>`, apply, close — a
+        per-candidate review workflow. Nothing in `akr import --help` names it, distinguishes which
+        document shape each is for, or warns what a discursive document will produce. The Lege-ecosystem
+        port did not hit a missing feature; it used the wrong one of two, with no signpost.
+
+        THREE CANDIDATE ANSWERS, in increasing order of what they repair:
+
+        (a) `akr import --help` and docs/12-migration.md name `ingest` and say which document shape each
+        is for. One paragraph, fixes the next port only.
+
+        (b) `import` warns, or refuses without an explicit flag, above a threshold of drafted claims,
+        naming `ingest`. Small, and the threshold is a judgement to make rather than a number to guess:
+        the five documents here drafted between 7 and 61 claims each.
+
+        (c) The one that repairs the ledgers already in the ground: ACTIVE-WORK excludes a `proposed`
+        work record whose only source is `kind legacy` and which has never been revised. That is an
+        undispositioned import draft, not live work. It is a view-level predicate needing no schema
+        change, and every one of the 125 would have been invisible until someone actually adopted it —
+        which is exactly what `import`'s tracking record (D-022) already asks a reviewer to do.
+
+        (c) is the recommendation. It also composes with (a): once drafts are not live, `import` becomes
+        a reasonable default again and `ingest` is the path for a document you want to disposition
+        interactively.
+        """
+    note """
+        ATTEMPTED AND REVERTED 2026-09-08, and the failure is the useful part of this record.
+
+        Option (c) was implemented as a predicate on ACTIVE-WORK's `live_work`: hide a work record that
+        is `proposed`, carries only a `legacy` source, and is at revision 1 — the reasoning being that
+        any of those three ceasing to hold is somebody adopting the draft. It compiled, its unit test
+        passed, and it is wrong.
+
+        A `proposed` record is edited IN PLACE (D-015: only a sealed record needs a new revision). So a
+        draft that somebody has read, rewritten and adopted as the project's live plan is still at
+        revision 1, still `proposed`, and still cites only the document it came from. The predicate
+        would have hidden exactly such a record: during this same cleanup,
+        lege-ecosystem.work.jp2lam-jpeg-2000-decoder-optimization-plan was revised into the single live
+        record for that whole effort — what landed, the negative results, the seven open items — and it
+        remains proposed at revision 1 with one legacy source. Hiding it would have buried the most
+        useful record in that ledger while leaving the 125 phantoms it replaced untouched, had they not
+        already been abandoned.
+
+        Nor do the obvious refinements hold. Acceptance blocks and relations look like adoption signals
+        and are not: that record has neither, and plenty of genuine drafts would acquire a `part_of`
+        edge from the importer itself. Nothing structural on the record distinguishes an adopted draft
+        from an unadopted one, because in-place editing leaves no trace.
+
+        WHERE THE SIGNAL ACTUALLY IS, and this is what the next session should implement. `akr import`
+        already maintains a tracking work record whose acceptance checks enumerate the claims and
+        demand each be "dispositioned: promoted as <key> or declined with evidence" (D-022). A draft is
+        undispositioned exactly while its tracking check is unsatisfied — which is a fact the ledger
+        already holds, computed by the same acceptance machinery every view uses, and which becomes
+        false the moment a human or agent actually dispositions the claim. That is the correct
+        predicate: ACTIVE-WORK hides a work record that some live import tracking record still lists as
+        undispositioned. It costs a cross-record lookup that `live_work` does not currently do, which is
+        why it was not landed on the way past.
+
+        The general lesson is worth more than the fix: a state machine that edits in place cannot be
+        asked "has anyone touched this?", and a predicate that assumes it can will be confidently wrong.
+        """
+}
+
+record akr.work.init-gitignore-is-never-reconciled/1 : work {
+    title "akr init's .gitignore block is written once and never reconciled"
+    state completed
+    scope [ path "crates/akr-cli/src/init.rs", path "crates/akr-core/src/**" ]
+    intent """
+        `akr init` writes a .gitignore block, and GITIGNORE_ENTRIES (crates/akr-cli/src/init.rs:77) now
+        holds three entries: `.akr/cache/`, `.agent/scratch/` and `.agent/handoffs/`. A workspace
+        initialised before `.agent/handoffs/` was added keeps the two-entry block forever, because
+        nothing reconciles it. Checked on 2026-09-08: this repository has all three; LegeOS,
+        Lege-ecosystem, bpg-rs and jpegXL-rs have only the first two, and LegeOS is carrying 49
+        untracked files under .agent/handoffs as a result. They are permanently untracked, permanently
+        noisy in `git status`, and permanently one `git add -A` away from being committed by accident.
+
+        The question of whether handoff packets are ephemeral or durable provenance is already answered
+        — init ignores them — so this is not a design call. It is that the answer only reaches
+        workspaces created after it was made.
+
+        The fix is small and there are two shapes of it. Either `akr check` warns when the workspace's
+        .gitignore is missing an entry the current binary's init would write, which puts the
+        reconciliation where every session already looks; or `akr init` is made idempotent on an
+        existing workspace so re-running it tops up the block, which is what a user would guess it does
+        anyway. The first is better, because nobody re-runs init on a workspace that already works.
+
+        Worth checking the same way whenever GITIGNORE_ENTRIES changes again: the list is a piece of
+        project setup that AKR authors on the project's behalf, so AKR owns keeping it true.
+        """
+    note """
+        LANDED 2026-09-08. `missing_gitignore_entries()` in init.rs compares the workspace's .gitignore
+        against GITIGNORE_ENTRIES, and `akr check` prints the difference in its build-facts block.
+        Verified against LegeOS, which predates `.agent/handoffs/` and is carrying 49 untracked packets
+        because of it.
+
+        A build fact rather than a warning, deliberately and for the same reason as the
+        unverifiable-scope line: `--strict` is the default, and failing the check of four out of five
+        existing workspaces over a .gitignore line is how checks get turned off.
+
+        Reporting from `check` rather than making `init` idempotent is the whole point. Nobody re-runs
+        `init` on a workspace that already works, so a top-up command would never be run; the
+        reconciliation has to happen where every session already looks. The general shape is worth
+        keeping in view — the .gitignore block is project setup AKR authors on the project's behalf,
+        written once at creation and never revisited, which is the same shape as the generated views
+        being emitted once and never re-checked. Anything AKR writes on a project's behalf needs an
+        answer to "and what keeps it true afterwards".
+        """
+    acceptance {
+        check the-missing-entry-is-reported {
+            statement """
+                `akr check` in a workspace whose .gitignore predates an entry `akr init` now writes names the missing entry as a build fact, without failing the check.
+                """
+            method observation
+            verified_by [ @akr.evidence.six-point-of-failure-fixes-20260908/1 ]
+        }
+    }
 }
 
 record akr.work.mcp-actionable-truncation/1 : work {
@@ -711,6 +1461,52 @@ record akr.work.mcp-transport-reliability/1 : work {
         }
     }
     derived_from [ @akr.papercut.collated-18-papercuts-from-evidence-intake/1 ]
+}
+
+record akr.work.no-orientation-target-for-finished-work/1 : work {
+    title "There is no way to orient on finished work, which is the most ordinary way work continues"
+    state proposed
+    scope [
+        path "crates/akr-cli/src/**",
+        path "crates/akr-core/src/context/**",
+        path "crates/akr-mcp/src/**",
+        path "docs/09-context-assembly.md"
+    ]
+    intent """
+        `akr context` refuses the two things a continuing agent actually has.
+
+        `akr context --goal <a decision>` answers AKR-X003: "a bundle anchors on a milestone, work or
+        track record". `akr context --goal <a completed work record>` answers AKR-X002: "is in terminal
+        state completed", with the help "use `akr start <task>` to find live work". And `akr start`
+        searches live work only. Both verified on this ledger at 0dd6057a.
+
+        So the supported path for the most ordinary continuation there is — someone finishes a
+        milestone, someone else builds on it — is no path at all. The agent has the completed record in
+        hand and cannot anchor on it; it has the decisions that govern the area and cannot anchor on
+        those either; and the one command it is told to fall back to is defined to exclude what it was
+        given. Two papercuts in the bpg-rs ledger hit this from opposite sides and neither reads like a
+        clean bug report, which is the tell: each author was describing one face of a hole neither could
+        see the shape of.
+
+        WHAT THE NEXT SESSION MUST DECIDE, and it is not "allow more kinds". A bundle anchored on
+        finished work is a different shape from one anchored on live work. For live work the question is
+        what remains and what constrains it, so the bundle leans on acceptance, blockers and open
+        questions. For finished work the question is what it decided and what now rests on it — the
+        decisions it produced, the evidence that closed it, the records that depend on it, and what has
+        gone stale underneath it since. Widening the kind check without answering that would return a
+        bundle shaped for a question nobody asked.
+
+        A decision as a goal is the same question again from the other end: a decision is not a plan, so
+        "context for a decision" means the records it governs and the work that implements it, which is
+        a neighbourhood query rather than a plan bundle. It may be that `akr impact` already answers
+        most of it and the honest fix is for AKR-X003 to say so, rather than for `context` to grow a
+        second mode.
+
+        Until this is settled the workaround is what both bpg-rs agents ended up doing: `akr get` on the
+        named records and `akr search` for the neighbourhood. That works and it is not discoverable, and
+        the error messages should say it — AKR-X002's help currently points at `akr start`, which is
+        guaranteed not to find what the reader is holding.
+        """
 }
 
 record akr.work.non-fts-start-parity/1 : work {
@@ -1501,6 +2297,52 @@ record akr.work.post-commit-validation/2 : work {
     supersedes [ @akr.work.post-commit-validation/1 ]
 }
 
+record akr.work.provenance-edges-that-follow-their-target/1 : work {
+    title "510 provenance edges mean whatever their target says now"
+    state proposed
+    scope [
+        path "crates/akr-core/src/validate/**",
+        path "docs/04-references-and-versioning.md"
+    ]
+    intent """
+        A scan of fifteen workspaces on 2026-09-08 found 510 unversioned `derived_from` edges across
+        twelve of them, alongside nine unversioned `supersedes` and one unversioned `contradicts`.
+
+        `derived_from` is one of the three historical relations (Relation::is_historical, "the three
+        historical relations exist to point backwards"), and D-009 4.1 case 1 states the rule outright:
+        provenance pins, because a record was "derived from that observation, not from whatever
+        replaces it". An unversioned reference resolves to whichever revision is live at build time. So
+        every one of those 510 edges currently means "derived from whatever that record says now" — and
+        silently changes meaning each time its target is revised, without anyone editing the record that
+        claims the provenance.
+
+        This is the same defect D-044 refused for `supersedes`, at fifty times the scale, and it is
+        worse in kind. A re-aimed `supersedes` makes a false claim about the graph, which a reader can
+        at least see is odd; a re-aimed `derived_from` quietly relabels where a conclusion came from,
+        which is the one thing a provenance edge exists to be trusted about.
+
+        WHY IT IS NOT PART OF D-044. Nine edges is a mechanical migration and was done in the same pass.
+        510, spread over twelve ledgers this session does not own, is a project: each edge has to be
+        pinned to the revision the author actually derived from, and that revision is frequently not
+        the current head — which means reading each one rather than rewriting them in bulk. Extending
+        D-044's refusal to `derived_from` today would have failed twelve workspaces at once with no
+        migration path, and the pressure to get them green again would have produced exactly the bulk
+        rewrite that destroys the information the pin is supposed to carry.
+
+        WHAT THE NEXT SESSION MUST DECIDE, in order.
+        First, whether a bulk pin-to-current-head is acceptable for any subset. It is defensible only
+        where the target has exactly one revision, since there the unversioned and pinned forms already
+        denote the same thing and the rewrite loses nothing. That subset should be measured before
+        anything else, because it may be most of the 510 and it is the only part that can be automated.
+        Second, what to do with the remainder, where the target has been revised and the correct pin is
+        a judgement about what the author meant. Reading them is the honest answer and it is not cheap.
+        Third, whether the refusal then extends to `derived_from` and `contradicts`, closing the class.
+
+        One measurement to take first, because it determines whether this is a day or a week: of the 510,
+        how many name a target that has only ever had one revision.
+        """
+}
+
 record akr.work.reduce-knowledge-write-latency/1 : work {
     title "Reduce repeated knowledge-write latency"
     state completed
@@ -1624,6 +2466,51 @@ record akr.work.resolve-collated-papercuts/1 : work {
     intent """
         Review the collated cross-project papercuts, distinguish reports already fixed in the current AKR from genuinely new issues, and implement focused fixes with regression coverage.
         """
+}
+
+record akr.work.retire-the-already-answered-papercuts/1 : work {
+    title "Retire the reported AKR defects that current behaviour has already answered"
+    state completed
+    scope [ path "crates/**", path "docs/**" ]
+    intent """
+        A defect register compiled from fifteen workspaces on 2026-09-08 carried ten items that turned
+        out to need no fix. Seven were fixed by work already shipped and nobody had gone back to say so;
+        three were never defects. Left unmarked, each would have been re-investigated by the next agent
+        to read the papercut, which is how a register becomes a tax rather than an asset — and one of
+        them, "freshness rebuilds hang for minutes", would have actively deterred people from using AKR
+        on large ledgers for something it never did.
+
+        Every one was re-run rather than assumed. The results are in
+        @akr.evidence.papercut-retest-20260908: the descendant-commit gate closed by D-028 and D-029,
+        `akr validate` existing, `akr get` showing acceptance ids, `akr revise --from` merging rather
+        than replacing, `evidence add` then `complete` needing no build between them, the concurrent
+        write race closed by the workspace lock, and the 0.1.0 stub renderers all present. Plus three
+        that were correct behaviour or misattribution: `akr get --format json` timing, `topic` on a work
+        record, and the freshness-rebuild hangs.
+
+        The concurrent-write one is worth keeping in view rather than merely closing. Six simultaneous
+        writers used to leave two records; the reproduction now leaves six. This cleanup run was nine
+        agents writing to fifteen workspaces in parallel, which is exactly the condition that defect
+        described, so the fix was load-bearing for the run that found it.
+
+        The general point, and the reason this record exists at all rather than ten quiet state changes:
+        a papercut that has been fixed and not retired is indistinguishable from one that is still live.
+        Four of these ten were being cited as live problems in this run's own working notes. `akr
+        papercut collate` gathers them into the owning project, which is the right mechanism, but
+        nothing prompts the owning project to re-test what it absorbed. Whoever runs collate next should
+        expect a meaningful fraction to be already-fixed and should say so per entry rather than
+        absorbing them all as live friction.
+        """
+    acceptance {
+        check re-tested-not-assumed {
+            statement """
+                Each of the ten was re-run against akr 0.5.0 — in the reporting workspace where the reproduction needed it, in a throwaway workspace where it did not — and the outcome recorded per item.
+                """
+            method command
+            command "see @akr.evidence.papercut-retest-20260908 for the per-item reproductions"
+            verified_by [ @akr.evidence.papercut-retest-20260908/1 ]
+        }
+    }
 }
 
 record akr.work.review-snapshot/1 : work {
@@ -2073,6 +2960,333 @@ record akr.work.sister-papercut-fixes/1 : work {
         }
     }
     implements [ @akr.decision.query-words-dirty-tree-ancestry ]
+}
+
+record akr.work.three-writes-that-could-not-be-told-apart/1 : work {
+    title "Three writes that could not be told apart from the thing they were not"
+    state completed
+    scope [
+        path "crates/akr-cli/src/write.rs",
+        path "crates/akr-core/src/freshness/glob.rs",
+        path "crates/akr-core/src/ops/**"
+    ]
+    intent """
+        Three small defects with one shape between them, all landed 2026-09-08.
+
+        A PROPOSE OR REVISE NAMING A COMMIT THE REPOSITORY LACKS. `akr evidence add` has refused an
+        absent `observed_at` since 0.4; `propose` and `revise` did not, so a well-formed 40-hex string
+        naming no commit landed without a word. It was never unfalsifiable — the next `akr check`
+        catches it as AKR-G011, a hard error under `--strict` — but it surfaced on a write the author
+        had already moved on from, which is the expensive kind of correct. Fixed by giving all three
+        write paths the same `ensure_commits_exist`, driven by a new `commits_named_by()` that walks a
+        record's content slots for commit values rather than hardcoding `observed_at`.
+
+        A COMPLETE WITH NOTHING TO VERIFY. V-020 is satisfied vacuously by a record with no acceptance
+        checks, so `akr complete` accepts it and the result is indistinguishable from a completion that
+        was verified. Not a refusal — small work legitimately carries no acceptance — but the reader is
+        entitled to know which of the two they are looking at, and the author is the right person to
+        tell at the moment of the decision. `complete` now notes: "completed with no acceptance checks;
+        nothing was verified".
+
+        A BARE DIRECTORY SCOPE MATCHING NOTHING. `glob::matches` compared a pattern against file paths,
+        so `tools` was never equal to `tools/build.py` and a scope written `path "tools/"` matched
+        nothing at all — while `git ls-files -- ':(glob)tools/'` returned twenty-five files. The
+        author was then told the path "moved or was deleted" about a directory sitting right there,
+        which is worse than a miscount because it sends them looking for a deletion that never happened.
+        `matches` now also succeeds on a directory prefix — every pattern segment consumed against the
+        head of the target with segments left over — restricted to patterns containing no `**`, since
+        `a/**` already expresses the subtree and keeps its exact documented semantics including matching
+        `a` itself.
+
+        The shape they share is the one this pass kept finding: each produced an outcome a reader could
+        not tell apart from the thing it was not. A silent write from a mistaken one; a vacuous
+        completion from a verified one; a directory that does not exist from one that does. See
+        @akr.decision.a-check-says-what-it-looked-at.
+
+        One consequence worth carrying forward: some share of the 2026-09-08 census's 119
+        DELETED/NEVER-EXISTED classifications may have been this glob bug rather than deletion, so that
+        figure should be re-derived rather than cited.
+        """
+    acceptance {
+        check a-directory-scope-matches-what-is-under-it {
+            statement """
+                `tools/`, `tools`, `tools/**`, `tools/*` and `tools/build.py` all match a tracked file under tools/, and a directory that really is absent still raises AKR-G023.
+                """
+            method command
+            command "cargo test -p akr-core --test freshness a_directory_scope_matches_what_is_under_it"
+            verified_by [ @akr.evidence.six-point-of-failure-fixes-20260908/1 ]
+        }
+        check a-vacuous-completion-says-so {
+            statement """
+                Completing a record with no acceptance checks emits a note saying nothing was verified.
+                """
+            method observation
+            verified_by [ @akr.evidence.six-point-of-failure-fixes-20260908/1 ]
+        }
+        check the-write-paths-agree-on-commits {
+            statement """
+                propose, revise and evidence add all refuse an observed_at commit the repository does not have, at the write.
+                """
+            method command
+            command "cargo test -p akr-cli --test writes"
+            verified_by [ @akr.evidence.six-point-of-failure-fixes-20260908/1 ]
+        }
+    }
+}
+
+record akr.work.what-an-unversioned-relation-means/1 : work {
+    title "A supersedes edge records a replacement and does not perform it, and a resolves edge is historical"
+    state superseded
+    scope [
+        path "crates/akr-core/src/model/**",
+        path "crates/akr-core/src/ops/**",
+        path "crates/akr-core/src/validate/**",
+        path "docs/04-references-and-versioning.md"
+    ]
+    intent """
+        CORRECTED 2026-09-08. The first version of this record claimed AKR has no settled answer to
+        what an unversioned reference means, and that A12 and A13 were one defect in two directions
+        that had to be fixed together. Both claims are wrong and the correction matters more than the
+        original.
+
+        THE DEFINITION WAS NEVER MISSING. D-009 states it, uniformly across all four reference forms
+        with no per-slot variation: `@key` is the current head and resolves to whichever revision is
+        live at build time; `@key/2` is pinned and resolves to revision 2, always. The model encodes it
+        as RefMode::CurrentHead and RefMode::Pinned. docs/04 4.1's "supersession is always pinned" sits
+        under D-009's explicit "guidance, not enforced" clause and does not override it. There is no
+        D-record to write; the answer is in force and outranks the numbered specs.
+
+        AND THE TWO ARE NOT ONE DEFECT. They share a subsystem, not a root cause: one is a graph edge
+        that does nothing, the other is an exemption list with a hole in it. The correct diff is
+        asymmetric, and the instinct to unify them is exactly what would have produced a symmetric patch
+        that fixed neither properly.
+
+        A12, AND THE PROBE THAT NARROWS IT FURTHER. The reported symptom was that an unversioned
+        cross-key `supersedes` fails to retire its target. A throwaway workspace on 2026-09-08 tested
+        both forms side by side: one observation superseded by a successor naming it WITHOUT a revision,
+        one by a successor naming it WITH one. Both targets stayed `verified`; `akr why-current`
+        resolved both as LIVE; `akr check` said nothing about either.
+
+        So the defect is not about pinning at all. A cross-key `supersedes` edge NEVER retires its
+        target, in either form. Within one key, supersession is the revision chain and `head()` computes
+        it; across keys it is not computed anywhere, because `akr supersede` moves the target's state
+        explicitly and the edge is documentation of that act. A hand-authored cross-key edge therefore
+        records a replacement that never happened, and the openarc observation that kept re-entering the
+        review queue carrying such an edge would have done so identically had its author added the
+        revision suffix. Any fix framed as "name the missing suffix" would tell the author to write
+        something that changes nothing.
+
+        What is not legal under D-009 whichever way it is fixed is the status quo: accept the edge,
+        store it, and silently do nothing. The silence is the defect. Fixed by extending V-006 — a live
+        record whose `supersedes` names a still-live record in another key now raises AKR-L021, saying
+        the edge records the replacement rather than performing it, and naming `akr supersede` or an
+        explicit state move as the two things that do. It is part of V-006 rather than a rule of its
+        own because "terminal records are cited, not built on" and "an edge claiming a record is
+        terminal must be telling the truth" are the same rule read from either end.
+
+        A13 IS AN EXEMPTION-LIST BUG AND NOTHING MORE. `@key/2` is legal in every slot under D-009.
+        AKR-L021 is V-006, which forbids a LIVE record from pinning a TERMINAL target, with exemptions
+        for the cases where the target reaching a terminal state is the point rather than a problem —
+        `after` and `blocks` and `verified_by` unconditionally, `depends_on` when the target completed,
+        `part_of` when it completed or was dispositioned. A `resolves` edge naming the question it
+        answers is inherently historical, and a resolved question is the expected end state of resolving
+        it: resolution satisfies a question exactly as completion satisfies a prerequisite. The hole
+        showed as a contradiction between two rules — V-011 demands a `resolves` edge before a question
+        may be resolved, and V-006 then rejected the pinned form of the edge it had demanded, with the
+        error landing on the answering record rather than on the write the author was making. One line
+        added to the exemption list, alongside the two that were already there for the same reason.
+
+        A11 WAS FIXED AS A MESSAGE, DELIBERATELY, AND THIS IS THE JUDGEMENT MOST OPEN TO CHALLENGE.
+        `akr supersede <old> --with <new>` refuses a sealed replacement because it edits the replacement
+        in place, which D-015 permits only while it is `proposed`. That requirement is deliberate and
+        documented: the replacement is proposed separately so its body, title and scope can be reviewed
+        before an atomic graph transition. Teaching the operation to cut a revision of a sealed
+        replacement instead would mean building a record carrying both its own same-key chain edge and
+        the cross-key one, retiring two heads in one write — real surgery on the write path, for a case
+        where a correct two-command sequence already exists. What was actually broken was that the
+        sequence is undiscoverable and the obvious workaround is lossy: `akr revise <old> --state
+        superseded` retires the old head and records no edge to the successor at all. The refusal now
+        prints the sequence that works and says plainly that the workaround loses the relationship.
+
+        ONE TENSION LEFT STANDING, and it should be written down rather than re-derived. D-009 says
+        pinning is "guidance, not enforced", while V-006 does enforce something about pinned references
+        — that a live record may not pin a terminal target. Both are defensible and they are not quite
+        the same statement, since D-009 governs what a reference MEANS and V-006 governs where one may
+        be USED. But nothing says so, and the next agent to read them together will re-run this
+        argument. Whichever is authoritative should be stated in docs/04.
+        """
+    acceptance {
+        check a-resolves-edge-is-historical {
+            statement """
+                An answering record may name the question it resolved, pinned, without AKR-L021 — resolution satisfies a question as completion satisfies a prerequisite.
+                """
+            method command
+            command "cargo test -p akr-core --test v_rules v006_passes_for_resolves_pointing_at_the_question_it_resolved"
+            verified_by [ @akr.evidence.relation-fixes-20260908/1 ]
+        }
+        check a-supersedes-edge-that-did-nothing-says-so {
+            statement """
+                A live record whose `supersedes` names a still-live record in another key raises AKR-L021, in both the pinned and the unversioned form, and stays silent once the target is retired.
+                """
+            method command
+            command "cargo test -p akr-core --test v_rules v006_reports_a_supersedes_edge_that_has_not_superseded_anything"
+            verified_by [ @akr.evidence.relation-fixes-20260908/1 ]
+        }
+        check the-sealed-supersede-refusal-names-the-sequence {
+            statement """
+                `akr supersede <old> --with <sealed new>` prints the two-command sequence that works and says that retiring the old head alone records no edge to the successor.
+                """
+            method observation
+            verified_by [ @akr.evidence.relation-fixes-20260908/1 ]
+        }
+    }
+}
+
+record akr.work.what-an-unversioned-relation-means/2 : work {
+    title "A supersedes edge records a replacement and does not perform it, and a resolves edge is historical"
+    state completed
+    scope [
+        path "crates/akr-core/src/model/**",
+        path "crates/akr-core/src/ops/**",
+        path "crates/akr-core/src/validate/**",
+        path "docs/04-references-and-versioning.md"
+    ]
+    intent """
+        CORRECTED 2026-09-08. The first version of this record claimed AKR has no settled answer to
+        what an unversioned reference means, and that A12 and A13 were one defect in two directions
+        that had to be fixed together. Both claims are wrong and the correction matters more than the
+        original.
+
+        THE DEFINITION WAS NEVER MISSING. D-009 states it, uniformly across all four reference forms
+        with no per-slot variation: `@key` is the current head and resolves to whichever revision is
+        live at build time; `@key/2` is pinned and resolves to revision 2, always. The model encodes it
+        as RefMode::CurrentHead and RefMode::Pinned. docs/04 4.1's "supersession is always pinned" sits
+        under D-009's explicit "guidance, not enforced" clause and does not override it. There is no
+        D-record to write; the answer is in force and outranks the numbered specs.
+
+        AND THE TWO ARE NOT ONE DEFECT. They share a subsystem, not a root cause: one is a graph edge
+        that does nothing, the other is an exemption list with a hole in it. The correct diff is
+        asymmetric, and the instinct to unify them is exactly what would have produced a symmetric patch
+        that fixed neither properly.
+
+        A12, AND THE PROBE THAT NARROWS IT FURTHER. The reported symptom was that an unversioned
+        cross-key `supersedes` fails to retire its target. A throwaway workspace on 2026-09-08 tested
+        both forms side by side: one observation superseded by a successor naming it WITHOUT a revision,
+        one by a successor naming it WITH one. Both targets stayed `verified`; `akr why-current`
+        resolved both as LIVE; `akr check` said nothing about either.
+
+        So the defect is not about pinning at all. A cross-key `supersedes` edge NEVER retires its
+        target, in either form. Within one key, supersession is the revision chain and `head()` computes
+        it; across keys it is not computed anywhere, because `akr supersede` moves the target's state
+        explicitly and the edge is documentation of that act. A hand-authored cross-key edge therefore
+        records a replacement that never happened, and the openarc observation that kept re-entering the
+        review queue carrying such an edge would have done so identically had its author added the
+        revision suffix. Any fix framed as "name the missing suffix" would tell the author to write
+        something that changes nothing.
+
+        What is not legal under D-009 whichever way it is fixed is the status quo: accept the edge,
+        store it, and silently do nothing. The silence is the defect. Fixed by extending V-006 — a live
+        record whose `supersedes` names a still-live record in another key now raises AKR-L021, saying
+        the edge records the replacement rather than performing it, and naming `akr supersede` or an
+        explicit state move as the two things that do. It is part of V-006 rather than a rule of its
+        own because "terminal records are cited, not built on" and "an edge claiming a record is
+        terminal must be telling the truth" are the same rule read from either end.
+
+        A13 IS AN EXEMPTION-LIST BUG AND NOTHING MORE. `@key/2` is legal in every slot under D-009.
+        AKR-L021 is V-006, which forbids a LIVE record from pinning a TERMINAL target, with exemptions
+        for the cases where the target reaching a terminal state is the point rather than a problem —
+        `after` and `blocks` and `verified_by` unconditionally, `depends_on` when the target completed,
+        `part_of` when it completed or was dispositioned. A `resolves` edge naming the question it
+        answers is inherently historical, and a resolved question is the expected end state of resolving
+        it: resolution satisfies a question exactly as completion satisfies a prerequisite. The hole
+        showed as a contradiction between two rules — V-011 demands a `resolves` edge before a question
+        may be resolved, and V-006 then rejected the pinned form of the edge it had demanded, with the
+        error landing on the answering record rather than on the write the author was making. One line
+        added to the exemption list, alongside the two that were already there for the same reason.
+
+        A11 WAS FIXED AS A MESSAGE, DELIBERATELY, AND THIS IS THE JUDGEMENT MOST OPEN TO CHALLENGE.
+        `akr supersede <old> --with <new>` refuses a sealed replacement because it edits the replacement
+        in place, which D-015 permits only while it is `proposed`. That requirement is deliberate and
+        documented: the replacement is proposed separately so its body, title and scope can be reviewed
+        before an atomic graph transition. Teaching the operation to cut a revision of a sealed
+        replacement instead would mean building a record carrying both its own same-key chain edge and
+        the cross-key one, retiring two heads in one write — real surgery on the write path, for a case
+        where a correct two-command sequence already exists. What was actually broken was that the
+        sequence is undiscoverable and the obvious workaround is lossy: `akr revise <old> --state
+        superseded` retires the old head and records no edge to the successor at all. The refusal now
+        prints the sequence that works and says plainly that the workaround loses the relationship.
+
+        ONE TENSION LEFT STANDING, and it should be written down rather than re-derived. D-009 says
+        pinning is "guidance, not enforced", while V-006 does enforce something about pinned references
+        — that a live record may not pin a terminal target. Both are defensible and they are not quite
+        the same statement, since D-009 governs what a reference MEANS and V-006 governs where one may
+        be USED. But nothing says so, and the next agent to read them together will re-run this
+        argument. Whichever is authoritative should be stated in docs/04.
+        """
+    note """
+        Closed 2026-09-08 after review by a second agent, which changed the design twice and both times
+        for the better.
+
+        It killed the D-record this work was originally scoped around: D-009 already defines what an
+        unversioned reference means, uniformly, and my claim that the definition was missing was simply
+        wrong. It also rejected my framing that A12 and A13 were one defect needing a symmetric fix; the
+        correct diff is asymmetric, one validation exemption and one new check, and I had built it that
+        way before the review arrived but for weaker reasons than the ones it supplied.
+
+        Then it caught a real bug in the landed exemption, and the reason it was not caught here is the
+        lesson. Exempting `Resolves` at a `Resolved` target passes every test and fails every user,
+        because resolving a question creates a revision — /2 resolved, /1 superseded — so the pin the
+        author writes lands on the superseded revision. The tests passed because `akr revise`
+        auto-repoints live pins and had rewritten `@q/1` to `@q/2` before validation ever ran. Green
+        where exercised, broken where a user goes: the same shape as the AKR-G021 that passed its unit
+        test and could not reach a user, on the same day.
+
+        And it found the justification for refusing the unversioned `supersedes` that neither of us had.
+        Not that D-009 needs narrowing, but that `Supersedes` is already classed historical in AKR's own
+        model while an unversioned reference is forward-tracking — so the form is incoherent in the
+        project's own terms and D-044 only makes the tool agree with a sentence docs/04 had already
+        written. It also measured the migration and scoped the rule to `supersedes` alone: nine edges
+        against 510 unversioned `derived_from`, which is @akr.work.provenance-edges-that-follow-their-target
+        and must not be bolted onto this.
+
+        The two mechanisms are orthogonal and both shipped: D-044's refusal stops an edge re-aiming
+        later, and V-006's warning catches an edge that was inert from the day it was written. Each
+        found a real defect in a ledger that had been reporting clean.
+        """
+    acceptance {
+        check a-resolves-edge-is-historical {
+            statement """
+                An answering record may pin the question it resolved, whether that revision is `resolved` or the `superseded` one that was open when the answer was written.
+                """
+            method command
+            command "cargo test -p akr-core --test v_rules v006_passes_for_resolves"
+            verified_by [ @akr.evidence.d044-and-the-resolves-exemption-20260908/1 ]
+        }
+        check a-supersedes-edge-that-did-nothing-says-so {
+            statement """
+                A live record whose `supersedes` names a still-live record in another key raises AKR-L021, and stays silent once the target is retired.
+                """
+            method command
+            command "cargo test -p akr-core --test v_rules v006_reports_a_supersedes_edge_that_has_not_superseded_anything"
+            verified_by [ @akr.evidence.relation-fixes-20260908/1 ]
+        }
+        check an-unversioned-supersedes-is-refused {
+            statement """
+                An unversioned cross-key `supersedes` is AKR-L021; the pinned form at a retired target is clean; the same-key revision chain is untouched.
+                """
+            method command
+            command "cargo test -p akr-core --test v_rules v006_refuses_an_unversioned_supersedes"
+            verified_by [ @akr.evidence.d044-and-the-resolves-exemption-20260908/1 ]
+        }
+        check the-sealed-supersede-refusal-names-the-sequence {
+            statement """
+                `akr supersede <old> --with <sealed new>` prints the two-command sequence that works and says that retiring the old head alone records no edge to the successor.
+                """
+            method observation
+            verified_by [ @akr.evidence.relation-fixes-20260908/1 ]
+        }
+    }
+    supersedes [ @akr.work.what-an-unversioned-relation-means/1 ]
 }
 
 record akr.work.windows-linux-certification/1 : work {

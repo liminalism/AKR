@@ -2,6 +2,8 @@
 
 A `.akr/` directory is a typed ledger of what the project decided, observed, and planned. Use the `knowledge.*` MCP tools, or the `akr` CLI (`knowledge.context` → `akr context`, `knowledge.validate` → `akr check` / `akr validate`). No `.akr/`: skip this, and do not run `akr init` uninvited.
 
+If `knowledge.*` tools are missing from the MCP catalogue (Grok Build 1.0.25 drops dotted names and attaches with `tool_count: 0`; after akr-mcp 0.5 advertises `knowledge_search` etc. to Grok), use the CLI column — never hand-write `.akr` record bodies into scratch.
+
 ### Before a task
 
 - Known planning key: `knowledge.context` with that key and the `paths` you will touch.

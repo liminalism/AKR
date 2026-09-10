@@ -36,7 +36,7 @@ $ echo $?
 $ akr check --format json
 {
   "akr": "0.1",
-  "tool_version": "0.5.0",
+  "tool_version": "0.5.1",
   "command": "check",
   "commit": null,
   "source_graph_hash": "sha256:5159d2714f688627a85906b161def17b0358155fbfc2a3fc00b681d29a305f55",
@@ -154,15 +154,13 @@ akr check — save-your-skin
     DECISION-HISTORY.md      current
     PAPERCUTS.md             current
 
-error[AKR-E011]: docs/generated/ROADMAP.md differs from the view this build would emit (1 differing line)
+warning[AKR-E016]: docs/generated/ROADMAP.md is behind uncommitted ledger changes in the working tree
 note: line 47 committed: "`nearly done` · `@sys.milestone.m3-playable-day/1` · target 2026-09-30 · after `@sys.milestone.m2-deterministic-sim/1`"
 note: line 47 emitted:   "`active` · `@sys.milestone.m3-playable-day/1` · target 2026-09-30 · after `@sys.milestone.m2-deterministic-sim/1`"
-help: run `akr build` and commit the result; see @sys.policy.no-hand-edited-views (see V-112)
-
-1 error
+help: run `akr build` before committing; until then the views describe the ledger as it was last built, not as it stands (see V-112)
 
 $ echo $?
-1
+0
 
 $ git checkout docs/generated/ROADMAP.md
 $ akr check --views-current

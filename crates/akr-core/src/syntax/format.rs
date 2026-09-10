@@ -57,7 +57,13 @@ pub fn format(file: &File) -> String {
 }
 
 fn emit_item(out: &mut String, item: &Item) {
-    emit_comments(out, &item.trivia().leading, 0, false);
+    // Not for a block: `Item::trivia()` returns the block's own trivia, and `emit_block`
+    // emits it itself — it has to, because a nested block reaches it without passing
+    // through here. Emitting in both places doubled a top-level block's leading comments
+    // on every run (1, 2, 4, 8 ...), which is a formatter that is not idempotent.
+    if !matches!(item, Item::Block(_)) {
+        emit_comments(out, &item.trivia().leading, 0, false);
+    }
     match item {
         Item::Namespace(n) => {
             out.push_str(&format!(

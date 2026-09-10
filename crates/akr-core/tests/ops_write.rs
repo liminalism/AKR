@@ -213,8 +213,8 @@ fn revise_creates_a_new_revision_from_a_sealed_head() {
     assert_eq!(head.id.revision, 2);
     assert_eq!(
         head.state,
-        State::Proposed,
-        "a new revision starts unaccepted"
+        State::Active,
+        "a revision keeps the state it inherits from the sealed head (D-043)"
     );
     assert!(
         head.targets(akr_core::model::Relation::Supersedes)

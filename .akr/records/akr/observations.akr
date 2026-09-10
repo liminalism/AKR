@@ -1,7 +1,72 @@
 akr 0.1
 project akr
 
+record akr.observation.a-check-that-reports-nothing/1 : observation {
+    title "A check that reports nothing is indistinguishable from a check that found nothing"
+    state verified
+    scope [ path "crates/**", path "docs/**", path "spec/**" ]
+    statement """
+        Nine agents audited fifteen AKR workspaces on 2026-09-08 and found the same defect five times,
+        in five unrelated subsystems. In each one a mechanism that was supposed to report produced
+        silence instead, and in each one the silence was read by every observer as an all-clear.
+
+        ONE. `akr check` did not validate the generated views; only `--views-current` did. Ten of the
+        fifteen workspaces were shipping views that did not match their ledger — eight by renderer
+        version, one by source-graph hash, one with no views at all — and plain `akr check` reported "no
+        diagnostics" on every one. AKR's own repository was among them.
+
+        TWO. AKR-G023 stopped reporting the moment a record became `completed`, and never reported a
+        gitignored path at all. A hand census found 93 distinct dead globs across 254 record
+        occurrences; 88 of those occurrences sat on completed records and 96 on ignored paths. The
+        diagnostic existed, was correct, and was silent on most of what it was built to catch.
+
+        THREE. An acceptance check with `method command` is satisfied by exit status alone, and
+        `cargo test <filter>` exits 0 when the filter matches nothing — "running 0 tests ... ok. 0
+        passed; 0 failed; N filtered out". Twelve acceptance gates and fourteen evidence commands across
+        the workspace named tests that exist nowhere in tracked source; twelve of the evidence records
+        carry `result pass`. A git-history census showed every one of the 26 had once named a real test.
+        The gate outlived the test, and nothing noticed, because a gate that runs nothing and a gate
+        that passes are the same exit code.
+
+        FOUR. A shell pipeline reports its last stage's status, so a recorded command ending in
+        `| tail -80` reports success no matter what happened upstream. Three separate agents made this
+        error in one afternoon, one of them a step away from sealing a fabricated pass into an evidence
+        record.
+
+        FIVE, and the purest form. `Repository::prime_ignored` was handed every scope glob in a ledger
+        before any were validated; `git check-ignore -- /abs/path/**` exits 128; `unmatched_watches`
+        returned `Err`; and `session.rs` discarded it with `if let Ok(..)`. One malformed glob anywhere
+        in a workspace silently switched off every scope and watch diagnostic in that workspace. A
+        working AKR-G021 passed its own unit test and could not reach a user.
+
+        The uncomfortable instance is the sixth: this run's own dead-glob census reported zero dead
+        globs for three workspaces. Those readings came from the binary, before the fifth defect was
+        found. They may have been silences rather than absences, and cannot be trusted until re-run.
+
+        What the five have in common is not a subsystem. It is that each reported an absence of findings
+        in a way no reader could distinguish from an absence of checking, and AKR's whole proposition is
+        that a reader may trust the ledger without re-deriving it. A tool whose failure mode is
+        indistinguishable from success has a specific obligation the ordinary case does not: it must be
+        able to say what it looked at, not only what it found.
+        """
+    observed_at git:0dd6057aafb21ef86ae8d2bc7a659ed3c7fd1ebc
+    method manual
+    review_after 2027-03-08
+}
+
 record akr.observation.concurrent-writes-are-silently-lost/1 : observation {
+    title "Simultaneous writers silently lose records, each reporting success"
+    state superseded
+    scope [ path "crates/akr-cli/src/write.rs", path "crates/akr-core/src/ops/**" ]
+    statement """
+        The write pipeline has no cross-process concurrency control for a write that adds a new key, so simultaneous writers clobber one another and every one of them reports success. Six `akr papercut` processes started together against one workspace: all six printed `wrote .akr/records/akr/papercuts.akr` and exited 0, and two records landed. The mechanism is the read-modify-write in crates/akr-core/src/ops: `Staged::load` reads every source, the operation edits the ledger in memory, and `Staged::commit` writes each touched file whole through a temporary and a rename. The rename is atomic per file, which is what docs/07-cli.md section 4 promises, but nothing detects that the file changed between the read and the write, so the last writer's copy — built from a snapshot that predates the others — wins. `base_rev` (docs/08-mcp.md) is optimistic concurrency for `revise`, and guards a same-key conflict only; a new key appended to a shared records file passes no such check. Reproduced identically on the unmodified tree at 968ac27 and on the current working tree, so it is not a consequence of the speed work.
+        """
+    observed_at git:968ac272d86cf36888f22f557aa4ba06d5156f85
+    method command
+    watches [ "crates/akr-core/src/ops/**", "crates/akr-cli/src/write.rs" ]
+}
+
+record akr.observation.concurrent-writes-are-silently-lost/2 : observation {
     title "Simultaneous writers silently lose records, each reporting success"
     state verified
     scope [ path "crates/akr-cli/src/write.rs", path "crates/akr-core/src/ops/**" ]
@@ -10,5 +75,37 @@ record akr.observation.concurrent-writes-are-silently-lost/1 : observation {
         """
     observed_at git:968ac272d86cf36888f22f557aa4ba06d5156f85
     method command
-    watches [ "crates/akr-core/src/ops/**", "crates/akr-cli/src/write.rs" ]
+    review_after 2027-03-08
+    supersedes [ @akr.observation.concurrent-writes-are-silently-lost/1 ]
+    verified_by [ @akr.evidence.one-writer-at-a-time-holds-20260908/1 ]
+}
+
+record akr.observation.the-normative-layer-is-stuck-at-proposed/1 : observation {
+    title "akr.observation.the-normative-layer-is-stuck-at-proposed"
+    state verified
+    statement """
+        Normative records sit at `proposed` in bulk across every ledger in this workspace, and stay
+        there. Counted on 2026-09-08: jpegXL-rs with six constraints, seventeen decisions and thirteen
+        policies; Lege-ecosystem with thirteen of fourteen live decisions, twelve policies and six
+        requirements; LegeOS with eleven of thirty-four live decisions; AKR's own ledger with six of
+        twenty.
+
+        The layer is not merely large, it is stuck, and the mechanism is precise. V-021 (AKR-R031)
+        refuses to activate a decision that cites no requirement, policy, constraint or evidence. The
+        citation an author reaches for first is the observation that motivated the decision — that is
+        what `supported_by` most often names — and an observation was exactly the kind V-021 would not
+        count, while the diagnostic said only that the decision "cites nothing". Demonstrated in this
+        ledger: akr.decision.one-writer-at-a-time had shipped, was re-verified on 2026-09-08, was
+        supported_by akr.observation.concurrent-writes-are-silently-lost, and could not be activated
+        until an evidence record was written and cited alongside.
+
+        Four Opus agents working four separate project clusters each examined this layer, judged it
+        wrong, and each declined to change it — correctly, because clearing it means knowing what every
+        decision rests on and guessing is how a ledger acquires fiction. So the cost is not a count of
+        proposed records. It is that every future session re-derives the same impasse and writes the
+        same paragraph explaining why it did not act.
+        """
+    observed_at git:0dd6057aafb21ef86ae8d2bc7a659ed3c7fd1ebc
+    method manual
+    review_after 2027-03-08
 }
