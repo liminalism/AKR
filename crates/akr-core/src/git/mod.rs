@@ -1033,6 +1033,19 @@ impl Repository {
         for exclude in [":(exclude).akr", ":(exclude)docs/generated", ":(exclude).agent"] {
             args.push(exclude.into());
         }
+        // Captured run output and bulk data are not source either, and they are
+        // where a since-deleted test's name survives: a status file or a log
+        // from the day it still existed. They are also where the bytes are —
+        // a tracked 70 MB JSONL made this one `git grep` run for half an hour.
+        for exclude in [
+            ":(exclude)*.log",
+            ":(exclude)*.jsonl",
+            ":(exclude)*.csv",
+            ":(exclude)*.txt",
+            ":(exclude)*.json",
+        ] {
+            args.push(exclude.into());
+        }
         let out = self.run_bytes_allowing_no_match(&args, "")?;
         let text = String::from_utf8_lossy(&out);
         Ok(text

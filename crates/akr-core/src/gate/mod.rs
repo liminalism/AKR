@@ -50,7 +50,13 @@ fn command_tokens(command: &str) -> Vec<String> {
             }
             let token: String = chars[start..i].iter().collect();
             let token = token.trim_end_matches(':');
-            if token.contains('_') || token.contains("::") {
+            // A token that is only underscores (`cargo test -- _`, a filter
+            // for "everything") names no test, and as a `git grep -o` needle
+            // it matches every identifier in the tree — on a repository that
+            // tracks large data files that grep ran for half an hour. Two
+            // identifier characters around the underscore is the floor.
+            let names_something = token.trim_matches('_').len() >= 2;
+            if (token.contains('_') || token.contains("::")) && names_something {
                 out.push(token.to_owned());
             }
         } else {
