@@ -250,6 +250,20 @@ AGENT_SECTION_FILE="$REPO_DIR/scripts/agent-section.md"
 AGENT_BEGIN="<!-- AKR_START -->"
 AGENT_END="<!-- AKR_END -->"
 
+# Whole-line markers only. `grep -cF` used to count a *mention* of the token in
+# prose — this repo's CLAUDE.md documents the markers in a sentence — as a real
+# block, then the rewriter (which requires the marker to *be* the line) found
+# none and appended a duplicate. Count the same way the rewriter recognises them.
+count_whole_line_markers() {
+  local file="$1" marker="$2"
+  MARKER="$marker" awk '
+    function bare(s) { sub(/\r$/, "", s); gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+    BEGIN { n = 0 }
+    { if (bare($0) == ENVIRON["MARKER"]) n++ }
+    END { print n }
+  ' "$file"
+}
+
 install_agent_section() {
   local target="$1"
   local parent
@@ -266,8 +280,8 @@ install_agent_section() {
   local existed=0 begins=0 ends=0
   if [[ -f "$target" ]]; then
     existed=1
-    begins="$(grep -cF "$AGENT_BEGIN" "$target" || true)"
-    ends="$(grep -cF "$AGENT_END" "$target" || true)"
+    begins="$(count_whole_line_markers "$target" "$AGENT_BEGIN")"
+    ends="$(count_whole_line_markers "$target" "$AGENT_END")"
   fi
   if [[ "$begins" -ne "$ends" ]]; then
     echo "warning: $target has $begins '$AGENT_BEGIN' and $ends '$AGENT_END' markers;" >&2
@@ -364,8 +378,8 @@ refresh_marked_agent_section() {
   local target="$1"
   [[ -f "$target" ]] || return 0
   local begins ends
-  begins="$(grep -cF "$AGENT_BEGIN" "$target" || true)"
-  ends="$(grep -cF "$AGENT_END" "$target" || true)"
+  begins="$(count_whole_line_markers "$target" "$AGENT_BEGIN")"
+  ends="$(count_whole_line_markers "$target" "$AGENT_END")"
   if [[ "$begins" -gt 0 && "$begins" -eq "$ends" ]]; then
     install_agent_section "$target"
   fi

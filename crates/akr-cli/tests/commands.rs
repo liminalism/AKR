@@ -742,7 +742,8 @@ fn plain_check_warns_but_does_not_fail_on_a_tool_version_difference() {
 
     let check = example.run(&["check"]);
     assert_eq!(
-        check.code, 0,
+        check.code,
+        0,
         "a stale tool stamp must not fail the check:\n{}",
         check.output()
     );
@@ -980,6 +981,53 @@ fn a_command_with_no_test_filter_is_silent() {
     assert!(
         !check.output().contains("AKR-G024"),
         "a command with no identifier-shaped token must not be reported:\n{}",
+        check.output()
+    );
+}
+
+/// `SYS_WORLD=greyhaven cargo run` used to tokenise as a lone `_` (the scanner is
+/// lowercase-only, so the env var's underscore is all it keeps). That needle made
+/// `git grep -o -F -e _` emit every underscore in the tree and hang `akr check` for
+/// tens of minutes on SaveYourSkin. An env var is not a test filter.
+#[test]
+fn an_env_var_underscore_is_not_a_test_filter() {
+    let example = gate_fixture(
+        "g024-env-underscore",
+        "SYS_WORLD=greyhaven cargo run --release",
+        "nothing relevant here",
+    );
+    let check = example.run(&["check"]);
+    assert!(
+        !check.output().contains("AKR-G024"),
+        "an env-var underscore must not be treated as a phantom test filter:\n{}",
+        check.output()
+    );
+}
+
+/// A name that exists only inside a JSONL dump is not source: the dump is quoting a
+/// command from when the test still existed. Counting it would hide a true phantom,
+/// which is the same class as searching `.akr/` or `.agent/`.
+#[test]
+fn a_test_name_only_in_a_jsonl_dump_is_still_a_phantom() {
+    let example = gate_fixture(
+        "g024-jsonl-not-source",
+        "cargo test -p sys_present a_name_only_in_jsonl",
+        "nothing relevant here",
+    );
+    let dump = example.root().join("docs/handoff/trace.jsonl");
+    std::fs::create_dir_all(dump.parent().expect("parent")).expect("create dump dir");
+    std::fs::write(&dump, "a_name_only_in_jsonl\n").expect("write jsonl");
+    example.git(&["add", "-A"]);
+    example.git(&[
+        "commit",
+        "--quiet",
+        "-m",
+        "jsonl dump quoting the gone test",
+    ]);
+    let check = example.run(&["check"]);
+    assert!(
+        check.output().contains("AKR-G024"),
+        "a test name that lives only in a JSONL dump must still be a phantom:\n{}",
         check.output()
     );
 }

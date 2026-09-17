@@ -196,6 +196,17 @@ record akr.papercut.akr-git-commit-m-message-accepted-the-flag-but/1 : papercut 
     created_at 2026-08-29
 }
 
+record akr.papercut.akr-validate-check-in-saveyourskin-hangs-10/1 : papercut {
+    title "akr validate/check in SaveYourSkin hangs 10+ minutes in the V-105…"
+    state verified
+    statement """
+        akr validate/check in SaveYourSkin hangs 10+ minutes in the V-105 phantom-command gate: command_tokens treats the '_' in SYS_WORLD= as a test-name needle, then git grep -o -F of 321 needles including '_' emits ~2.9M matches across 154MB of tracked docs/. SaveYourSkin already recorded this (papercut 2026-09-13) and patched AKR locally on the MacBook; stock 0.5.1 on Linux does not have that patch, so the hang returned after the machine switch.
+        """
+    observed_at git:c9ee23ccf721c19d7e02eb8b5fd58e32855ffdda
+    author "grok"
+    created_at 2026-09-17
+}
+
 record akr.papercut.bug-needs-a-decision-d-028-is-incomplete/1 : papercut {
     title "BUG (needs a decision, D-028 is incomplete): completing a COMMITTED…"
     state superseded
