@@ -81,6 +81,10 @@ fn items(records: &[&Record], show_subject: bool) -> String {
             let date = record
                 .created_at
                 .map_or_else(String::new, |d| format!("{d} "));
+            let closed = match record.get(ContentSlot::ClosedAt) {
+                Some(ContentValue::Date(date)) => format!("[closed {date}] "),
+                _ => String::new(),
+            };
             let author = record
                 .author
                 .as_deref()
@@ -91,7 +95,7 @@ fn items(records: &[&Record], show_subject: bool) -> String {
                 String::new()
             };
             format!(
-                "- {date}{author}{subject}{}  `@{}`",
+                "- {date}{closed}{author}{subject}{}  `@{}`",
                 line_for(record),
                 record.id
             )

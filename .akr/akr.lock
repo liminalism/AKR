@@ -5,7 +5,7 @@ build {
     tool "akr 0.5.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:6a54625dea9f103983ea9e94dc7cec0c8b687f2d4391d6fd7656ffb8b50c39a3"
+    source_graph "sha256:08619018a94db1f04d1674803e9ab78a89fa69626be4438688869a9d4c964e85"
 }
 
 source ".akr/project.akr" {
@@ -39,8 +39,8 @@ source ".akr/records/akr/observations.akr" {
 }
 
 source ".akr/records/akr/papercuts.akr" {
-    hash "sha256:9ae90fd978b373ba4d99e0ab20c80228bae26051960278a3cfd83ce7fdb06576"
-    records 86
+    hash "sha256:8a9151084309dfbe548d1af16233903b0ff19235e62b97ea220069bdd8dea18a"
+    records 88
 }
 
 source ".akr/records/akr/work.akr" {
@@ -907,6 +907,11 @@ seal @akr.papercut.a-command-orchestration-typo-caused-a-tool-call/1 {
     hash "sha256:1100d5ed6acfd62c003ecde87a9f13f99f97aa645bafd89de858737335551967"
 }
 
+seal @akr.papercut.a-shell-orchestration-typo-interrupted-a-read/1 {
+    state verified
+    hash "sha256:a4b3f916bec70b6eef42bf15d3859a4b9a028ec0789864581cbd5b2deb58b8a9"
+}
+
 seal @akr.papercut.a-subagent-spawned-with-worktree-isolation-into/1 {
     state verified
     hash "sha256:f0228bf0f56b8661d18617680e1529fd495092af4bfc27150a01b334e92e4390"
@@ -1180,6 +1185,11 @@ seal @akr.papercut.knowledge-search-detects-a-stale-index-but/1 {
 seal @akr.papercut.knowledge-search-detects-a-stale-index-but/2 {
     state withdrawn
     hash "sha256:4737a07852bab5816b4d9e88f99c812a2f77484855f8484ccca075850c0cdb29"
+}
+
+seal @akr.papercut.papercut-baseline-reset-on-2026-09-18/1 {
+    state verified
+    hash "sha256:581b843d608af778fa0def5808037b5497f1284d615e392e635a8840f2213c8a"
 }
 
 seal @akr.papercut.revising-a-sealed-record-through-the-supported/1 {

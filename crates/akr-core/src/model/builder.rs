@@ -173,7 +173,7 @@ impl RecordBuilder {
                 ContentSlot::Method => {
                     ContentValue::Enum(Segment::new("command").expect("valid segment"))
                 }
-                ContentSlot::Target | ContentSlot::ReviewAfter => {
+                ContentSlot::Target | ContentSlot::ReviewAfter | ContentSlot::ClosedAt => {
                     ContentValue::Date(Date::new(2026, 1, 1).expect("valid date"))
                 }
                 _ => ContentValue::prose("placeholder"),

@@ -806,6 +806,8 @@ Nothing is deleted; the record stays, terminal, and its references keep resolvin
 
 ```
 akr papercut -m <agent> "message" [--namespace <ns>]
+akr papercut close <key> [--closed-at <YYYY-MM-DD>]
+akr papercut reset [--projects <dir>] [--namespace <ns>] [--dry-run]
 ```
 
 Logs a small friction hit while working — a tool call that missed and had to be
@@ -830,6 +832,12 @@ in the model, not a list.
 
 The aggregate is `docs/generated/PAPERCUTS.md`, emitted by `akr build` once at least
 one papercut exists, newest first.
+
+`close` adds a date-only closure marker to one papercut. Closed entries remain in the
+history but are excluded from future collation. `reset` creates one dated, closed
+baseline containing all currently uncollated sister papercuts; it is useful when an
+inherited backlog is known to be stale but reviewing every source entry is not worth
+the cost. Use `--dry-run` to inspect the count before writing the baseline.
 
 Mining a whole session for papercuts afterwards is a language-model act and lives
 outside this tool (D-020): a harness command reads the transcript and calls

@@ -25,8 +25,8 @@ use crate::commands::Output;
 use crate::session::{EnvError, Exit, Session};
 use akr_core::json::Value;
 use akr_core::model::{
-    Commit, ContentSlot, EvidenceResult, Kind, LogicalKey, Outcome as DispositionOutcome, Record,
-    Reference, Relation, State,
+    Commit, ContentSlot, ContentValue, Date, EvidenceResult, Kind, LogicalKey,
+    Outcome as DispositionOutcome, Record, Reference, Relation, RevisionId, State,
 };
 use akr_core::ops::{
     Applied, Change, ChangeKind, DispositionRequest, Edits, Refused, ReviseMode, WriteContext,
@@ -191,6 +191,20 @@ pub fn run(session: &Session, command: &Command) -> Result<Output, EnvError> {
             namespace.as_deref(),
             about.as_deref(),
         ),
+        Command::PapercutClose { key, closed_at } => {
+            papercut_close(session, &context, key, closed_at.as_deref())
+        }
+        Command::PapercutReset {
+            projects,
+            namespace,
+            dry_run,
+        } => papercut_reset(
+            session,
+            &context,
+            projects.as_deref(),
+            namespace.as_deref(),
+            *dry_run,
+        ),
         Command::PapercutCollate {
             projects,
             namespace,
@@ -234,6 +248,166 @@ pub fn run(session: &Session, command: &Command) -> Result<Output, EnvError> {
         }
         _ => unreachable!("run is only called for write commands"),
     }
+}
+
+/// Closes one papercut by adding a date-only marker in a successor revision. No
+/// explanatory relation is required: the marker is deliberately enough to keep routine
+/// closure cheap while preserving the original report in history.
+fn papercut_close(
+    session: &Session,
+    context: &WriteContext,
+    key: &str,
+    closed_at: Option<&str>,
+) -> Result<Output, EnvError> {
+    let key = parse_key(key)?;
+    let head = session
+        .ledger
+        .head(&key)
+        .map_err(|error| EnvError::new("AKR-L001", error.to_string()))?;
+    if head.kind != Kind::Papercut {
+        return Err(EnvError::new(
+            "AKR-C004",
+            format!("{key} is a {}, not a papercut", head.kind),
+        ));
+    }
+    if head.get(ContentSlot::ClosedAt).is_some() {
+        return Ok(Output::plain(
+            format!("{key} is already closed\n"),
+            Value::object(vec![("closed", Value::bool(false))]),
+        ));
+    }
+    let date = match closed_at {
+        Some(value) => {
+            Date::parse(value).map_err(|error| EnvError::new("AKR-C004", error.to_string()))?
+        }
+        None => session.today,
+    };
+    let mut replacement = head.clone();
+    replacement
+        .content
+        .insert(ContentSlot::ClosedAt, ContentValue::Date(date));
+    render(
+        session,
+        akr_core::ops::revise_with_dispositions(
+            context,
+            &key,
+            ReviseMode::Auto,
+            &Edits {
+                replace_with: Some(Box::new(replacement)),
+                ..Edits::default()
+            },
+            &[],
+        ),
+    )
+}
+
+/// Establishes a new papercut baseline without editing sister workspaces. The baseline's
+/// `collated` slot makes every currently visible report part of the dedup set, while its
+/// `closed_at` marker records that this was an intentional reset rather than a normal
+/// collation. Future reports remain visible to the ordinary collate command.
+fn papercut_reset(
+    session: &Session,
+    context: &WriteContext,
+    projects: Option<&Path>,
+    namespace: Option<&str>,
+    dry_run: bool,
+) -> Result<Output, EnvError> {
+    let scan_dir = projects
+        .map(Path::to_path_buf)
+        .or_else(|| session.root.parent().map(Path::to_path_buf))
+        .ok_or_else(|| {
+            EnvError::new("AKR-G001", "cannot find the siblings of the workspace root")
+        })?;
+    if !scan_dir.is_dir() {
+        return Err(EnvError::new(
+            "AKR-C011",
+            format!("{} is not a directory to scan", scan_dir.display()),
+        ));
+    }
+    let already = akr_core::papercut::collate::already_collated(&session.ledger);
+    let collate = akr_core::papercut::collate::collect(
+        &scan_dir,
+        &session.root,
+        &already,
+        &akr_core::papercut::collate::Subject::Any,
+    );
+    let keys: Vec<String> = collate
+        .entries
+        .iter()
+        .map(|entry| entry.key.to_string())
+        .collect();
+    let projects: Vec<String> = collate
+        .entries
+        .iter()
+        .map(|entry| entry.project.clone())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let text = format!(
+        "{} papercut{} would be reset from {} — nothing written\n",
+        keys.len(),
+        if keys.len() == 1 { "" } else { "s" },
+        projects.join(", ")
+    );
+    if dry_run {
+        return Ok(Output::plain(
+            text,
+            Value::object(vec![
+                ("would_reset", Value::integer(keys.len() as i64)),
+                ("written", Value::bool(false)),
+            ]),
+        ));
+    }
+    if keys.is_empty() {
+        return Ok(Output::plain(
+            "no uncollated papercuts to reset\n",
+            Value::object(vec![("reset", Value::integer(0))]),
+        ));
+    }
+    let namespace = akr_core::papercut::select_namespace(&session.ledger, namespace)
+        .map_err(|error| EnvError::new("AKR-C004", error.to_string()))?;
+    let commit = session
+        .commit
+        .clone()
+        .ok_or_else(|| missing_commit(session, false))?;
+    let title = format!("Papercut baseline reset on {}", session.today);
+    let key = akr_core::papercut::allocate_key(&session.ledger, Some(&namespace), &title)
+        .map_err(|error| EnvError::new("AKR-C004", error.to_string()))?;
+    let mut content = std::collections::BTreeMap::new();
+    content.insert(
+        ContentSlot::Statement,
+        ContentValue::Prose(format!(
+            "Reset the papercut backlog on {} without reviewing each existing report. The {} source keys below are the baseline; future papercuts remain collatable.",
+            session.today,
+            keys.len()
+        )),
+    );
+    content.insert(ContentSlot::ObservedAt, ContentValue::Commit(commit));
+    content.insert(ContentSlot::Collated, ContentValue::Strings(keys));
+    content.insert(ContentSlot::ClosedAt, ContentValue::Date(session.today));
+    let record = Record {
+        id: RevisionId::new(key.clone(), 1),
+        kind: Kind::Papercut,
+        title: title.clone(),
+        state: State::Verified,
+        scope: Vec::new(),
+        topic: None,
+        content,
+        claims: Vec::new(),
+        retired_claims: Vec::new(),
+        acceptance: None,
+        dispositions: Vec::new(),
+        relations: std::collections::BTreeMap::new(),
+        acknowledged: false,
+        author: context.author.clone(),
+        created_at: Some(session.today),
+        sources: Vec::new(),
+        file: None,
+    };
+    render(
+        session,
+        akr_core::ops::propose(context, &key, Kind::Papercut, &title, Some(record)),
+    )
 }
 
 /// One evidence record, in the surface-agnostic form both surfaces reduce to.

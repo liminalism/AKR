@@ -506,6 +506,22 @@ pub enum Command {
         /// What the friction was with, when that is not this project (D-033).
         about: Option<String>,
     },
+    /// `akr papercut close <key>`.
+    PapercutClose {
+        /// The papercut to close.
+        key: String,
+        /// Closure date; defaults to the workspace's input date.
+        closed_at: Option<String>,
+    },
+    /// `akr papercut reset`.
+    PapercutReset {
+        /// A directory of sibling workspaces to scan; defaults to siblings.
+        projects: Option<PathBuf>,
+        /// The namespace for the baseline record.
+        namespace: Option<String>,
+        /// Report the baseline without writing it.
+        dry_run: bool,
+    },
     /// `akr papercut collate [--projects <dir>] [--about <subject>]... [--namespace <ns>]
     /// [--dry-run]`.
     PapercutCollate {
@@ -686,6 +702,8 @@ impl Command {
             Self::Complete { .. } => "complete".to_owned(),
             Self::Abandon { .. } => "abandon".to_owned(),
             Self::Papercut { .. } => "papercut".to_owned(),
+            Self::PapercutClose { .. } => "papercut close".to_owned(),
+            Self::PapercutReset { .. } => "papercut reset".to_owned(),
             Self::PapercutCollate { .. } => "papercut collate".to_owned(),
             Self::EvidenceAdd { .. } => "evidence add".to_owned(),
             Self::EvidenceAddMany { .. } => "evidence add-many".to_owned(),
@@ -1305,6 +1323,27 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
                     about,
                     all,
                     dry_run: tail.iter().any(|a| a == "--dry-run"),
+                });
+            }
+            if first_positional == Some("close") {
+                known_flags(&["--closed-at"])?;
+                let key = tail
+                    .iter()
+                    .find(|arg| !arg.starts_with('-'))
+                    .filter(|arg| arg.as_str() != "close")
+                    .cloned()
+                    .ok_or_else(|| UsageError::new("AKR-C003", "papercut close requires a key"))?;
+                return Ok(Command::PapercutClose {
+                    key,
+                    closed_at: option_value(tail, "--closed-at"),
+                });
+            }
+            if first_positional == Some("reset") {
+                known_flags(&["--projects", "--namespace", "--dry-run"])?;
+                return Ok(Command::PapercutReset {
+                    projects: option_value(tail, "--projects").map(PathBuf::from),
+                    namespace: option_value(tail, "--namespace"),
+                    dry_run: tail.iter().any(|arg| arg == "--dry-run"),
                 });
             }
             // Parsed by hand: `-m` takes a value, and the generic positional filter
@@ -2720,6 +2759,8 @@ pub fn help_for(name: &str) -> Option<String> {
         }
         "papercut" => {
             "akr papercut -m <agent> \"message\" [--about <subject>] [--namespace <ns>]\n\
+             akr papercut close <key> [--closed-at <YYYY-MM-DD>]\n\
+             akr papercut reset [--projects <dir>] [--namespace <ns>] [--dry-run]\n\
              akr papercut collate [--projects <dir>] [--about <subject>]... [--all]\n\
              \x20                    [--namespace <ns>] [--dry-run]\n\
              \n\

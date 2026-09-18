@@ -350,6 +350,8 @@ fn dispatch(session: &mut Session, command: &Command) -> Result<Output, EnvError
         | Command::Complete { .. }
         | Command::Abandon { .. }
         | Command::Papercut { .. }
+        | Command::PapercutClose { .. }
+        | Command::PapercutReset { .. }
         | Command::PapercutCollate { .. }
         | Command::EvidenceAdd { .. }
         | Command::EvidenceAddMany { .. } => crate::write::run(session, command),

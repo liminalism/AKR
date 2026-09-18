@@ -623,7 +623,9 @@ impl Ctx {
                     return None;
                 }
             },
-            ContentSlot::ReviewAfter | ContentSlot::Target => ContentValue::Date(self.date(value)?),
+            ContentSlot::ReviewAfter | ContentSlot::Target | ContentSlot::ClosedAt => {
+                ContentValue::Date(self.date(value)?)
+            }
             ContentSlot::Watches => ContentValue::Globs(
                 self.array(value)
                     .iter()

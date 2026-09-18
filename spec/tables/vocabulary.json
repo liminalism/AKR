@@ -247,6 +247,8 @@
          "doc": "What the friction was with, when that is not this project: a tool name such as `akr`. Absent means this project's own code or setup. `akr papercut collate --about <subject>` gathers the sisters' papercuts aimed at one subject (D-033)."},
         {"name": "collated", "type": "string[]", "required": false,
          "doc": "Source papercut keys this collation record absorbed from sister projects; written by `akr papercut collate`, the dedup set for the next run (D-030)."}
+        ,{"name": "closed_at", "type": "date", "required": false,
+         "doc": "Date this papercut was closed; closed papercuts are excluded from future collation."}
       ],
       "note": "Filled automatically by `akr papercut` and knowledge.papercut: the agent lands in author, the date in created_at, observed_at defaults to HEAD. No watches, so a papercut never goes stale (D-027)."
     },

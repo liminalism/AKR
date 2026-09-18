@@ -202,7 +202,9 @@ pub fn collect(
             .ledger
             .records()
             .iter()
-            .filter(|record| record.kind == Kind::Papercut && record.is_live())
+            .filter(|record| {
+                record.kind == Kind::Papercut && record.is_live() && closed_at_of(record).is_none()
+            })
             .map(|record| record.id.key.clone())
             .collect();
         keys.sort();
@@ -253,6 +255,15 @@ pub fn collect(
 pub fn about_of(record: &Record) -> Option<String> {
     match record.get(ContentSlot::About) {
         Some(ContentValue::Text(text) | ContentValue::Prose(text)) => Some(text.clone()),
+        _ => None,
+    }
+}
+
+/// The date a papercut was explicitly closed, if any.
+#[must_use]
+pub fn closed_at_of(record: &Record) -> Option<Date> {
+    match record.get(ContentSlot::ClosedAt) {
+        Some(ContentValue::Date(date)) => Some(*date),
         _ => None,
     }
 }

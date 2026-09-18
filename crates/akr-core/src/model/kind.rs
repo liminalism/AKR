@@ -277,6 +277,7 @@ const PAPERCUT_SLOTS: &[ContentSlotSpec] = &[
     req(C::ObservedAt),
     opt(C::About),
     opt(C::Collated),
+    opt(C::ClosedAt),
 ];
 const PLAN_SLOTS: &[ContentSlotSpec] = &[req(C::Intent), opt(C::Target), opt(C::Note)];
 const TRACK_SLOTS: &[ContentSlotSpec] = &[req(C::Intent), opt(C::Cadence), opt(C::Note)];
@@ -329,6 +330,7 @@ pub enum ContentSlot {
     Note,
     About,
     Collated,
+    ClosedAt,
 }
 
 impl ContentSlot {
@@ -362,6 +364,7 @@ impl ContentSlot {
         Self::Note,
         Self::About,
         Self::Collated,
+        Self::ClosedAt,
     ];
 
     /// The slot name as written in source (snake_case, D-005).
@@ -396,6 +399,7 @@ impl ContentSlot {
             Self::Note => "note",
             Self::About => "about",
             Self::Collated => "collated",
+            Self::ClosedAt => "closed_at",
         }
     }
 
@@ -410,7 +414,7 @@ impl ContentSlot {
     pub const fn value_type(self) -> &'static str {
         match self {
             Self::ObservedAt | Self::AsOf => "commit (git:<40-hex>)",
-            Self::ReviewAfter | Self::Target => "date (YYYY-MM-DD)",
+            Self::ReviewAfter | Self::Target | Self::ClosedAt => "date (YYYY-MM-DD)",
             Self::Watches => "glob[]",
             Self::Exceptions => "reference[]",
             Self::Aliases | Self::Collated => "string[]",
