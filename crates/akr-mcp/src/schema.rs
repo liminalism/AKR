@@ -1286,6 +1286,15 @@ fn claims_schema() -> Value {
 }
 
 fn relations_schema() -> Value {
+    let properties = akr_core::model::Relation::ALL
+        .iter()
+        .map(|relation| {
+            (
+                relation.name().to_owned(),
+                string_array("References; target kinds are checked by V-005."),
+            )
+        })
+        .collect();
     Value::object(vec![
         ("type", Value::string("object")),
         (
@@ -1303,7 +1312,8 @@ fn relations_schema() -> Value {
                  supersedes fails V-006 (AKR-L021).",
             ),
         ),
-        ("additionalProperties", string_array("References.")),
+        ("properties", Value::Object(properties)),
+        ("additionalProperties", Value::bool(false)),
     ])
 }
 

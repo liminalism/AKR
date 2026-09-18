@@ -159,8 +159,9 @@ fn narrowing_advice(tool: &str, arguments: &Value) -> String {
              document `id`."
         }
         "knowledge.context" => {
-            "Call again with a smaller `budget_tokens`, or with `paths` narrowed to the \
-             files you are about to touch."
+            "Call again with `budget_tokens` at least 5000, or with `paths` narrowed to \
+             the files you are about to touch. The mandatory graph and acceptance sections \
+             cannot be reduced below that floor."
         }
         "knowledge.impact" => "Call again with a smaller `depth`.",
         "knowledge.handoff_open" => {
@@ -188,7 +189,10 @@ fn narrowing_arguments(tool: &str, original: &Value) -> Value {
         "knowledge.source_get" => vec![("detail", Value::string("snippet"))],
         "knowledge.search" | "knowledge.source_search" => vec![("limit", Value::integer(5))],
         "knowledge.start" => vec![("budget_tokens", Value::integer(1_500))],
-        "knowledge.context" => vec![("budget_tokens", Value::integer(2_000))],
+        // Context has irreducible graph and acceptance sections. 2,000 was advertised as
+        // a retry even though ordinary bundles can require more than that before prose is
+        // eligible for truncation (AKR-X021).
+        "knowledge.context" => vec![("budget_tokens", Value::integer(5_000))],
         "knowledge.impact" => vec![("depth", Value::integer(1))],
         "knowledge.handoff_open" => {
             // The continuation is a different tool, so the shared "same tool, narrower

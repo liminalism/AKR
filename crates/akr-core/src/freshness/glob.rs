@@ -127,11 +127,7 @@ pub fn validate(glob: &Glob) -> Result<(), GlobError> {
 /// means the directory.
 #[must_use]
 pub fn matches(glob: &Glob, path: &str) -> bool {
-    let pattern: Vec<&str> = glob
-        .as_str()
-        .split('/')
-        .filter(|s| !s.is_empty())
-        .collect();
+    let pattern: Vec<&str> = glob.as_str().split('/').filter(|s| !s.is_empty()).collect();
     let target: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     if match_segments(&pattern, &target) {
         return true;

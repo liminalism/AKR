@@ -5,7 +5,7 @@ build {
     tool "akr 0.5.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:d5349ace341e76f73b2f49e5618d61a1e4a06bcf6091f1321521eaeabc0d532b"
+    source_graph "sha256:6a54625dea9f103983ea9e94dc7cec0c8b687f2d4391d6fd7656ffb8b50c39a3"
 }
 
 source ".akr/project.akr" {
@@ -39,8 +39,8 @@ source ".akr/records/akr/observations.akr" {
 }
 
 source ".akr/records/akr/papercuts.akr" {
-    hash "sha256:9ddfca39d88c40a3b04de0c3e84d68743d17f8a5207224d4b3bdb68dc9749ec6"
-    records 83
+    hash "sha256:9ae90fd978b373ba4d99e0ab20c80228bae26051960278a3cfd83ce7fdb06576"
+    records 86
 }
 
 source ".akr/records/akr/work.akr" {
@@ -902,6 +902,11 @@ seal @akr.observation.the-normative-layer-is-stuck-at-proposed/1 {
     hash "sha256:50c1c07096dc47626988e639cf6ba4ba6887d4c51e1a09b4459c650ced138923"
 }
 
+seal @akr.papercut.a-command-orchestration-typo-caused-a-tool-call/1 {
+    state verified
+    hash "sha256:1100d5ed6acfd62c003ecde87a9f13f99f97aa645bafd89de858737335551967"
+}
+
 seal @akr.papercut.a-subagent-spawned-with-worktree-isolation-into/1 {
     state verified
     hash "sha256:f0228bf0f56b8661d18617680e1529fd495092af4bfc27150a01b334e92e4390"
@@ -930,6 +935,11 @@ seal @akr.papercut.agents-write-working-files-to-agent-scratch/1 {
 seal @akr.papercut.akr-change-prepare-staged-reports-code-n-files/1 {
     state verified
     hash "sha256:c9e863839579982103856a02552b9270ead8e5f9021156f1c3989816af830fa3"
+}
+
+seal @akr.papercut.akr-context-rejects-a-collated-papercut-key/1 {
+    state verified
+    hash "sha256:fd115637dd482a42c12514e4d0c29b5cf3e6a96cfca715640c9783357b258936"
 }
 
 seal @akr.papercut.akr-git-commit-m-message-accepted-the-flag-but/1 {
@@ -1005,6 +1015,11 @@ seal @akr.papercut.collated-10-papercuts-from-evidence-intake-2/1 {
 seal @akr.papercut.collated-10-papercuts-from-evidence-intake-2/2 {
     state withdrawn
     hash "sha256:f54ad7de31357e9d953f894d64fc595b7e5498257c496ef9609227b33dbee807"
+}
+
+seal @akr.papercut.collated-15-papercuts-from-evidence-intake/1 {
+    state verified
+    hash "sha256:6cf7e8f66b341f1ea592a5ccb284ff8b8821eed31491ebb593f0b521148f944e"
 }
 
 seal @akr.papercut.collated-16-papercuts-from-kitchen-concept-lege/1 {

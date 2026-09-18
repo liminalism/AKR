@@ -71,8 +71,9 @@ pub mod codes {
     pub const E022: Code = Code::new("AKR-E022");
 
     /// Every emission code this crate can raise.
-    pub const ALL: &[Code] =
-        &[E001, E002, E003, E011, E012, E013, E014, E015, E016, E021, E022];
+    pub const ALL: &[Code] = &[
+        E001, E002, E003, E011, E012, E013, E014, E015, E016, E021, E022,
+    ];
 }
 
 use crate::graph::{AtRisk, propagate_staleness};

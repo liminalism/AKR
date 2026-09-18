@@ -408,6 +408,10 @@ updated `observed_at` and unchanged prose is how it is recorded.
 
 ## 8. Invariants
 
+The `untracked` declaration is checked against the tracked tree. If it actually covers
+tracked files, the build reports `AKR-G026` instead of silently suppressing scope
+diagnostics.
+
 Four, and they are the reason the freshness model can be trusted.
 
 **1. The compiler never declares a record false.** It flags `stale` and `at_risk`, both of

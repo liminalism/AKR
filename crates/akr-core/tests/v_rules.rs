@@ -1168,10 +1168,9 @@ fn v021_still_fails_when_it_cites_only_another_decision() {
     ]);
     let raised = validate::v021_decision_cites(&l);
     assert!(
-        raised
-            .iter()
-            .any(|d| d.code == c::R031
-                && d.primary.message.as_deref().is_none_or(|m| !m.is_empty())),
+        raised.iter().any(
+            |d| d.code == c::R031 && d.primary.message.as_deref().is_none_or(|m| !m.is_empty())
+        ),
         "expected AKR-R031 for the derivative decision: {raised:?}"
     );
 }

@@ -1,6 +1,18 @@
 akr 0.1
 project akr
 
+record akr.papercut.a-command-orchestration-typo-caused-a-tool-call/1 : papercut {
+    title "A command orchestration typo caused a tool call to fail before…"
+    state verified
+    statement """
+        A command orchestration typo caused a tool call to fail before execution while inspecting MCP record handling; retrying with the corrected command resolved it.
+        """
+    observed_at git:1cbe540937e1126ebcaf6787c6e675324638d033
+    about "akr"
+    author "Codex"
+    created_at 2026-09-18
+}
+
 record akr.papercut.a-subagent-spawned-with-worktree-isolation-into/1 : papercut {
     title "A subagent spawned with worktree isolation into .claude/worktrees/<id>…"
     state verified
@@ -183,6 +195,18 @@ record akr.papercut.akr-change-prepare-staged-reports-code-n-files/1 : papercut 
     observed_at git:bf981795d30f434ed4ac3b8864af6b154cabf3e0
     author "claude"
     created_at 2026-08-25
+}
+
+record akr.papercut.akr-context-rejects-a-collated-papercut-key/1 : papercut {
+    title "akr context rejects a collated papercut key with a clear retrieval…"
+    state verified
+    statement """
+        akr context rejects a collated papercut key with a clear retrieval hint, but the papercut workflow has no dedicated context anchor; task orientation required falling back to akr get.
+        """
+    observed_at git:1cbe540937e1126ebcaf6787c6e675324638d033
+    about "akr"
+    author "Codex"
+    created_at 2026-09-18
 }
 
 record akr.papercut.akr-git-commit-m-message-accepted-the-flag-but/1 : papercut {
@@ -519,6 +543,79 @@ record akr.papercut.collated-10-papercuts-from-evidence-intake-2/2 : papercut {
     ]
     supersedes [ @akr.papercut.collated-10-papercuts-from-evidence-intake-2/1 ]
     created_at 2026-08-23
+}
+
+record akr.papercut.collated-15-papercuts-from-evidence-intake/1 : papercut {
+    title "Collated 15 papercuts from Evidence-intake-project, Kitchen-Concept, LegeOS, SaveYourSkin and 1 more"
+    state verified
+    statement """
+        Collated 15 papercuts from /mnt/Samsung980_1TB/Rust-projects on 2026-09-18 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
+
+        ## Evidence-intake-project @evidence-intake-project.papercut.git-filter-repo-to-drop-damion-1-2-jpg-rewrote [about akr]
+        git filter-repo to drop Damion_1-2.jpg rewrote 8 commit hashes and AKR-G011 failed on 63 observed_at pins. Remapped those SHAs through .git/filter-repo/commit-map; akr check is clean again. A rewrite that touches the root commit has to remap pins before the next akr check.
+
+        ## Kitchen-Concept @kitchen.papercut.completing-kitchen-work-stage0-shared [about akr]
+        Completing kitchen.work.stage0-shared-extraction: `akr build` refuses to regenerate docs/generated while any V-020 error exists anywhere in the ledger, so an unrelated record (cell-operator-seam-split, whose acceptance text was edited by the previous session after its evidence) blocks every view from refreshing. A per-record failure should not stop the views for the rest.
+
+        ## Kitchen-Concept @kitchen.papercut.recording-evidence-for-a-nothing-matches-check [about akr]
+        Recording evidence for a "nothing matches" check: a grep whose useful exit status is the FIRST stage of a pipeline is flagged AKR-G025 as effective-error, but a verified evidence record cannot be revised, so the only fix is a second evidence record and the completed work cannot be repointed at it. Would help if evidence_add rejected the pipeline up front, or if a completed record's check citation could be replaced.
+
+        ## LegeOS @legeos.papercut.akr-build-could-not-refresh-the-ledger-after [about akr]
+        `akr build` could not refresh the ledger after this window-management update because registered source `design-review-home-and-platform-20260901` no longer matches its stored content hash. This unrelated source drift leaves generated views stale until its original bytes are restored or a superseding source is registered.
+
+        ## LegeOS @legeos.papercut.knowledge-context-suggested-retrying-its-31k [about akr]
+        knowledge.context suggested retrying its 31k-token preview with budget_tokens=2000, but that exact continuation failed AKR-X021 because mandatory sections need 3991 tokens; continuation advice should never recommend an invalid budget.
+
+        ## SaveYourSkin @saveyourskin.papercut.g022-g023-only-flag-globs-that-now-match [about akr]
+        G022/G023 only flag globs that now match nothing: after 34776d3, src/** scopes silently lost the 306 files moved into crates/dunwold_sim because src/main.rs still matches; and akr explain AKR-G023 prints the E015 view-banner text instead of the scope rule.
+
+        ## SaveYourSkin @saveyourskin.papercut.key-saveyourskin-work-mealtime-furniture-seated [about akr]
+        Key saveyourskin.work.mealtime-furniture-seated-motion has no single head for get, revise or why-current (AKR-L001: revisions 1 and 5 unsuperseded, because its /2 supersedes redesignledger-no-sitting-animation/1), yet akr check resolves /5 as the head and warns G023 on it.
+
+        ## SaveYourSkin @saveyourskin.papercut.knowledge-propose-accepted-state-proposed-for-a [about akr]
+        knowledge.propose accepted state=proposed for a new observation but immediately sealed it as verified, so knowledge.supersede could not attach the replacement edge; the documented two-step knowledge.revise workaround was required.
+
+        ## SaveYourSkin @saveyourskin.papercut.knowledge-propose-rejected-the-intuitive [about akr]
+        knowledge.propose rejected the intuitive relation name `governed_by`, but the tool schema does not enumerate valid relation names. The error is clear; discoverability would improve if the declaration or diagnostic listed accepted relations.
+
+        ## SaveYourSkin @saveyourskin.papercut.knowledge-propose-reports-the-required-work [about akr]
+        knowledge.propose reports the required work `intent` slot only after rejecting the write; exposing required slots in the tool schema or validation hint would avoid a retry.
+
+        ## SaveYourSkin @saveyourskin.papercut.reading-the-s6-work-record-with-knowledge-get [about akr]
+        Reading the S6 work record with knowledge_get (detail body, then canonical) truncated the intent slot at the 1500-token hard limit, so the step list I needed was cut to an ellipsis and the continuation hint only offered smaller details; `akr get <key>` on the CLI printed the full intent. A way to fetch one slot in full (or a larger hard limit for a single record) would avoid the fallback.
+
+        ## SaveYourSkin @saveyourskin.papercut.revising-a-planning-head-copies-the-previous [about akr]
+        Revising a planning head copies the previous revision's disposition blocks, so a scope-only revise of track.sound-design/3 failed R016 because its carried-forward child pins part_of only /1 and /2.
+
+        ## SaveYourSkin @saveyourskin.papercut.scope-following-a-crate-move-is-unsafe-for [about akr]
+        Scope-following a crate move is unsafe for acceptance-bearing records: D-016/D-029 count scope (and pinned relation revisions) as definition, so revising 36 milestone/work scopes after 34776d3 made 103 completed checks R022 and reset active satisfied counts, and in-place A-to-B-to-A edits stay reset even after a git revert. A rename-aware scope map (like .akr-commit-map for commits) would let a move be followed without redefining records.
+
+        ## openarc @openarc.papercut.knowledge-context-rejected-the-known-active [about akr]
+        knowledge.context rejected the known active requirement key because bundles only anchor on milestone/work/track; the AGENTS guidance says known planning keys generally, so recovery required knowledge.start.
+
+        ## openarc @openarc.papercut.while-correcting-an-observation-s-provenance [about akr]
+        While correcting an observation's provenance, `knowledge.supersede` rejected a verified replacement because it can only add the supersedes edge to a proposed replacement. The recovery requires separately transitioning the bad head to superseded, leaving the valid replacement without a successor edge.
+        """
+    observed_at git:1cbe540937e1126ebcaf6787c6e675324638d033
+    about "akr"
+    collated [
+        "evidence-intake-project.papercut.git-filter-repo-to-drop-damion-1-2-jpg-rewrote",
+        "kitchen.papercut.completing-kitchen-work-stage0-shared",
+        "kitchen.papercut.recording-evidence-for-a-nothing-matches-check",
+        "legeos.papercut.akr-build-could-not-refresh-the-ledger-after",
+        "legeos.papercut.knowledge-context-suggested-retrying-its-31k",
+        "saveyourskin.papercut.g022-g023-only-flag-globs-that-now-match",
+        "saveyourskin.papercut.key-saveyourskin-work-mealtime-furniture-seated",
+        "saveyourskin.papercut.knowledge-propose-accepted-state-proposed-for-a",
+        "saveyourskin.papercut.knowledge-propose-rejected-the-intuitive",
+        "saveyourskin.papercut.knowledge-propose-reports-the-required-work",
+        "saveyourskin.papercut.reading-the-s6-work-record-with-knowledge-get",
+        "saveyourskin.papercut.revising-a-planning-head-copies-the-previous",
+        "saveyourskin.papercut.scope-following-a-crate-move-is-unsafe-for",
+        "openarc.papercut.knowledge-context-rejected-the-known-active",
+        "openarc.papercut.while-correcting-an-observation-s-provenance"
+    ]
+    created_at 2026-09-18
 }
 
 record akr.papercut.collated-16-papercuts-from-kitchen-concept-lege/1 : papercut {

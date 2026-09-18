@@ -489,10 +489,7 @@ fn unverifiable_scope_fact(scopes: &[akr_core::freshness::UnverifiableScope]) ->
         ));
     }
     if scopes.len() > SHOWN {
-        text.push_str(&format!(
-            "      … and {} more\n",
-            scopes.len() - SHOWN
-        ));
+        text.push_str(&format!("      … and {} more\n", scopes.len() - SHOWN));
     }
     text
 }
@@ -871,8 +868,9 @@ fn check(
     let mut view_diagnostics = if counts_of(session, &model).records == 0 {
         Vec::new()
     } else {
-        check_views_current(&session.view_dir(), context)
-            .map_err(|e| EnvError::new("AKR-E001", format!("cannot read the view directory: {e}")))?
+        check_views_current(&session.view_dir(), context).map_err(|e| {
+            EnvError::new("AKR-E001", format!("cannot read the view directory: {e}"))
+        })?
     };
 
     // An agent that has just written a record has stale views BY CONSTRUCTION, and has not
@@ -3418,7 +3416,11 @@ fn context(
                     .help(format!("retrieve the anchor with `akr get {goal}`; remove the #anchor for context"));
             }
             akr_core::context::ContextError::BadPath { .. } => "AKR-X011",
-            akr_core::context::ContextError::BudgetTooSmall { .. } => "AKR-X021",
+            akr_core::context::ContextError::BudgetTooSmall { required, .. } => {
+                return EnvError::new("AKR-X021", error.to_string()).help(format!(
+                    "retry with budget_tokens >= {required}, or narrow --paths; the mandatory graph and acceptance sections cannot be truncated"
+                ));
+            }
         };
         EnvError::new(code, error.to_string())
     })?;

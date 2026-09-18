@@ -430,13 +430,7 @@ fn with_report(name: &str) -> Example {
 }
 
 fn import_report(example: &Example) -> support::Run {
-    example.run(&[
-        "--lenient",
-        "import",
-        REPORT_DOC,
-        "--namespace",
-        "sys",
-    ])
+    example.run(&["--lenient", "import", REPORT_DOC, "--namespace", "sys"])
 }
 
 /// Until somebody dispositions a claim, its draft is not the project's plan and does not

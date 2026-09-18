@@ -420,7 +420,8 @@ fn revise_on_a_sealed_head_retires_it_in_the_same_write() {
     assert!(source.contains("state superseded"));
     assert!(source.contains("supersedes [ @sys.term.playable-day/1 ]"));
     assert!(
-        run.stdout.contains("keeps state active from the sealed head"),
+        run.stdout
+            .contains("keeps state active from the sealed head"),
         "a sealed content-only revise keeps the state it inherits and says so (D-043): {}",
         run.stdout
     );

@@ -794,7 +794,10 @@ mod declared_untracked_tests {
             &declared,
             "SYSEngine/assets/characters/human/**"
         ));
-        assert!(is_declared_untracked(&declared, "SYSEngine/assets_external/**"));
+        assert!(is_declared_untracked(
+            &declared,
+            "SYSEngine/assets_external/**"
+        ));
         // A sibling under the same parent is not covered: the declaration names a tree,
         // not a prefix of a path string.
         assert!(!is_declared_untracked(

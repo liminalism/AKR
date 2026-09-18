@@ -438,6 +438,9 @@ relations are exempt, because pointing at retired knowledge is what they are for
 
 ## 11. Enforcement
 
+If a view differs only in its tool-version banner, the check reports `AKR-E015` as a
+non-fatal migration warning; rebuilding refreshes that stamp.
+
 D-025 in mechanism form.
 
 `akr check --views-current` runs stage F **in memory** and compares against the committed

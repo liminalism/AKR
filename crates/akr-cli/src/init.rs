@@ -90,8 +90,11 @@ pub(crate) fn missing_gitignore_entries(root: &std::path::Path) -> Vec<&'static 
     let Ok(text) = std::fs::read_to_string(root.join(".gitignore")) else {
         return Vec::new();
     };
-    let present: std::collections::BTreeSet<&str> =
-        text.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let present: std::collections::BTreeSet<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
     GITIGNORE_ENTRIES
         .iter()
         .filter(|entry| !present.contains(*entry))
