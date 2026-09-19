@@ -5,7 +5,7 @@ build {
     tool "akr 0.5.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:ba849f22e6f80b97379c5a83e787686144b9f7a7a4f333ae36a01b24a1dd5bc0"
+    source_graph "sha256:d5349ace341e76f73b2f49e5618d61a1e4a06bcf6091f1321521eaeabc0d532b"
 }
 
 source ".akr/project.akr" {
@@ -39,8 +39,8 @@ source ".akr/records/akr/observations.akr" {
 }
 
 source ".akr/records/akr/papercuts.akr" {
-    hash "sha256:cf9b924e2a3462fbc18c9e931f82cc6e6916c0cd21d9e07562b66215b633dacc"
-    records 82
+    hash "sha256:9ddfca39d88c40a3b04de0c3e84d68743d17f8a5207224d4b3bdb68dc9749ec6"
+    records 83
 }
 
 source ".akr/records/akr/work.akr" {
@@ -935,6 +935,11 @@ seal @akr.papercut.akr-change-prepare-staged-reports-code-n-files/1 {
 seal @akr.papercut.akr-git-commit-m-message-accepted-the-flag-but/1 {
     state verified
     hash "sha256:4eb88175609562a16a99924fa2f6023775dbda3f7815a1940eb9e21d1fdb3855"
+}
+
+seal @akr.papercut.akr-validate-check-in-saveyourskin-hangs-10/1 {
+    state verified
+    hash "sha256:6dd26a277d9a7e0ee6d76712187b9d5eba9a76a7b943ae87507ce15409519b47"
 }
 
 seal @akr.papercut.bug-needs-a-decision-d-028-is-incomplete/1 {

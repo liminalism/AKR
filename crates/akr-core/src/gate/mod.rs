@@ -50,13 +50,7 @@ fn command_tokens(command: &str) -> Vec<String> {
             }
             let token: String = chars[start..i].iter().collect();
             let token = token.trim_end_matches(':');
-            // A token that is only underscores (`cargo test -- _`, a filter
-            // for "everything") names no test, and as a `git grep -o` needle
-            // it matches every identifier in the tree — on a repository that
-            // tracks large data files that grep ran for half an hour. Two
-            // identifier characters around the underscore is the floor.
-            let names_something = token.trim_matches('_').len() >= 2;
-            if (token.contains('_') || token.contains("::")) && names_something {
+            if is_test_filter_token(token) {
                 out.push(token.to_owned());
             }
         } else {
@@ -72,6 +66,22 @@ fn is_token_char(c: char) -> bool {
     c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'
 }
 
+/// A cargo-test filter, not the `_` inside `SYS_WORLD=`.
+///
+/// The scanner is lowercase-only, so an env var like `SYS_WORLD` is seen as a lone
+/// underscore between two skipped uppercase runs. That token used to be kept (it
+/// "contains `_`") and then fed to `git grep -o -F -e _`, which emits every underscore
+/// in the tracked tree — 2.9 million matches on SaveYourSkin, and a 10–30 minute hang
+/// on `akr check`. A filter that names a test has a letter in it. A token that is only
+/// underscores (`cargo test -- _`, a filter for "everything") likewise names no test;
+/// two identifier characters around the underscore is the floor, so one-letter needles
+/// that would still match everywhere are also dropped.
+fn is_test_filter_token(token: &str) -> bool {
+    (token.contains('_') || token.contains("::"))
+        && token.chars().any(|c| c.is_ascii_lowercase())
+        && token.trim_matches('_').len() >= 2
+}
+
 /// The pieces of a token that must be found in source for it to count as present.
 ///
 /// `cargo test` filters are SUBSTRING matches against the full test path, so a
@@ -83,11 +93,15 @@ fn is_token_char(c: char) -> bool {
 /// zero real phantoms into eleven apparent ones. So a `::` token resolves segment by
 /// segment.
 fn token_parts(token: &str) -> Vec<&str> {
-    if token.contains("::") {
+    let parts: Vec<&str> = if token.contains("::") {
         token.split("::").filter(|part| !part.is_empty()).collect()
     } else {
         vec![token]
-    }
+    };
+    parts
+        .into_iter()
+        .filter(|part| part.chars().any(|c| c.is_ascii_lowercase()))
+        .collect()
 }
 
 /// Why a recorded command's exit status cannot be trusted, or `None` when it can.
@@ -225,10 +239,11 @@ pub fn phantom_command_tokens(
         }
         // "None of them resolves", not "any of them fails": one resolving token means the
         // command can still execute something, so the gate is not empty.
-        if tokens
-            .iter()
-            .any(|token| token_parts(token).iter().all(|part| present.contains(*part)))
-        {
+        if tokens.iter().any(|token| {
+            token_parts(token)
+                .iter()
+                .all(|part| present.contains(*part))
+        }) {
             continue;
         }
         let named = tokens.join(", ");
@@ -258,4 +273,42 @@ pub fn phantom_command_tokens(
         );
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{command_tokens, is_test_filter_token, token_parts};
+
+    #[test]
+    fn env_var_underscores_are_not_test_tokens() {
+        assert!(command_tokens("SYS_WORLD=greyhaven cargo run --release").is_empty());
+        assert!(
+            command_tokens("SYS_WALK_PERMILLE=1250 cargo run -p sys_headless")
+                .contains(&"sys_headless".to_owned())
+        );
+        assert_eq!(
+            command_tokens("SYS_WORLD=greyhaven cargo test -p sys_present a_real_leaf_test"),
+            vec!["a_real_leaf_test".to_owned(), "sys_present".to_owned()]
+        );
+    }
+
+    #[test]
+    fn a_lone_underscore_is_not_a_token() {
+        assert!(!is_test_filter_token("_"));
+        assert!(!is_test_filter_token("___"));
+        assert!(command_tokens("_").is_empty());
+        assert!(command_tokens("foo _ bar").is_empty());
+    }
+
+    #[test]
+    fn snake_case_and_module_paths_still_tokenise() {
+        assert_eq!(
+            command_tokens("cargo test inventory_model::tests::a_leaf"),
+            vec!["inventory_model::tests::a_leaf".to_owned()]
+        );
+        assert_eq!(
+            token_parts("inventory_model::tests::a_leaf"),
+            vec!["inventory_model", "tests", "a_leaf"]
+        );
+    }
 }

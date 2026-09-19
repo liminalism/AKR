@@ -72,8 +72,8 @@ pub mod codes {
 
     /// Every freshness code this crate can raise.
     pub const ALL: &[Code] = &[
-        G001, G002, G003, G004, G011, G012, G013, G014, G021, G022, G023, G024, G025, G026,
-        G031, G041,
+        G001, G002, G003, G004, G011, G012, G013, G014, G021, G022, G023, G024, G025, G026, G031,
+        G041,
     ];
 }
 
@@ -303,6 +303,21 @@ struct Memo {
 /// empirical record, so any ledger past a handful of records comes out ahead. Below the
 /// threshold the pairwise form stays cheaper, which is what a small ledger wants.
 const REACHABILITY_PROBE_LIMIT: u32 = 3;
+
+/// Pathspecs V-105 must not search. Ledger self-quotes, generated views, agent
+/// scratch, and data dumps that quote commands from when a since-deleted test still
+/// existed. Counting those as source hides a true phantom, and `git grep -o` over
+/// them is what made `akr check` hang for tens of minutes on SaveYourSkin.
+const SOURCE_HIT_EXCLUDES: &[&str] = &[
+    ":(exclude).akr",
+    ":(exclude)docs/generated",
+    ":(exclude).agent",
+    ":(exclude,glob)**/*.jsonl",
+    ":(exclude,glob)**/*.log",
+    ":(exclude,glob)**/*.csv",
+    ":(exclude,glob)**/*.txt",
+    ":(exclude,glob)**/*.json",
+];
 
 impl Clone for Repository {
     /// Clones the handle, not the memo: a new handle sees the repository as it is now.
@@ -1005,6 +1020,15 @@ impl Repository {
     /// so counting them as source would silently suppress a true positive. It also churns
     /// while agents work.
     ///
+    /// Data dumps (`*.jsonl`, `*.log`, `*.csv`, `*.txt`, `*.json`) are excluded for the
+    /// same reason, and for cost: `git grep -o` emits every occurrence, and a JSONL
+    /// handoff trace quoting a command is not the test that command names. On SaveYourSkin
+    /// those files were 70 MB of the 180 MB tree the gate walked.
+    ///
+    /// Needles with no ASCII letter are dropped before the grep. The caller should not
+    /// produce them; this is the backstop that keeps a lone `_` from matching every
+    /// underscore in the tree.
+    ///
     /// # Errors
     /// [`GitError::CommandFailed`] if git cannot search the tree.
     pub fn tracked_source_hits<'a>(
@@ -1012,7 +1036,10 @@ impl Repository {
         commit: &Commit,
         needles: impl IntoIterator<Item = &'a str>,
     ) -> Result<BTreeSet<String>, GitError> {
-        let needles: BTreeSet<&str> = needles.into_iter().collect();
+        let needles: BTreeSet<&str> = needles
+            .into_iter()
+            .filter(|needle| needle.chars().any(|c| c.is_ascii_alphabetic()))
+            .collect();
         if needles.is_empty() {
             return Ok(BTreeSet::new());
         }
@@ -1030,8 +1057,8 @@ impl Repository {
         }
         args.push(canonical.as_str().to_owned());
         args.push("--".into());
-        for exclude in [":(exclude).akr", ":(exclude)docs/generated", ":(exclude).agent"] {
-            args.push(exclude.into());
+        for exclude in SOURCE_HIT_EXCLUDES {
+            args.push((*exclude).into());
         }
         // Captured run output and bulk data are not source either, and they are
         // where a since-deleted test's name survives: a status file or a log

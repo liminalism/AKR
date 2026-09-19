@@ -782,3 +782,43 @@ fn a_shared_memo_and_a_private_one_agree() {
         shared.touches_in(Some(&first), &head).expect("touches")
     );
 }
+
+// -------------------------------------------------------------------------------------
+// V-105 source hits
+// -------------------------------------------------------------------------------------
+
+#[test]
+fn tracked_source_hits_finds_a_needle_in_rust_source() {
+    let mut repo = TempRepo::new("source-hits-rs");
+    let head = commit(&repo.commit_file("src/lib.rs", "fn a_real_leaf_test() {}\n", "source"));
+    let git = Repository::open(repo.root()).expect("opens");
+    let hits = git
+        .tracked_source_hits(&head, ["a_real_leaf_test", "a_missing_name"])
+        .expect("grep");
+    assert!(hits.contains("a_real_leaf_test"));
+    assert!(!hits.contains("a_missing_name"));
+}
+
+#[test]
+fn tracked_source_hits_ignore_jsonl_dumps_and_letterless_needles() {
+    let mut repo = TempRepo::new("source-hits-jsonl");
+    repo.write("trace.jsonl", "a_name_only_in_jsonl\n");
+    repo.write("src/lib.rs", "fn something_else() {}\n");
+    let head = commit(&repo.commit("dump plus source"));
+    let git = Repository::open(repo.root()).expect("opens");
+    let hits = git
+        .tracked_source_hits(&head, ["a_name_only_in_jsonl", "_", "something_else"])
+        .expect("grep");
+    assert!(
+        !hits.contains("a_name_only_in_jsonl"),
+        "JSONL is a dump, not source: {hits:?}"
+    );
+    assert!(
+        !hits.contains("_"),
+        "a letterless needle is not searched: {hits:?}"
+    );
+    assert!(
+        hits.contains("something_else"),
+        "rust source is still searched: {hits:?}"
+    );
+}
