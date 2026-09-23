@@ -42,6 +42,7 @@ Two existing mechanisms carry the whole thing:
 source {
     kind legacy
     path "docs/legacy/WORKING-AGREEMENTS.md"
+    document "WORKING-AGREEMENTS-a1b2c3d4"
     excerpt """
         Engine and sim should stay in step. (No exceptions were listed.)
         """
@@ -50,7 +51,9 @@ source {
 
 `kind` is `legacy`, `external`, or `internal`. The `excerpt` is what makes the import
 auditable rather than a rewrite: a reviewer can see the sentence the record claims to be
-a structured form of, without opening the legacy file.
+a structured form of, without opening the legacy file. The `path` is where the document
+was read from; the `document` id is the word-for-word copy `akr import` saved into
+`sources/` automatically, so the excerpt stays verifiable after the original moves.
 
 **Progress is a `work` record.** One tracking record per legacy document, whose
 acceptance checks enumerate the disposition of its durable claims. Migration then shows
@@ -104,8 +107,10 @@ prose and proposing a structure is drafting, and everything it proposes is revie
 
 ### Step 3 — Draft records
 
-`akr import` writes one `proposed` record per extracted claim, each with a
-`source { kind legacy … }` block carrying the path and the excerpt.
+`akr import` first saves the document itself into `sources/` word for word,
+content-hashed and reused by hash on re-import, then writes one `proposed`
+record per extracted claim, each with a `source { kind legacy … }` block
+carrying the path, the saved copy's `document` id, and the excerpt.
 
 Everything lands in `proposed` state (`AKR-M042` if not), which matters for two reasons:
 `proposed` revisions are not sealed and may be edited freely during review (D-015), and a
@@ -155,6 +160,11 @@ should know. Both checks are *anchored on the tracking record*; a bare `source {
 legacy }` citation with no tracker is §2 provenance, not a migration, and the audit
 leaves it alone (see §4).
 
+At import time, a link inside the imported document that resolves to a live file with
+no saved copy in `sources/` is `AKR-M023`, also a warning: a plain path with no
+immutable copy behind it is tomorrow's dead link, so register it with `akr source add`
+while the bytes are still there.
+
 ## 4. The tracking record pattern
 
 One `work` record per migrated document. Its acceptance checks are the disposition list.
@@ -163,7 +173,7 @@ Shape, following the constructs of [`../spec/exemplar.akr`](../spec/exemplar.akr
 
 - `title` — "Import the legacy roadmap"
 - `intent` — what the document is and why it is being migrated
-- `source { kind legacy path "…" }` — the document itself
+- `source { kind legacy path "…" document "…" }` — the document itself, with its saved copy's id
 - `acceptance` with one `check` per durable claim found, each with a `statement` naming
   the claim, `method manual`, and `verified_by` filled in as claims are dispositioned
 
@@ -383,6 +393,7 @@ The full registry is
 | `AKR-M013` | Imported key's namespace is not declared |
 | `AKR-M021` | Imported record lacks a `source { kind legacy }` block |
 | `AKR-M022` | Legacy source path does not exist at HEAD (warning) |
+| `AKR-M023` | Linked path has no saved copy in `sources/` (warning) |
 | `AKR-M031` | No tracking work record for an imported document |
 | `AKR-M032` | Legacy document archived while its tracking record is incomplete |
 | `AKR-M041` | Import produced warnings under the strict profile |

@@ -6,9 +6,13 @@
 //!    draft claim per heading, verbatim excerpts. `AKR-M001`/`AKR-M002` end it here.
 //! 2. **Plan** — keys are proposed from `--namespace` (or the document's location) and
 //!    checked against the ledger (`AKR-M012`, `AKR-M013`); the document's own dead links
-//!    become `AKR-M022` warnings; an empty extraction is `AKR-M011`.
-//! 3. **Write** — one `akr_core::ops::import` call: every drafted record, the tracking
-//!    record and its checks in a single validated, atomic write.
+//!    become `AKR-M022` warnings, and live links with no saved copy in `sources/`
+//!    become `AKR-M023`; an empty extraction is `AKR-M011`.
+//! 3. **Write** — the document is saved into the source library first (word for word,
+//!    content-hashed, reused by hash on re-import), then one `akr_core::ops::import`
+//!    call writes every drafted record, the tracking record and its checks in a single
+//!    validated, atomic write, each `source` block carrying both the legacy `path` and
+//!    the saved copy's `document` id.
 //!
 //! `--lenient` is the one place warnings are downgraded (D-013), and it changes the exit
 //! status only: the warning list is identical with and without it. Without it, any
@@ -75,7 +79,11 @@ pub fn run(
 
     // Phase 2 — plan.
     let namespace = namespace.map_or_else(|| namespace_of(&document), str::to_owned);
-    let mut warnings = link_warnings(session, &source, &extraction);
+    // The catalog answers both "which links are already saved?" (M023) and "is the
+    // document itself already saved?" (the plan note). Unreadable means unknown,
+    // which warns rather than fails — the write itself re-reads it strictly.
+    let catalog = akr_core::source::load_catalog(&session.root).unwrap_or_default();
+    let mut warnings = link_warnings(session, &source, &extraction, &catalog);
     if extraction.claims.is_empty() {
         warnings.push(warning(
             migration::M011,
@@ -165,6 +173,7 @@ pub fn run(
         for diagnostic in &warnings {
             text_out.push_str(&akr_core::diagnostics::render(diagnostic, &session.sources));
         }
+        text_out.push_str(&save_preview_note(&document, &text, &catalog));
         let reason = if dry_run {
             "--dry-run"
         } else if gated {
@@ -180,11 +189,16 @@ pub fn run(
         );
     }
 
-    // Phase 3 — write, as one operation.
+    // Phase 3 — write. The source copy lands first, so the records never cite an id
+    // the catalog does not have; a refused ledger write leaves at most an orphan
+    // source, which registers no records and harms nothing.
+    let (source_id, was_new) =
+        crate::source::ensure_registered(&session.root, &source.absolute, text.as_bytes())?;
     let request = ImportRequest {
         document: source.document,
         records,
         tracking,
+        source_document: Some(source_id.clone()),
     };
     let mut output = crate::write::render(
         session,
@@ -194,6 +208,11 @@ pub fn run(
         let mut combined = text_out;
         for diagnostic in &warnings {
             combined.push_str(&akr_core::diagnostics::render(diagnostic, &session.sources));
+        }
+        if was_new {
+            combined.push_str(&format!("registered source {source_id}\n"));
+        } else {
+            combined.push_str(&format!("reusing saved source {source_id}\n"));
         }
         combined.push_str(&output.text);
         combined
@@ -311,11 +330,16 @@ fn resolve_source(session: &Session, path: &Path) -> SourceLocation {
     }
 }
 
-/// `AKR-M022` for every relative link in the document that resolves to nothing.
+/// `AKR-M022` for every relative link in the document that resolves to nothing, and
+/// `AKR-M023` for every one that resolves to a file with no saved copy in `sources/`.
+///
+/// A live plain path is tomorrow's dead link: the M023 warning names it while the bytes
+/// are still there to save with `akr source add`.
 fn link_warnings(
     session: &Session,
     source: &SourceLocation,
     extraction: &Extraction,
+    catalog: &[akr_core::source::SourceDocument],
 ) -> Vec<Diagnostic> {
     let base = source.absolute.parent().unwrap_or(Path::new(""));
     let head = session
@@ -341,9 +365,53 @@ fn link_warnings(
                     document = source.document
                 ),
             ));
+            continue;
+        }
+        // Live but unsaved: an old-style link with no immutable copy behind it.
+        let saved = std::fs::read(&check).is_ok_and(|bytes| {
+            let hash = akr_core::source::hash_bytes(&bytes);
+            catalog.iter().any(|d| {
+                d.content_hash == hash
+                    && d.availability == akr_core::source::SourceAvailability::Full
+            })
+        });
+        if !saved {
+            out.push(
+                warning(
+                    migration::M023,
+                    format!(
+                        "source path \"{}\" has no saved copy in sources/ \
+                         ({document}:{}:{})",
+                        target.display(),
+                        link.line,
+                        link.column,
+                        document = source.document
+                    ),
+                )
+                .with_help("register it with `akr source add` before it moves"),
+            );
         }
     }
     out
+}
+
+/// The plan note about the document's own saved copy, for runs that write nothing.
+///
+/// A dry run (or a gated or empty one) must not register anything, but it can still
+/// say whether the copy is already there or would be created.
+fn save_preview_note(
+    document: &str,
+    text: &str,
+    catalog: &[akr_core::source::SourceDocument],
+) -> String {
+    let hash = akr_core::source::hash_bytes(text.as_bytes());
+    if let Some(existing) = catalog.iter().find(|d| {
+        d.content_hash == hash && d.availability == akr_core::source::SourceAvailability::Full
+    }) {
+        format!("saved copy already registered as source {}\n", existing.id)
+    } else {
+        format!("would save {document} as a source on import\n")
+    }
 }
 
 /// Lexical `..`/`.` resolution, for paths that may not exist.

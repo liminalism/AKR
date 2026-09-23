@@ -109,6 +109,129 @@ pub fn add(
     Ok(Output::plain(text, result))
 }
 
+/// Ensures `bytes` are registered as a source, returning `(id, was_new)`.
+///
+/// `akr import` calls this for the imported document, so the excerpts it writes stay
+/// verifiable after the original moves or is archived. Identical bytes already
+/// registered as `full` are reused by content hash; otherwise a word-for-word copy is
+/// stored under `sources/external/` like [`add`], with `origin internal-reference`
+/// (legacy material the project preserves, not outside advice) and a `supersedes` link
+/// to the previous version of the same file, when there is one.
+pub fn ensure_registered(
+    workspace_root: &Path,
+    original: &Path,
+    bytes: &[u8],
+) -> Result<(String, bool), EnvError> {
+    let content_hash = source::hash_bytes(bytes);
+    let byte_len = bytes.len() as u64;
+    let mut catalog = source::load_catalog(workspace_root).map_err(to_env)?;
+
+    // Identical bytes already saved: reuse, so re-importing does not duplicate.
+    // Only `full` entries count — a finalized copy no longer has the text an
+    // excerpt would need to verify against.
+    if let Some(existing) = catalog
+        .iter()
+        .find(|d| d.content_hash == content_hash && d.availability == SourceAvailability::Full)
+    {
+        return Ok((existing.id.clone(), false));
+    }
+
+    let short = short_hash(&content_hash);
+    let file_stem = original
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("imported-document");
+    let stem_base = sanitize_id(file_stem);
+    let stem_base = if stem_base.is_empty() {
+        "imported-document".to_owned()
+    } else {
+        stem_base
+    };
+    let mut safe_id = sanitize_id(&format!("{stem_base}--{short}"));
+    if safe_id.is_empty() {
+        safe_id = format!("imported-document--{short}");
+    }
+    // A derived id that already names different bytes (a short-hash collision, or a
+    // previous version under the same name) gets a version suffix, never an overwrite.
+    if catalog.iter().any(|d| d.id == safe_id) {
+        let mut n = 2usize;
+        while catalog.iter().any(|d| d.id == format!("{safe_id}-v{n}")) {
+            n += 1;
+        }
+        safe_id = format!("{safe_id}-v{n}");
+    }
+
+    // Link to the previous version of the same file, when there is one: the head of
+    // the same-stem chain, i.e. the candidate no other entry supersedes.
+    let supersedes = {
+        let prefix = format!("{stem_base}-");
+        let candidates: Vec<&SourceDocument> = catalog
+            .iter()
+            .filter(|d| d.id == stem_base || d.id.starts_with(&prefix))
+            .collect();
+        let mut heads: Vec<&SourceDocument> = candidates
+            .iter()
+            .filter(|c| {
+                !catalog
+                    .iter()
+                    .any(|d| d.supersedes.as_deref() == Some(&c.id))
+            })
+            .copied()
+            .collect();
+        if heads.is_empty() {
+            heads = candidates;
+        }
+        heads
+            .into_iter()
+            .max_by(|a, b| (&a.added_at, &a.id).cmp(&(&b.added_at, &b.id)))
+            .filter(|c| c.content_hash != content_hash)
+            .map(|c| c.id.clone())
+    };
+
+    let file_name = format!("{safe_id}--{short}.md");
+    let rel_path = PathBuf::from("sources").join("external").join(&file_name);
+    let dest = workspace_root.join(&rel_path);
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            EnvError::new(
+                "AKR-C042",
+                format!("cannot create {}: {e}", parent.display()),
+            )
+        })?;
+    }
+    if dest.exists() {
+        return Err(EnvError::new(
+            "AKR-C042",
+            format!("{} already exists", dest.display()),
+        ));
+    }
+    std::fs::write(&dest, bytes)
+        .map_err(|e| EnvError::new("AKR-C042", format!("cannot write {}: {e}", dest.display())))?;
+
+    let title = original
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(&safe_id)
+        .to_owned();
+    catalog.push(SourceDocument {
+        id: safe_id.clone(),
+        title,
+        origin: SourceOrigin::InternalReference,
+        media_type: "text/markdown".into(),
+        path: rel_path.to_string_lossy().replace('\\', "/"),
+        content_hash,
+        byte_len,
+        added_at: today_iso(),
+        observed_at: None,
+        scope: None,
+        supersedes,
+        availability: SourceAvailability::Full,
+        fragments: Vec::new(),
+    });
+    source::save_catalog(workspace_root, &catalog).map_err(to_env)?;
+    Ok((safe_id, true))
+}
+
 /// `akr source list`
 pub fn list(session: &Session, all: bool) -> Result<Output, EnvError> {
     let catalog = source::load_catalog(&session.root).map_err(to_env)?;

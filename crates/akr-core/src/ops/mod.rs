@@ -998,6 +998,12 @@ pub struct ImportRequest {
     pub records: Vec<ImportedRecord>,
     /// The tracking `work` record (D-022). Created if absent.
     pub tracking: LogicalKey,
+    /// The registered source id for the imported document, when the caller saved it.
+    ///
+    /// The CLI auto-registers the document on import so the excerpt stays verifiable
+    /// after the original moves; every `source` block then carries both the legacy
+    /// `path` and this `document` id. `None` keeps the old path-only form.
+    pub source_document: Option<String>,
 }
 
 /// Drafts every record of a legacy document and its tracking record in one write.
@@ -1064,9 +1070,11 @@ pub fn import(context: &WriteContext, request: &ImportRequest) -> WriteResult {
         path: Some(request.document.clone()),
         url: None,
         excerpt: Some(excerpt.to_owned()),
-        // Legacy migration cites a path, not a registered document: the whole point of
-        // that workflow is that the original is on its way out (D-022).
-        document: None,
+        // The caller auto-saves the document into the source library, so the block
+        // carries both the legacy path and the immutable copy's id. The path keeps
+        // the D-022 reading position; the document id keeps the excerpt verifiable
+        // after the original moves or is archived.
+        document: request.source_document.clone(),
         range: None,
         use_note: None,
     };
@@ -1182,14 +1190,22 @@ pub fn import(context: &WriteContext, request: &ImportRequest) -> WriteResult {
                 .filter(|c| !existing.contains(c.id.as_str())),
         );
         acceptance.checks.sort_by(|a, b| a.id.cmp(&b.id));
-        if !record
+        match record
             .sources
-            .iter()
-            .any(|s| s.kind == SourceKind::Legacy && s.path.as_deref() == Some(&request.document))
+            .iter_mut()
+            .find(|s| s.kind == SourceKind::Legacy && s.path.as_deref() == Some(&request.document))
         {
-            let mut source = source_block("");
-            source.excerpt = None;
-            record.sources.push(source);
+            Some(existing) => {
+                // An old path-only import gains the saved copy's id on re-import.
+                if existing.document.is_none() {
+                    existing.document.clone_from(&request.source_document);
+                }
+            }
+            None => {
+                let mut source = source_block("");
+                source.excerpt = None;
+                record.sources.push(source);
+            }
         }
 
         if head.is_sealed() {

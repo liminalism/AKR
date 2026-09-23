@@ -517,3 +517,149 @@ fn active_work_shows_a_draft_once_its_tracking_check_is_dispositioned() {
         "a dispositioned draft is the project's plan and must be visible again:\n{view}"
     );
 }
+
+// -------------------------------------------------------------------------------------
+// auto-save: the imported document is registered as a source
+// -------------------------------------------------------------------------------------
+
+#[test]
+fn import_saves_the_document_and_cites_the_saved_copy() {
+    let example = with_corpus("import-autosave");
+    let run = import(&example, &[]);
+    assert_eq!(run.code, 0, "{}", run.output());
+    assert!(
+        run.stdout.contains("registered source"),
+        "the write reports the saved copy:\n{}",
+        run.stdout
+    );
+
+    // The stored copy is word for word, tracked by content hash.
+    let hash = akr_core::source::hash_bytes(CORPUS.as_bytes());
+    let catalog = example.read_file("sources/catalog.json");
+    assert!(
+        catalog.contains(&hash),
+        "the catalog tracks the imported bytes:\n{catalog}"
+    );
+    let external: Vec<_> = std::fs::read_dir(example.root().join("sources/external"))
+        .expect("sources/external")
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .collect();
+    assert_eq!(external.len(), 1, "one saved copy: {external:?}");
+    let stored = std::fs::read_to_string(&external[0]).expect("the stored copy reads");
+    assert_eq!(stored, CORPUS, "the saved copy is word for word");
+
+    // Every imported record cites both the legacy path and the saved copy.
+    let staged =
+        akr_core::ops::Staged::load(&example.root().join(".akr")).expect("the ledger loads");
+    let imported: Vec<_> = staged
+        .ledger
+        .records()
+        .iter()
+        .filter(|record| {
+            record
+                .sources
+                .iter()
+                .any(|source| source.path.as_deref() == Some(DOCUMENT))
+        })
+        .collect();
+    assert_eq!(imported.len(), 5, "four claims and the tracking record");
+    for record in &imported {
+        let source = record
+            .sources
+            .iter()
+            .find(|source| source.kind == akr_core::model::SourceKind::Legacy)
+            .unwrap_or_else(|| panic!("{} has no legacy source", record.id));
+        let document = source
+            .document
+            .as_deref()
+            .unwrap_or_else(|| panic!("{} cites the path but no saved copy", record.id));
+        assert!(
+            catalog.contains(document),
+            "{} cites {document:?}, which is not registered:\n{catalog}",
+            record.id
+        );
+    }
+
+    // The citations resolve: the strict check finds nothing to say.
+    assert_eq!(example.run(&["build"]).code, 0);
+    let check = example.run(&["check"]);
+    assert_eq!(check.code, 0, "{}", check.output());
+}
+
+#[test]
+fn import_warns_m023_for_a_live_link_with_no_saved_copy() {
+    let example = Example::materialise("import-m023");
+    example.write_file("docs/legacy/PLAN-v1.md", "# The plan\n\nIt exists.\n");
+    example.write_file(DOCUMENT, CORPUS);
+    let dry = example.run(&[
+        "--lenient",
+        "import",
+        DOCUMENT,
+        "--namespace",
+        "sys",
+        "--dry-run",
+    ]);
+    assert_eq!(dry.code, 0, "{}", dry.output());
+    assert!(
+        dry.output().contains("AKR-M023"),
+        "a live unsaved link warns:\n{}",
+        dry.output()
+    );
+    assert!(
+        dry.output().contains("akr source add"),
+        "the warning says how to save it:\n{}",
+        dry.output()
+    );
+
+    // Registering the linked file silences the warning.
+    let added = example.run(&["source", "add", "docs/legacy/PLAN-v1.md"]);
+    assert_eq!(added.code, 0, "{}", added.output());
+    let quiet = example.run(&[
+        "--lenient",
+        "import",
+        DOCUMENT,
+        "--namespace",
+        "sys",
+        "--dry-run",
+    ]);
+    assert_eq!(quiet.code, 0, "{}", quiet.output());
+    assert!(
+        !quiet.output().contains("AKR-M023"),
+        "a saved link stops warning:\n{}",
+        quiet.output()
+    );
+}
+
+#[test]
+fn identical_bytes_reuse_the_saved_copy() {
+    let example = with_corpus("import-reuse");
+    let first = import(&example, &[]);
+    assert_eq!(first.code, 0, "{}", first.output());
+    assert!(
+        first.stdout.contains("registered source"),
+        "the first import saves:\n{}",
+        first.stdout
+    );
+
+    // Identical bytes under a different name and namespace: new keys, same source.
+    example.write_file("docs/legacy/OLD-NOTES-COPY.md", CORPUS);
+    let second = example.run(&[
+        "--lenient",
+        "import",
+        "docs/legacy/OLD-NOTES-COPY.md",
+        "--namespace",
+        "sim",
+    ]);
+    assert_eq!(second.code, 0, "{}", second.output());
+    assert!(
+        second.stdout.contains("reusing saved source"),
+        "identical bytes reuse the copy:\n{}",
+        second.stdout
+    );
+
+    let external: Vec<_> = std::fs::read_dir(example.root().join("sources/external"))
+        .expect("sources/external")
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .collect();
+    assert_eq!(external.len(), 1, "no duplicate copy: {external:?}");
+}
