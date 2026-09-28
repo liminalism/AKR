@@ -571,6 +571,8 @@ pub mod codes {
         pub const M021: Code = Code::new("AKR-M021");
         /// A legacy source path does not exist at HEAD (warning).
         pub const M022: Code = Code::new("AKR-M022");
+        /// A legacy source path has no saved copy in the source library (warning).
+        pub const M023: Code = Code::new("AKR-M023");
         /// An imported document has no tracking work record.
         pub const M031: Code = Code::new("AKR-M031");
         /// A legacy document was archived while its tracking record is incomplete.
@@ -582,7 +584,7 @@ pub mod codes {
 
         /// Every migration code this crate raises.
         pub const ALL: &[Code] = &[
-            M001, M002, M011, M012, M013, M021, M022, M031, M032, M041, M042,
+            M001, M002, M011, M012, M013, M021, M022, M023, M031, M032, M041, M042,
         ];
     }
 }

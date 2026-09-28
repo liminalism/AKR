@@ -72,9 +72,14 @@ fn is_token_char(c: char) -> bool {
 /// underscore between two skipped uppercase runs. That token used to be kept (it
 /// "contains `_`") and then fed to `git grep -o -F -e _`, which emits every underscore
 /// in the tracked tree — 2.9 million matches on SaveYourSkin, and a 10–30 minute hang
-/// on `akr check`. A filter that names a test has a letter in it.
+/// on `akr check`. A filter that names a test has a letter in it. A token that is only
+/// underscores (`cargo test -- _`, a filter for "everything") likewise names no test;
+/// two identifier characters around the underscore is the floor, so one-letter needles
+/// that would still match everywhere are also dropped.
 fn is_test_filter_token(token: &str) -> bool {
-    (token.contains('_') || token.contains("::")) && token.chars().any(|c| c.is_ascii_lowercase())
+    (token.contains('_') || token.contains("::"))
+        && token.chars().any(|c| c.is_ascii_lowercase())
+        && token.trim_matches('_').len() >= 2
 }
 
 /// The pieces of a token that must be found in source for it to count as present.

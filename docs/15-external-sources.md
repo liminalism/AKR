@@ -49,6 +49,11 @@ It proposes nothing. An outside report is source material until the project deci
 something with it, and a workflow that turned every heading into a `proposed` work record
 would fill `ACTIVE-WORK.md` with somebody else's opinions.
 
+`akr import` is the one caller that both saves and proposes: it registers the legacy
+document exactly as above (origin `internal-reference`, reused by hash on re-import)
+and then drafts its claims with the saved copy's id in every `source` block
+(`docs/12-migration.md` §3).
+
 `akr source list`, `akr source get <id> [--whole|--lines a:b|--section "heading"]`. With
 `--lines`, the output also carries the exact citation locator for that range — see §7.
 
