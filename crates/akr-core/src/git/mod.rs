@@ -1256,11 +1256,23 @@ impl Repository {
     /// shape of the bridge (`docs/16-change-protocol.md` §1): AKR leads the intent, git
     /// seals the snapshot.
     ///
+    /// The commit moves `HEAD` and empties the index, so the entries this handle
+    /// memoized for the old snapshot are dropped before `HEAD` is re-read. Without
+    /// that the shared memo — which is only discarded when the *next* handle opens —
+    /// answered with the previous commit, and `akr git commit` printed the old hash
+    /// beside the new subject. Entries keyed by commit id stay valid: history only
+    /// grows.
+    ///
     /// # Errors
     /// [`GitError::CommandFailed`] when the commit is refused — an empty index, a failing
     /// hook, or an unconfigured identity.
     pub fn commit(&self, message: &str) -> Result<Commit, GitError> {
         self.run(&["commit", "-m", message])?;
+        self.memo(|memo| {
+            memo.revisions.remove("HEAD");
+            memo.session = None;
+            memo.worktree = None;
+        });
         self.head()
     }
 

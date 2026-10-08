@@ -41,7 +41,7 @@ pub enum Exit {
     Environment = 3,
 }
 
-/// An environment failure: exit status 3.
+/// A failure outside the ledger: exit status 2 or 3, decided by the code.
 #[derive(Debug, Clone)]
 pub struct EnvError {
     /// The `AKR-C0nn` or `AKR-G0nn` code.
@@ -59,6 +59,24 @@ impl EnvError {
             code,
             message: message.into(),
             help: None,
+        }
+    }
+
+    /// The process exit for this failure (`docs/07-cli.md` §3).
+    ///
+    /// Usage codes — `AKR-C001`–`AKR-C005` and `AKR-C041`, the malformed
+    /// invocation — exit 2 even when they surface after the workspace has been
+    /// read. Everything else is an unusable checkout and exits 3. The mapping
+    /// used to be unconditional 3, so a caller branching on status read
+    /// `evidence add --result nope` (a bad flag value) as a broken checkout
+    /// (`akr.papercut.every-akr-c0nn-usage-refusal-raised-through`).
+    #[must_use]
+    pub fn exit(&self) -> Exit {
+        match self.code {
+            "AKR-C001" | "AKR-C002" | "AKR-C003" | "AKR-C004" | "AKR-C005" | "AKR-C041" => {
+                Exit::Usage
+            }
+            _ => Exit::Environment,
         }
     }
 

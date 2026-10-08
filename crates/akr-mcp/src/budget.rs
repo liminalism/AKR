@@ -142,6 +142,22 @@ pub fn enforce(
 
 /// How to ask this tool for less. Concrete arguments, not "try narrowing your query".
 fn narrowing_advice(tool: &str, arguments: &Value) -> String {
+    // A body read already at `relations: false` has no narrower MCP form left;
+    // repeating the same advice loops. Name the complete-read path instead: the
+    // CLI has no preview ceiling.
+    if tool == "knowledge.get"
+        && arguments.get("detail").and_then(Value::as_str) != Some("canonical")
+        && arguments.get("relations").and_then(Value::as_bool) == Some(false)
+    {
+        let reference = arguments
+            .get("ref")
+            .and_then(Value::as_str)
+            .unwrap_or("<ref>");
+        return format!(
+            "Nothing narrower keeps the record text. For the full text, use the \
+             CLI, which has no preview ceiling: `akr get {reference} --detail body`."
+        );
+    }
     match tool {
         "knowledge.search" | "knowledge.source_search" => {
             "Call again with a smaller `limit`, or narrow with `kinds`, `states` or \
@@ -636,6 +652,38 @@ mod tests {
         assert!(
             enforced.text.expect("a summary").contains("detail"),
             "the text half has to carry the advice too"
+        );
+    }
+
+    #[test]
+    fn a_minimal_body_read_names_the_cli_instead_of_looping() {
+        // `detail: body` with `relations: false` is the smallest form that keeps
+        // the record text. Advising `relations: false` again loops; the way out
+        // is the CLI, which has no preview ceiling.
+        let enforced = enforce(
+            "knowledge.get",
+            None,
+            &big(400),
+            None,
+            &Value::object(vec![
+                ("ref", Value::string("@sys.term.example/1")),
+                ("detail", Value::string("body")),
+                ("relations", Value::bool(false)),
+            ]),
+        );
+        assert!(enforced.truncated);
+        let help = enforced
+            .structured
+            .get("help")
+            .and_then(Value::as_str)
+            .expect("advice");
+        assert!(
+            help.contains("`akr get @sys.term.example/1 --detail body`"),
+            "{help}"
+        );
+        assert!(
+            !help.contains("relations: false"),
+            "must not re-advise what the caller already passed: {help}"
         );
     }
 

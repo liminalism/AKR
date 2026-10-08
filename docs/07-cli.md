@@ -607,13 +607,17 @@ argument is neither a registered code nor a known rule.
 ### `akr propose`
 
 ```
-akr propose <key> --kind <kind> [--title <text>] [--from <file>] [--edit]
+akr propose <key> [--kind <kind>] [--title <text>] [--from <file>] [--edit]
 ```
 
 Creates revision 1 of a new key in the initial state of its class — `proposed` for
 normative and planning kinds, `open` for `question`, `verified` for empirical kinds,
 which have no proposal state. Writes into the conventional file for the key's namespace
 and kind group, creating it if needed.
+
+`--kind` is optional when `--from` names a whole file or a bare `record` block: the
+kind on the record line is used. A slot-list fragment declares no kind, so it still
+needs the flag, as does a propose with no `--from` at all.
 
 An existing key is an error: use `akr revise`. An undeclared namespace is `AKR-L004`.
 The write pipeline of §4 applies in full, so a proposal that would break the ledger is
@@ -805,7 +809,7 @@ Nothing is deleted; the record stays, terminal, and its references keep resolvin
 ### `akr papercut`
 
 ```
-akr papercut -m <agent> "message" [--namespace <ns>]
+akr papercut -m <agent> "message" [--namespace <ns>] [--observed-at <commit>]
 akr papercut close <key> [--closed-at <YYYY-MM-DD>]
 akr papercut reset [--projects <dir>] [--namespace <ns>] [--dry-run]
 ```
@@ -820,7 +824,9 @@ where the project needs sanding down.
 The message is the whole ceremony. The key is allocated
 (`<namespace>.papercut.<slug-of-message>`, suffixed on collision), `observed_at`
 defaults to HEAD, the `-m` value lands in `author`, and the date in `created_at`. The
-write runs the full pipeline of §4 like every other write.
+write runs the full pipeline of §4 like every other write. `--observed-at` pins the
+observation to a commit other than HEAD; the commit must exist, as with
+`evidence add`.
 
 `--namespace` chooses where the key goes, and is never required. With several declared,
 the default is the namespace this project's papercuts already live in, by count; a

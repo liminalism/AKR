@@ -214,6 +214,30 @@ fn lock_check_agrees_with_the_lock_the_tool_writes() {
 }
 
 #[test]
+fn build_and_lock_report_the_lock_path_relative_to_the_repo_root() {
+    let example = Example::materialise("lock-path");
+    // The materialised example's lock is current, and a current lock prints
+    // "unchanged" instead of the path under test — so force a rewrite.
+    std::fs::remove_file(example.root().join(".akr/akr.lock")).expect("remove lock");
+    let build = example.run(&["build"]);
+    assert_eq!(build.code, 0, "{}", build.output());
+    assert!(
+        build.stdout.contains("wrote .akr/akr.lock"),
+        "build must name the repo-root-relative lock path:\n{}",
+        build.stdout
+    );
+
+    // `akr lock` always writes, so no setup is needed for the second message.
+    let lock = example.run(&["lock"]);
+    assert_eq!(lock.code, 0, "{}", lock.output());
+    assert!(
+        lock.stdout.contains("wrote .akr/akr.lock"),
+        "lock must name the repo-root-relative lock path:\n{}",
+        lock.stdout
+    );
+}
+
+#[test]
 fn init_scaffolds_a_workspace_and_never_overwrites() {
     let dir = std::env::temp_dir().join(format!("akr-p6-init-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);

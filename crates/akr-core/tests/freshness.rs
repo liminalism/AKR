@@ -461,6 +461,37 @@ fn a_directory_scope_matches_what_is_under_it() {
     assert!(diagnostics.iter().any(|d| d.code == codes::G023));
 }
 
+/// A scope over files that exist but are not committed yet is not a dead scope:
+/// the warning stays (the commit has not happened) but must not read as a
+/// repointing instruction for a scope that is already right.
+#[test]
+fn a_scope_glob_over_uncommitted_files_says_so() {
+    let mut repo = TempRepo::new("g023-uncommitted");
+    let head = repo.commit_file("src/lib.rs", "1\n", "base");
+    repo.write("engine/new/mod.rs", "// not committed yet\n");
+    let git = Repository::open(repo.root()).expect("opens");
+    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
+    ledger.insert(
+        RecordBuilder::new("fx.policy.new-scoped", 1, Kind::Policy)
+            .filled()
+            .state(State::Active)
+            .path_scope("engine/new/**")
+            .build(),
+    );
+    let diagnostics = unmatched_watches(&ledger, &git, &commit(&head)).expect("lists");
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].code, codes::G023);
+    assert!(
+        diagnostics[0]
+            .help
+            .as_deref()
+            .unwrap_or_default()
+            .contains("not committed yet"),
+        "{:?}",
+        diagnostics[0].help
+    );
+}
+
 #[test]
 fn a_scope_glob_matching_nothing_is_g023() {
     let mut repo = TempRepo::new("g023");

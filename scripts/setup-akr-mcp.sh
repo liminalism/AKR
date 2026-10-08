@@ -3,12 +3,13 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: setup-akr-mcp.sh [--repo-dir DIR] [--dry-run] [--no-claude] [--no-codex] [--no-opencode] [--no-agents] [--no-build] [--debug]
+Usage: setup-akr-mcp.sh [--repo-dir DIR] [--dry-run] [--no-claude] [--no-codex] [--no-opencode] [--no-muse] [--no-agents] [--no-build] [--debug]
 
 One-time setup for the AKR MCP server across:
 - AkR CLI build/install
 - Codex MCP config (~/.codex/config.toml)
 - OpenCode MCP config (~/.config/opencode/opencode.jsonc)
+- Muse MCP config (~/.config/muse/settings.json)
 - Claude MCP registration
 - The AKR section of the global agent instruction files
 
@@ -19,6 +20,7 @@ Options:
   --no-claude      Skip Claude registration
   --no-codex       Skip Codex config update
   --no-opencode    Skip OpenCode config update
+  --no-muse        Skip Muse config update
   --no-agents      Skip the agent instruction files
   --no-build       Install what is already in target/ without building first
   -h, --help       Show this help
@@ -33,6 +35,7 @@ DRY_RUN=0
 DO_CLAUDE=1
 DO_CODEX=1
 DO_OPENCODE=1
+DO_MUSE=1
 DO_AGENTS=1
 DO_BUILD=1
 USE_DEBUG=0
@@ -51,6 +54,8 @@ while [[ $# -gt 0 ]]; do
       DO_CODEX=0; shift ;;
     --no-opencode)
       DO_OPENCODE=0; shift ;;
+    --no-muse)
+      DO_MUSE=0; shift ;;
     --no-agents)
       DO_AGENTS=0; shift ;;
     --no-build)
@@ -225,6 +230,34 @@ if [[ "$DO_OPENCODE" -eq 1 ]]; then
       log "Updating OpenCode MCP section"
       TMPFILE="$(mktemp)"
       if [[ "$DRY_RUN" -eq 1 ]]; then log "DRY-RUN: update OpenCode MCP section"; else jq --arg cmd "$AKR_MCP_BIN" '.mcp.akr = { type: "local", command: [ $cmd ], enabled: true }' "$OPCFG" > "$TMPFILE" && mv "$TMPFILE" "$OPCFG"; fi
+    fi
+  fi
+fi
+
+# Update ~/.config/muse/settings.json
+if [[ "$DO_MUSE" -eq 1 ]]; then
+  MUSECFG="$HOME/.config/muse/settings.json"
+  if [[ ! -f "$MUSECFG" ]]; then
+    echo "warning: Muse config not found: $MUSECFG (skipping Muse update)"
+  elif ! command -v jq >/dev/null 2>&1; then
+    echo "warning: jq not found; skipping Muse config (install jq, or pass --no-muse to silence this)" >&2
+  elif jq -e --arg cmd "$AKR_MCP_BIN" '.mcpServers.akr.command == $cmd' "$MUSECFG" >/dev/null 2>&1; then
+    log "Muse already points at $AKR_MCP_BIN; leaving $MUSECFG alone"
+  else
+    log "Pointing the Muse akr server at $AKR_MCP_BIN"
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+      log "DRY-RUN: update the akr entry in $MUSECFG"
+    else
+      MUSE_TMP="$(mktemp)"
+      if jq --arg cmd "$AKR_MCP_BIN" '.mcpServers.akr = { type: "stdio", command: $cmd, args: [] }' "$MUSECFG" >"$MUSE_TMP"; then
+        cp "$MUSECFG" "$MUSECFG.bak"
+        mv "$MUSE_TMP" "$MUSECFG"
+      else
+        # A failed rewrite leaves neither a half-written config nor its
+        # staging file behind.
+        rm -f "$MUSE_TMP"
+        echo "warning: could not update $MUSECFG; leaving it untouched" >&2
+      fi
     fi
   fi
 fi
@@ -410,4 +443,4 @@ if [[ "$DO_CLAUDE" -eq 1 ]]; then
   fi
 fi
 
-log "Done. Restart Codex, Claude, and OpenCode to load updated MCP config."
+log "Done. Restart Codex, Claude, OpenCode, and Muse to load updated MCP config."

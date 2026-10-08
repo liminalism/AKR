@@ -276,7 +276,7 @@ fn evidence_add_refuses_an_incomplete_request_without_writing() {
     // A missing `--result` cannot even be turned into a request, so it never reaches the
     // pipeline; the guarantee is the same and is checked the same way.
     let run = example.run(&["evidence", "add", "sys.evidence.asset-audit"]);
-    assert_eq!(run.code, 3, "{}", run.output());
+    assert_eq!(run.code, 2, "{}", run.output());
     assert!(run.output().contains("AKR-C003"), "{}", run.output());
     assert_eq!(before, example.sources());
 
@@ -289,7 +289,7 @@ fn evidence_add_refuses_an_incomplete_request_without_writing() {
         "--method",
         "command",
     ]);
-    assert_eq!(bad.code, 3, "{}", bad.output());
+    assert_eq!(bad.code, 2, "{}", bad.output());
     assert!(bad.output().contains("AKR-C004"), "{}", bad.output());
     assert_eq!(before, example.sources());
 }
@@ -390,6 +390,55 @@ fn a_proposal_from_a_file_lands_and_checks_clean() {
     // after one. That is the sequence every write leaves behind.
     assert_eq!(example.run(&["build"]).code, 0);
     assert_eq!(example.run(&["check"]).code, 0);
+}
+
+#[test]
+fn a_proposal_without_kind_takes_it_from_the_file() {
+    let example = Example::materialise("write-propose-kindless");
+    let body = example.root().join("day-loop.akr");
+    std::fs::write(
+        &body,
+        "akr 0.1\nproject save-your-skin\n\nrecord sys.term.day-loop/1 : term {\n    \
+         title \"The day loop\"\n    state active\n    scope [ all ]\n    definition \"\"\"\n        \
+         The repeating structure of one in-game day: wake, work, evening, sleep.\n        \
+         \"\"\"\n    author \"test\"\n    created_at 2026-08-03\n}\n",
+    )
+    .expect("write body");
+
+    // The record line already says `: term`; demanding `--kind` as well was
+    // ceremony that broke the documented `propose <key> --from <file>` form.
+    let run = example.run(&[
+        "propose",
+        "sys.term.day-loop",
+        "--from",
+        body.to_str().expect("utf-8"),
+    ]);
+    assert_eq!(run.code, 0, "{}", run.output());
+    assert!(
+        example
+            .read_file(".akr/records/sys/terms.akr")
+            .contains("sys.term.day-loop/1")
+    );
+
+    // With neither the flag nor a declaring file, the kind is still required.
+    let run = example.run(&["propose", "sys.term.still-kindless"]);
+    assert_eq!(run.code, 2, "{}", run.output());
+    assert!(run.output().contains("AKR-C003"), "{}", run.output());
+}
+
+#[test]
+fn revise_accepts_the_revisioned_key_propose_printed() {
+    // `akr propose` answers `created sys.term.day-loop/1`, and that whole form is
+    // what gets pasted into the next command. The CLI has no `--base-rev`, so the
+    // suffix carries nothing and is stripped rather than refused.
+    let example = Example::materialise("write-revise-suffixed-key");
+    let run = example.run(&[
+        "revise",
+        "sys.term.playable-day/1",
+        "--title",
+        "A playable day",
+    ]);
+    assert_eq!(run.code, 0, "{}", run.output());
 }
 
 #[test]
@@ -783,6 +832,76 @@ fn the_json_form_carries_the_structured_refusal() {
     assert!(text.contains("\"unsatisfied_checks\""), "{text}");
     assert!(text.contains("\"id\": \"no-placeholder-assets\""), "{text}");
     assert!(text.contains("\"exit_code\": 1"), "{text}");
+}
+
+#[test]
+fn papercut_observed_at_pins_the_record_to_that_commit() {
+    let example = Example::materialise("write-papercut-observed-at");
+    let head = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(example.root())
+        .output()
+        .expect("git rev-parse runs");
+    let head = String::from_utf8_lossy(&head.stdout).trim().to_owned();
+    let run = example.run(&[
+        "papercut",
+        "-m",
+        "test",
+        "The widget froze twice in one session",
+        "--observed-at",
+        &head,
+    ]);
+    assert_eq!(run.code, 0, "{}", run.output());
+    let source = example.read_file(".akr/records/sys/papercuts.akr");
+    assert!(
+        source.contains(&format!("git:{head}")),
+        "observed_at pinned to {head}:\n{source}"
+    );
+
+    let run = example.run(&[
+        "papercut",
+        "-m",
+        "test",
+        "Another freeze",
+        "--observed-at",
+        "nope",
+    ]);
+    assert_eq!(run.code, 2, "{}", run.output());
+    assert!(run.output().contains("AKR-C004"), "{}", run.output());
+}
+
+#[test]
+fn papercut_close_marks_the_record_closed() {
+    let example = Example::materialise("write-papercut-close");
+    let logged = example.run(&["papercut", "-m", "test", "A friction worth closing"]);
+    assert_eq!(logged.code, 0, "{}", logged.output());
+    let key = logged
+        .stdout
+        .strip_prefix("created ")
+        .expect("created line")
+        .lines()
+        .next()
+        .expect("created id")
+        .trim()
+        .split_once('/')
+        .expect("revisioned id")
+        .0
+        .to_owned();
+    let closed = example.run(&["papercut", "close", &key]);
+    assert_eq!(closed.code, 0, "{}", closed.output());
+    assert!(
+        example
+            .read_file(".akr/records/sys/papercuts.akr")
+            .contains("closed_at"),
+        "close writes the closure marker"
+    );
+    let again = example.run(&["papercut", "close", &key]);
+    assert_eq!(again.code, 0, "{}", again.output());
+    assert!(
+        again.output().contains("already closed"),
+        "{}",
+        again.output()
+    );
 }
 
 // -------------------------------------------------------------------------------------

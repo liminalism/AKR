@@ -72,7 +72,10 @@ pub fn run(session: &Session, command: &Command) -> Result<Output, EnvError> {
             from,
         } => {
             let key = parse_key(key)?;
-            let kind = parse_kind(kind)?;
+            let kind = match kind {
+                Some(text) => parse_kind(text)?,
+                None => kind_from_file(session, from.as_deref())?,
+            };
             let template = body_from(session, from.as_deref(), &key, kind)?.map(|body| body.record);
             if let Some(record) = &template {
                 ensure_commits_exist(session, &commits_named_by(record))?;
@@ -183,6 +186,7 @@ pub fn run(session: &Session, command: &Command) -> Result<Output, EnvError> {
             agent,
             namespace,
             about,
+            observed_at,
         } => papercut(
             session,
             &context,
@@ -190,6 +194,7 @@ pub fn run(session: &Session, command: &Command) -> Result<Output, EnvError> {
             agent.as_deref(),
             namespace.as_deref(),
             about.as_deref(),
+            observed_at.as_deref(),
         ),
         Command::PapercutClose { key, closed_at } => {
             papercut_close(session, &context, key, closed_at.as_deref())
@@ -722,6 +727,7 @@ pub fn papercut(
     agent: Option<&str>,
     namespace: Option<&str>,
     about: Option<&str>,
+    observed_at: Option<&str>,
 ) -> Result<Output, EnvError> {
     let agent = match agent {
         Some(agent) => agent.to_owned(),
@@ -732,10 +738,28 @@ pub fn papercut(
             ));
         }
     };
-    let commit = session
-        .commit
-        .clone()
-        .ok_or_else(|| missing_commit(session, false))?;
+    // `--observed-at` pins the observation to a commit other than HEAD — the escape
+    // the no-commit refusal already names, though the flag did not exist until now.
+    // The commit must still be real: the same existence rule `evidence add` keeps,
+    // so a repository with no commits at all still has nothing to log against.
+    let commit = match observed_at {
+        Some(text) => Commit::new(text)
+            .map_err(|_| {
+                EnvError::new(
+                    "AKR-C004",
+                    format!("--observed-at: {text:?} is not 40 lowercase hex digits"),
+                )
+                .help("AKR takes full commit hashes, never abbreviations (D-008)")
+            })
+            .and_then(|commit| {
+                ensure_commits_exist(session, std::slice::from_ref(&commit))?;
+                Ok(commit)
+            })?,
+        None => session
+            .commit
+            .clone()
+            .ok_or_else(|| missing_commit(session, true))?,
+    };
     let key = akr_core::papercut::allocate_key(&session.ledger, namespace, message)
         .map_err(|e| EnvError::new("AKR-C004", e.to_string()))?;
     let request = akr_core::papercut::LogPapercut {
@@ -1036,7 +1060,13 @@ fn git_author(session: &Session) -> Option<String> {
 }
 
 pub(crate) fn parse_key(text: &str) -> Result<LogicalKey, EnvError> {
+    // `akr propose` answers with the revision it wrote (`created sys.term.day/1`),
+    // and that whole form is what gets pasted into the next command. The revision
+    // is noise on this surface — the CLI has no `--base-rev`, every write acts on
+    // the head — so it is stripped, as `knowledge.*` already does. A revision that
+    // is not the head is therefore silently accepted; naming one never pins.
     let trimmed = text.strip_prefix('@').unwrap_or(text);
+    let trimmed = trimmed.split_once('/').map_or(trimmed, |(key, _)| key);
     LogicalKey::parse(trimmed).map_err(|e| {
         EnvError::new("AKR-C004", format!("{text:?} is not a key: {e}")).help(
             "keys are dot-delimited — namespace.topic.slug — and the first segment must \
@@ -1192,6 +1222,62 @@ fn body_from(
         .cloned()
         .ok_or_else(|| EnvError::new("AKR-C031", format!("{} holds no record", path.display())))?;
     Ok(Some(FromBody { record, mentioned }))
+}
+
+/// The kind a propose takes from its `--from` file when `--kind` is absent.
+///
+/// A whole file or a bare `record … : <kind> { … }` block already declares the
+/// kind on its record line, so demanding the flag as well was ceremony — and the
+/// documented `akr propose <key> --from <file>` form failed `AKR-C003` for it
+/// (`akr.papercut.agents-md-maps-knowledge-propose-to-akr-propose`). A slot list
+/// declares nothing and still needs the flag, as does a file that does not parse
+/// (whose real diagnostic [`body_from`] reports once the flag is supplied).
+fn kind_from_file(session: &Session, from: Option<&Path>) -> Result<Kind, EnvError> {
+    let Some(path) = from else {
+        return Err(EnvError::new("AKR-C003", "propose requires --kind <kind>")
+            .help("or pass --from <file> with a record that declares one"));
+    };
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| EnvError::new("AKR-C042", format!("cannot read {}: {e}", path.display())))?;
+    let first = text
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with('#'));
+    let with_header = match first {
+        Some(line) if line.starts_with("akr ") || line.starts_with("akr-lock ") => text,
+        Some(line) if line.starts_with("record ") => format!(
+            "akr {}\nproject {}\n\n{text}",
+            crate::session::GRAMMAR_VERSION,
+            session.ledger.project.name
+        ),
+        _ => {
+            return Err(EnvError::new(
+                "AKR-C003",
+                format!("propose needs a kind: {} declares none", path.display()),
+            )
+            .help(
+                "pass --kind <kind>, or a --from file starting with `record <key>/1 : <kind> {`",
+            ));
+        }
+    };
+    let mut sources = akr_core::diagnostics::SourceMap::new();
+    let display_path = path.to_string_lossy().into_owned();
+    let file = sources.add(&display_path, &with_header);
+    let parsed = akr_core::syntax::parse(&with_header, file);
+    let kind = parsed.file.and_then(|tree| {
+        akr_core::syntax::lower::lower_all(&[(display_path, tree)])
+            .0
+            .records()
+            .first()
+            .map(|record| record.kind)
+    });
+    kind.ok_or_else(|| {
+        EnvError::new(
+            "AKR-C003",
+            format!("propose needs a kind: {} declares none", path.display()),
+        )
+        .help("pass --kind <kind>, or a --from file starting with `record <key>/1 : <kind> {`")
+    })
 }
 
 fn mentioned_slots(tree: &akr_core::syntax::cst::File) -> BTreeSet<String> {

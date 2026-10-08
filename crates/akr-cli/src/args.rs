@@ -443,12 +443,13 @@ pub enum Command {
         /// The hook name.
         name: String,
     },
-    /// `akr propose <key> --kind <kind>`.
+    /// `akr propose <key> [--kind <kind>]`.
     Propose {
         /// The new key.
         key: String,
-        /// The record kind.
-        kind: String,
+        /// The record kind. Optional when `--from` names a file that declares
+        /// one on its record line.
+        kind: Option<String>,
         /// The title, when one is given.
         title: Option<String>,
         /// A file holding the record body.
@@ -505,6 +506,8 @@ pub enum Command {
         namespace: Option<String>,
         /// What the friction was with, when that is not this project (D-033).
         about: Option<String>,
+        /// The commit it happened at. Defaults to HEAD.
+        observed_at: Option<String>,
     },
     /// `akr papercut close <key>`.
     PapercutClose {
@@ -1236,8 +1239,7 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
             known_flags(&["--kind", "--title", "--from"])?;
             Command::Propose {
                 key: need(0, "a key")?,
-                kind: option_value(tail, "--kind")
-                    .ok_or_else(|| UsageError::new("AKR-C003", "propose requires --kind <kind>"))?,
+                kind: option_value(tail, "--kind"),
                 title: option_value(tail, "--title"),
                 from: option_value(tail, "--from").map(PathBuf::from),
             }
@@ -1327,10 +1329,12 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
             }
             if first_positional == Some("close") {
                 known_flags(&["--closed-at"])?;
+                // The subcommand word is skipped in the predicate, not filtered after
+                // the find: `find` stops at the first positional, which is `close`
+                // itself, so filtering afterwards closed nothing at all.
                 let key = tail
                     .iter()
-                    .find(|arg| !arg.starts_with('-'))
-                    .filter(|arg| arg.as_str() != "close")
+                    .find(|arg| !arg.starts_with('-') && arg.as_str() != "close")
                     .cloned()
                     .ok_or_else(|| UsageError::new("AKR-C003", "papercut close requires a key"))?;
                 return Ok(Command::PapercutClose {
@@ -1352,6 +1356,7 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
             let mut agent: Option<String> = None;
             let mut namespace: Option<String> = None;
             let mut about: Option<String> = None;
+            let mut observed_at: Option<String> = None;
             let mut args = tail.iter();
             let mut only_positionals = false;
             while let Some(arg) = args.next() {
@@ -1389,6 +1394,14 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
                             )
                         })?);
                     }
+                    "--observed-at" => {
+                        observed_at = Some(args.next().cloned().ok_or_else(|| {
+                            UsageError::new(
+                                "AKR-C003",
+                                "--observed-at requires a value: the full commit hash",
+                            )
+                        })?);
+                    }
                     other if other.starts_with('-') => {
                         return Err(UsageError::new(
                             "AKR-C002",
@@ -1413,6 +1426,7 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
                 agent,
                 namespace,
                 about,
+                observed_at,
             }
         }
         "evidence" => {
@@ -2686,7 +2700,7 @@ pub fn help_for(name: &str) -> Option<String> {
              \x20   close <ingest-id>      finalize and stop accepting edits\n"
         }
         "propose" => {
-            "akr propose <key> --kind <kind> [--title <text>] [--from <file>]\n\
+            "akr propose <key> [--kind <kind>] [--title <text>] [--from <file>]\n\
              \n\
              Creates revision 1 of a new key in its class's initial state. An existing\n\
              key is an error: use `akr revise`.\n\
@@ -2706,7 +2720,8 @@ pub fn help_for(name: &str) -> Option<String> {
              `akr explain <kind>` for the kind's required slots.\n\
              \n\
              FLAGS\n\
-             \x20   --kind <kind>     required; one of the twelve kinds\n\
+             \x20   --kind <kind>     one of the twelve kinds; optional when --from\n\
+             \x20                     names a file whose record line declares one\n\
              \x20   --title <text>    the one-line label\n\
              \x20   --from <file>     a file holding an AKR slot-list fragment\n"
         }
@@ -2759,6 +2774,7 @@ pub fn help_for(name: &str) -> Option<String> {
         }
         "papercut" => {
             "akr papercut -m <agent> \"message\" [--about <subject>] [--namespace <ns>]\n\
+             \x20                    [--observed-at <commit>]\n\
              akr papercut close <key> [--closed-at <YYYY-MM-DD>]\n\
              akr papercut reset [--projects <dir>] [--namespace <ns>] [--dry-run]\n\
              akr papercut collate [--projects <dir>] [--about <subject>]... [--all]\n\

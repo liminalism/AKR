@@ -794,6 +794,23 @@ record akr.work.desktop-review-gui/1 : work {
     part_of [ @akr.milestone.human-record-review/1 ]
 }
 
+record akr.work.diagnostic-text-sweep/1 : work {
+    title "CLI/MCP diagnostic-text sweep"
+    state proposed
+    intent """
+        Sweep of small CLI/MCP diagnostic-text and affordance gaps from the 2026-10-06
+        collated triage: complete 'does not record result pass' needs a cite-evidence
+        line (validate/rules.rs:1308); start recommended_context is JSON-only with no
+        copyable CLI line (commands.rs:3059); explain acceptance is unsupported; no flag
+        did-you-mean (--path/--paths); git log names no branch scope; empty search
+        returns 0 rather than an error; no evidence-add alias. Land together.
+        """
+    derived_from [
+        @akr.papercut.collated-17-papercuts-from-legeos,
+        @akr.papercut.collated-35-papercuts-from-kitchen-concept-lege
+    ]
+}
+
 record akr.work.errors-that-withhold-what-akr-already-knows/1 : work {
     title "Two errors that withhold what akr already knows: the MCP name and the workspace one level down"
     state completed
@@ -870,6 +887,23 @@ record akr.work.errors-that-withhold-what-akr-already-knows/1 : work {
             verified_by [ @akr.evidence.six-point-of-failure-fixes-20260908/1 ]
         }
     }
+}
+
+record akr.work.explain-registry-acceptance-parity/1 : work {
+    title "Reconcile akr explain with the registry and acceptance blocks"
+    state proposed
+    intent """
+        Reconcile akr explain with the diagnostic registry and extend it to acceptance
+        blocks. akr explain AKR-G023 prints the V-112 stale-view text (AKR-E015's) while
+        the registry and akr check define G023 as the V-102 scope rule (verified
+        2026-10-06): the lookup contradicts the code it documents. Fix the mapping and add
+        the missing explain route for acceptance-block grammar. From the 2026-10-06
+        collated triage.
+        """
+    derived_from [
+        @akr.papercut.collated-15-papercuts-from-evidence-intake,
+        @akr.papercut.collated-17-papercuts-from-legeos
+    ]
 }
 
 record akr.work.four-guidance-gaps-answered/1 : work {
@@ -1463,6 +1497,21 @@ record akr.work.mcp-transport-reliability/1 : work {
     derived_from [ @akr.papercut.collated-18-papercuts-from-evidence-intake/1 ]
 }
 
+record akr.work.nested-scratch-keeps-v025/1 : work {
+    title "Nested scratch keeps satisfy V-025"
+    state proposed
+    intent """
+        Nested scratch keeps should satisfy V-025. The rule only reads the first segment
+        of a cited scratch entry, so a keep on a nested path does not satisfy it even
+        though the entry is kept. Honor nested keeps. From the 2026-10-06 collated
+        triage.
+        """
+    derived_from [
+        @akr.papercut.collated-20-papercuts-from-bend-experiment-lege,
+        @akr.papercut.collated-35-papercuts-from-kitchen-concept-lege
+    ]
+}
+
 record akr.work.no-orientation-target-for-finished-work/1 : work {
     title "There is no way to orient on finished work, which is the most ordinary way work continues"
     state proposed
@@ -1886,6 +1935,25 @@ record akr.work.papercut-reconciliation/2 : work {
     supersedes [ @akr.work.papercut-reconciliation/1 ]
 }
 
+record akr.work.papercut-triage-polish-bundle/1 : work {
+    title "Papercut-triage polish bundle (diagnostic hints)"
+    state proposed
+    intent """
+        Bundle of small diagnostic-hint fixes from the 2026-10-06 collated triage: (1) akr
+        search --kind with zero results should hint at remedies instead of a bare 0
+        results; (2) AKR-L001 should hint at source-vs-record reference confusion; (3) the
+        AKR-R052 None arm should name its remedy; (4) AKR-L004 should list the valid
+        namespaces; (5) check and build scoping output gets the same hint treatment. Each
+        is a message-level change; land together.
+        """
+    derived_from [
+        @akr.papercut.collated-16-papercuts-from-kitchen-concept-lege,
+        @akr.papercut.collated-18-papercuts-from-kitchen-concept-lege,
+        @akr.papercut.collated-20-papercuts-from-kitchen-concept-lege,
+        @akr.papercut.collated-9-papercuts-from-lege-ecosystem
+    ]
+}
+
 record akr.work.papercuts-2026-08-25/1 : work {
     title "Resolve the 2026-08-25 collated AKR papercuts"
     state completed
@@ -2205,6 +2273,19 @@ record akr.work.papercuts-2026-08-29/4 : work {
     supersedes [ @akr.work.papercuts-2026-08-29/3 ]
 }
 
+record akr.work.per-record-build-degradation/1 : work {
+    title "Degrade build per record instead of halting all views"
+    state proposed
+    intent """
+        Degrade akr build per record instead of halting all views on any fatal. One
+        unrelated fatal (e.g. a V-020 in a record the session never touched) currently
+        refuses every view a refresh (crates/akr-cli/src/commands.rs:1372-1379; Kitchen
+        stage0-shared case). Emit what renders and report what does not, so a per-record
+        failure stops being a whole-ledger outage. From the 2026-10-06 collated triage.
+        """
+    derived_from [ @akr.papercut.collated-15-papercuts-from-evidence-intake ]
+}
+
 record akr.work.post-commit-validation/1 : work {
     title "Make AKR commits validate after Git advances"
     state superseded
@@ -2295,6 +2376,30 @@ record akr.work.post-commit-validation/2 : work {
     }
     implements [ @akr.decision.post-commit-validation ]
     supersedes [ @akr.work.post-commit-validation/1 ]
+}
+
+record akr.work.propose-dry-run-introspection/1 : work {
+    title "Dry-run or schema-introspection mode for propose validation"
+    state proposed
+    intent """
+        Give propose a dry-run or schema-introspection mode. Authors currently discover
+        slot and relation errors only by submitting writes and reading rejections; a mode
+        that validates a fragment without writing, or answers which slots and relations a
+        kind accepts, lets the first attempt succeed. From the 2026-10-06 collated triage.
+        """
+    derived_from [ @akr.papercut.collated-9-papercuts-from-lege-ecosystem ]
+}
+
+record akr.work.propose-time-zero-match-scope-warning/1 : work {
+    title "Warn at propose time when a scope term matches nothing"
+    state proposed
+    intent """
+        Warn at propose time when a path scope term matches zero worktree paths. Such a
+        proposal currently succeeds silently and surfaces later as AKR-G023 or a confusing
+        miss; naming the dead term at authoring time catches a typo, a copied path prefix,
+        or a moved path where it is cheapest to fix. From the 2026-10-06 collated triage.
+        """
+    derived_from [ @akr.papercut.collated-18-papercuts-from-evidence-intake ]
 }
 
 record akr.work.provenance-edges-that-follow-their-target/1 : work {
@@ -2394,6 +2499,41 @@ record akr.work.reference-supersession-consistency/1 : work {
         }
     }
     derived_from [ @akr.papercut.collated-18-papercuts-from-evidence-intake/1 ]
+}
+
+record akr.work.relevance-based-context-budget/1 : work {
+    title "Relevance-based context section dropping and continuation"
+    state proposed
+    intent """
+        Drop context sections by relevance and add per-section and acceptance-only
+        continuation. Twenty-plus duplicate papercuts across nine collated masters report
+        one design gap: the MCP context budget is approximate, mandatory sections dominate
+        small budgets, and over-limit bundles withhold without a path forward. Rank
+        sections by relevance to the goal, continue per section, and keep the retry advice
+        that already works. One work item for the whole cluster, not twenty fixes. From
+        the 2026-10-06 collated triage.
+        """
+    derived_from [
+        @akr.papercut.collated-15-papercuts-from-evidence-intake,
+        @akr.papercut.collated-17-papercuts-from-legeos,
+        @akr.papercut.collated-20-papercuts-from-bend-experiment-lege,
+        @akr.papercut.collated-35-papercuts-from-kitchen-concept-lege
+    ]
+}
+
+record akr.work.rename-aware-scope-map/1 : work {
+    title "Rename-aware scope map for crate moves"
+    state proposed
+    intent """
+        Ship a rename-aware scope map for crate moves. After a move, scopes pointing at
+        old paths silently go stale with no rename map to consult; the path equivalent of
+        .akr-commit-map does not exist. Record renames so scope can follow them instead of
+        dying quietly. From the 2026-10-06 collated triage.
+        """
+    derived_from [
+        @akr.papercut.collated-15-papercuts-from-evidence-intake,
+        @akr.papercut.collated-20-papercuts-from-bend-experiment-lege
+    ]
 }
 
 record akr.work.repairable-ledger/1 : work {
@@ -2962,6 +3102,46 @@ record akr.work.sister-papercut-fixes/1 : work {
     implements [ @akr.decision.query-words-dirty-tree-ancestry ]
 }
 
+record akr.work.sources-merge-or-refuse/1 : work {
+    title "Merge explicit sources against retained identity or refuse"
+    state proposed
+    intent """
+        Merge explicit sources against retained-fragment identity, or refuse the write.
+        Partial re-supply of a sources block drops role, use, and excerpt_hash on the MCP
+        merge path, silently losing citation metadata the author never meant to remove.
+        Merge against what the library retains, or refuse rather than corrupt. From the
+        2026-10-06 collated triage.
+        """
+    derived_from [ @akr.papercut.collated-35-papercuts-from-kitchen-concept-lege ]
+}
+
+record akr.work.supersede-onto-sealed-successor/1 : work {
+    title "Supersede onto a sealed successor in one command"
+    state proposed
+    intent """
+        Supersede onto a sealed successor in one command. Moving to an already-sealed
+        successor record currently fails AKR-C032 with help text only; no single command
+        performs the supersession onto the pointed-at successor. Add one so the successor
+        is reachable, not just named. From the 2026-10-06 collated triage.
+        """
+    derived_from [
+        @akr.papercut.collated-15-papercuts-from-evidence-intake,
+        @akr.papercut.collated-35-papercuts-from-kitchen-concept-lege
+    ]
+}
+
+record akr.work.t002-names-valid-slots/1 : work {
+    title "AKR-T002 names the kind's valid slots"
+    state proposed
+    intent """
+        AKR-T002 should name the kind's valid slots inline. It currently rejects an unknown
+        slot without listing what the kind accepts (crates/akr-core/src/syntax/lower.rs),
+        so the author must guess or go read the schema instead of fixing the write from the
+        diagnostic alone. From the 2026-10-06 collated triage.
+        """
+    derived_from [ @akr.papercut.collated-18-papercuts-from-evidence-intake ]
+}
+
 record akr.work.three-writes-that-could-not-be-told-apart/1 : work {
     title "Three writes that could not be told apart from the thing they were not"
     state completed
@@ -3032,6 +3212,36 @@ record akr.work.three-writes-that-could-not-be-told-apart/1 : work {
             verified_by [ @akr.evidence.six-point-of-failure-fixes-20260908/1 ]
         }
     }
+}
+
+record akr.work.unify-disposition-carry-prune/1 : work {
+    title "Unify disposition carry/prune across CLI and MCP revise"
+    state proposed
+    intent """
+        Unify disposition carry and prune behavior across CLI and MCP revise. CLI revise
+        carries dispositions while MCP revise drops them, and stale pins fail R016: the
+        two surfaces disagree on what a revision preserves. Make the same revision
+        through either surface yield the same record. From the 2026-10-06 collated triage.
+        """
+    derived_from [
+        @akr.papercut.collated-15-papercuts-from-evidence-intake,
+        @akr.papercut.collated-17-papercuts-from-legeos,
+        @akr.papercut.collated-35-papercuts-from-kitchen-concept-lege
+    ]
+}
+
+record akr.work.validate-commits-before-write/1 : work {
+    title "Validate commits before writing in evidence_add_many and MCP propose"
+    state proposed
+    intent """
+        Validate commits before writing in evidence_add_many and MCP propose. Two write
+        paths skip the commit-existence gate the CLI enforces: evidence_add_many runs
+        propose_many before ensure_commits_exist (crates/akr-mcp/src/tools.rs:1014-1032,
+        atomicity broken), and MCP propose never checks observed_at while CLI propose does
+        (crates/akr-cli/src/write.rs:81). Both verified 2026-10-06. Check commits before
+        any write on both paths. From the 2026-10-06 collated triage.
+        """
+    derived_from [ @akr.papercut.collated-35-papercuts-from-kitchen-concept-lege ]
 }
 
 record akr.work.what-an-unversioned-relation-means/1 : work {

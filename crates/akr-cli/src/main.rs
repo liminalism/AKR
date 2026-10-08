@@ -76,14 +76,15 @@ fn run(argv: &[String]) -> Exit {
             output.exit
         }
         Err(error) => {
-            report_environment(&error, json, &command.name());
-            Exit::Environment
+            let exit = error.exit();
+            report_environment(&error, json, &command.name(), exit);
+            exit
         }
     }
 }
 
-/// An environment failure: exit status 3, and never a JSON `result`.
-fn report_environment(error: &EnvError, json: bool, command: &str) {
+/// A failure outside the ledger: exit 2 or 3 per the code, and never a JSON `result`.
+fn report_environment(error: &EnvError, json: bool, command: &str, exit: Exit) {
     if json {
         // The diagnostic carries the same optional `help` field as every other §5
         // diagnostic; dropping it here would make the JSON surface strictly less helpful
@@ -103,7 +104,7 @@ fn report_environment(error: &EnvError, json: bool, command: &str) {
             command,
             None,
             "",
-            Exit::Environment,
+            exit,
             vec![akr_core::json::Value::object(fields)],
             akr_core::json::Value::Object(Vec::new()),
         );

@@ -1410,7 +1410,7 @@ fn build(session: &mut Session, check: bool) -> Result<Output, EnvError> {
         written.len()
     ));
     text.push_str(if lock_changed {
-        "wrote akr.lock\n"
+        "wrote .akr/akr.lock\n"
     } else {
         "akr.lock unchanged\n"
     });
@@ -2791,7 +2791,7 @@ fn lock(session: &mut Session, check_only: bool) -> Result<Output, EnvError> {
         let path = session.akr_dir.join("akr.lock");
         std::fs::write(&path, computed.render())
             .map_err(|e| EnvError::new("AKR-C042", format!("cannot write akr.lock: {e}")))?;
-        return Ok(Output::text("wrote akr.lock\n"));
+        return Ok(Output::text("wrote .akr/akr.lock\n"));
     }
 
     let Some(text) = &session.lock_text else {

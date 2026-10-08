@@ -29,7 +29,7 @@ Consult at task and state-transition boundaries, not after every edit.
 - Changed: `knowledge.revise`. Never edit a record that is not `proposed`.
 - Replacing a plan: `knowledge.supersede`, with a disposition for every unfinished child.
 - Finished work: `knowledge.evidence_add`, then `knowledge.complete`. An evidence `artifact` must not be under `.agent/scratch`; move it or `akr scratch keep` it first.
-- Friction: `knowledge.papercut`.
+- Outside friction: `knowledge.papercut` with `about="<tool>"`.
 - Handoff: `knowledge.validate`.
 
 ### Handoff

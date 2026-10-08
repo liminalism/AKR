@@ -1,0 +1,4 @@
+# The workspace is Rust 2024 (`Cargo.toml`). Without this, a bare `rustfmt`
+# invocation defaults to edition 2015 and rejects the let-chains used across
+# the crates (`akr.papercut.running-rustfmt-directly-on-akr-s-rust-2024`).
+edition = "2024"

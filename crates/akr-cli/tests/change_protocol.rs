@@ -365,6 +365,19 @@ fn committing_through_the_bridge_leaves_the_trailers_in_history() {
 
     let commit = example.run(&["git", "commit"]);
     assert_eq!(commit.code, 0, "{}", commit.output());
+    // The printed hash is the commit just made, not the memoized previous HEAD
+    // the shared memo still held when the handle committed.
+    let head = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(example.root())
+        .output()
+        .expect("git rev-parse runs");
+    let head = String::from_utf8_lossy(&head.stdout);
+    assert!(
+        commit.stdout.starts_with(&head[..12]),
+        "printed {} for new HEAD {head}",
+        commit.stdout.trim(),
+    );
 
     let log = example.run(&["git", "log", "sys.work.m3-plan"]);
     assert_eq!(log.code, 0, "{}", log.output());

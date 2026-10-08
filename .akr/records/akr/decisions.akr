@@ -216,6 +216,24 @@ record akr.decision.change-transaction-not-commit-kind/3 : decision {
     ]
 }
 
+record akr.decision.collate-default-scan-scope/1 : decision {
+    title "Default scope of akr papercut collate"
+    state proposed
+    scope [ path "crates/akr-cli/src/write.rs", path "crates/akr-core/src/papercut/**" ]
+    decision """
+        Decide the default scope of akr papercut collate: sibling workspaces or the current
+        workspace, with the aggregator role documented explicitly.
+        """
+    context """
+        The sibling-scan default surprised field users: one --all run swept 155 unrelated
+        reports into a non-owning ledger and was reverted, and Lege-ecosystem holds a
+        208-papercut collation from 8 projects. The documented purpose is gathering sisters'
+        tool-friction reports, but the default and the aggregator convention need one
+        recorded answer. From the 2026-10-06 collated triage.
+        """
+    derived_from [ @akr.papercut.collated-16-papercuts-from-kitchen-concept-lege ]
+}
+
 record akr.decision.completed-planning-work-satisfies-dependency/1 : decision {
     title "Completed planning work satisfies a dependency"
     state active

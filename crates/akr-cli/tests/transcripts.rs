@@ -345,6 +345,25 @@ fn exit_two_is_a_usage_error() {
 }
 
 #[test]
+fn exit_two_is_a_usage_error_after_the_workspace_loads() {
+    // A malformed invocation that only surfaces once the workspace is read — a bad
+    // flag value — is still a usage error, not a broken checkout (§3:
+    // `AKR-C001`–`AKR-C005` exit 2).
+    let example = Example::materialise("exit-2-loaded");
+    let run = example.run(&[
+        "evidence",
+        "add",
+        "sys.evidence.not-a-real-result",
+        "--result",
+        "nope",
+        "--method",
+        "command",
+    ]);
+    assert_eq!(run.code, 2, "{}", run.output());
+    assert!(run.stderr.contains("AKR-C004"), "{}", run.stderr);
+}
+
+#[test]
 fn exit_three_is_an_unusable_workspace() {
     // No `.akr/` anywhere above the directory, which is an environment fault rather than a
     // ledger fault (`docs/07-cli.md` §3).

@@ -5,7 +5,7 @@ build {
     tool "akr 0.5.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:08619018a94db1f04d1674803e9ab78a89fa69626be4438688869a9d4c964e85"
+    source_graph "sha256:3d6a35368acadbfcc18aa7107b728f879a7bb997f274bfb7e3385aefd5276ba2"
 }
 
 source ".akr/project.akr" {
@@ -19,8 +19,8 @@ source ".akr/records/akr/assessments.akr" {
 }
 
 source ".akr/records/akr/decisions.akr" {
-    hash "sha256:7da79bda1b77f2220533166221a50f7527739ce8cd3e67cb4da31d8600ab299d"
-    records 34
+    hash "sha256:fc08b1f2af54cf879cbe78f93af1b3526f701ed7fd3e455a731dde952ea5cfd2"
+    records 35
 }
 
 source ".akr/records/akr/evidence.akr" {
@@ -39,25 +39,31 @@ source ".akr/records/akr/observations.akr" {
 }
 
 source ".akr/records/akr/papercuts.akr" {
-    hash "sha256:8a9151084309dfbe548d1af16233903b0ff19235e62b97ea220069bdd8dea18a"
-    records 88
+    hash "sha256:9587b724317f42f292c4d58c7da958ba91b99b60f58d8306e67fc79074556169"
+    records 120
 }
 
 source ".akr/records/akr/work.akr" {
-    hash "sha256:7317615206ba8622f41ab097fbcadc2a140f1d22a8732b4c5d85cea1a5b0a163"
-    records 60
+    hash "sha256:29fdefcedd5248c72de73633dac33af27838db732ab5376c980b9473cb05bc15"
+    records 74
 }
 
 resolution @akr.assessment.papercut-reconciliation-2026-08-27/1 {
     slot derived_from
-    to @akr.papercut.collated-7-papercuts-from-lege-ecosystem-jpegxl/1
-    hash "sha256:6e927a6b431f3e7ccf7a057417a8dc0df489215d829b0e45394c6eee4246ba09"
+    to @akr.papercut.collated-7-papercuts-from-lege-ecosystem-jpegxl/2
+    hash "sha256:0b38b8a927177f8cb9492a60466d518a1997cc158301bd6b1f62168e0c1ae281"
 }
 
 resolution @akr.decision.a-check-says-what-it-looked-at/1 {
     slot supported_by
     to @akr.observation.a-check-that-reports-nothing/1
     hash "sha256:65b502f8646d5d53041ee52583e37ff8c5f974a65fec21db362c7b12d6508b16"
+}
+
+resolution @akr.decision.collate-default-scan-scope/1 {
+    slot derived_from
+    to @akr.papercut.collated-16-papercuts-from-kitchen-concept-lege/2
+    hash "sha256:d83f085b3cd1a16db245ec5f85d812e967c774c016baa5822c8d04032a20d5b3"
 }
 
 resolution @akr.decision.completed-planning-work-satisfies-dependency/1 {
@@ -150,6 +156,30 @@ resolution @akr.decision.query-words-dirty-tree-ancestry/2 {
     hash "sha256:5759b4db139bb1216a32d630262c67b5910061d0dbd177510d973ce7e5cfe998"
 }
 
+resolution @akr.work.diagnostic-text-sweep/1 {
+    slot derived_from
+    to @akr.papercut.collated-17-papercuts-from-legeos/1
+    hash "sha256:3d3af0bfa943787957abbb0ba86115a6039328edc230f149b0e83f94c3f92c27"
+}
+
+resolution @akr.work.diagnostic-text-sweep/1 {
+    slot derived_from
+    to @akr.papercut.collated-35-papercuts-from-kitchen-concept-lege/1
+    hash "sha256:c5c50b268132b65f88ddb379fbece2a5dd46776c503f755cd3c0a985d22c0999"
+}
+
+resolution @akr.work.explain-registry-acceptance-parity/1 {
+    slot derived_from
+    to @akr.papercut.collated-15-papercuts-from-evidence-intake/1
+    hash "sha256:6cf7e8f66b341f1ea592a5ccb284ff8b8821eed31491ebb593f0b521148f944e"
+}
+
+resolution @akr.work.explain-registry-acceptance-parity/1 {
+    slot derived_from
+    to @akr.papercut.collated-17-papercuts-from-legeos/1
+    hash "sha256:3d3af0bfa943787957abbb0ba86115a6039328edc230f149b0e83f94c3f92c27"
+}
+
 resolution @akr.work.mcp-budget-and-instrumentation/1 {
     slot implements
     to @akr.decision.mcp-budgeted-and-instrumented/3
@@ -216,6 +246,18 @@ resolution @akr.work.mcp-handshake-and-collated-papercuts/2 {
     hash "sha256:8aaae39582ae444ec7c0cb8393f9cbc287aa0a1cd20c72b04c46f08d6c0fcf8f"
 }
 
+resolution @akr.work.nested-scratch-keeps-v025/1 {
+    slot derived_from
+    to @akr.papercut.collated-20-papercuts-from-bend-experiment-lege/1
+    hash "sha256:0c881e86a29f0acaa19a1eae380abc6fefaa7f61673434288b8caa4821519718"
+}
+
+resolution @akr.work.nested-scratch-keeps-v025/1 {
+    slot derived_from
+    to @akr.papercut.collated-35-papercuts-from-kitchen-concept-lege/1
+    hash "sha256:c5c50b268132b65f88ddb379fbece2a5dd46776c503f755cd3c0a985d22c0999"
+}
+
 resolution @akr.work.p10-external-sources/1 {
     slot implements
     to @akr.decision.external-sources-immutable-library/2
@@ -264,10 +306,40 @@ resolution @akr.work.papercut-collation-followthrough/1 {
     hash "sha256:c61b4c012aaeffc5c35cb57b6a3333e4dce3950dcfa40f407a1b025b08f439c5"
 }
 
+resolution @akr.work.papercut-triage-polish-bundle/1 {
+    slot derived_from
+    to @akr.papercut.collated-16-papercuts-from-kitchen-concept-lege/2
+    hash "sha256:d83f085b3cd1a16db245ec5f85d812e967c774c016baa5822c8d04032a20d5b3"
+}
+
+resolution @akr.work.papercut-triage-polish-bundle/1 {
+    slot derived_from
+    to @akr.papercut.collated-18-papercuts-from-kitchen-concept-lege/2
+    hash "sha256:c914a564ccec7c2e49ef21ec3c704059af337152e688543699690048c7d87cb3"
+}
+
+resolution @akr.work.papercut-triage-polish-bundle/1 {
+    slot derived_from
+    to @akr.papercut.collated-20-papercuts-from-kitchen-concept-lege/2
+    hash "sha256:8a8ffc43cbf526f368de2878dae590eb9023a7e15f7282f22351b4d2071d669e"
+}
+
+resolution @akr.work.papercut-triage-polish-bundle/1 {
+    slot derived_from
+    to @akr.papercut.collated-9-papercuts-from-lege-ecosystem/2
+    hash "sha256:e1a055e432039bfe826b3e0828908eb74718088e7f69b4ec86d254169268ae14"
+}
+
 resolution @akr.work.papercuts-2026-08-27/1 {
     slot derived_from
-    to @akr.papercut.collated-7-papercuts-from-lege-ecosystem-jpegxl/1
-    hash "sha256:6e927a6b431f3e7ccf7a057417a8dc0df489215d829b0e45394c6eee4246ba09"
+    to @akr.papercut.collated-7-papercuts-from-lege-ecosystem-jpegxl/2
+    hash "sha256:0b38b8a927177f8cb9492a60466d518a1997cc158301bd6b1f62168e0c1ae281"
+}
+
+resolution @akr.work.per-record-build-degradation/1 {
+    slot derived_from
+    to @akr.papercut.collated-15-papercuts-from-evidence-intake/1
+    hash "sha256:6cf7e8f66b341f1ea592a5ccb284ff8b8821eed31491ebb593f0b521148f944e"
 }
 
 resolution @akr.work.post-commit-validation/1 {
@@ -282,10 +354,58 @@ resolution @akr.work.post-commit-validation/2 {
     hash "sha256:52788211fba3a8c58d860e6e3eb46c566468ebc1f4f5c0b663c885e473cc95b7"
 }
 
+resolution @akr.work.propose-dry-run-introspection/1 {
+    slot derived_from
+    to @akr.papercut.collated-9-papercuts-from-lege-ecosystem/2
+    hash "sha256:e1a055e432039bfe826b3e0828908eb74718088e7f69b4ec86d254169268ae14"
+}
+
+resolution @akr.work.propose-time-zero-match-scope-warning/1 {
+    slot derived_from
+    to @akr.papercut.collated-18-papercuts-from-evidence-intake/2
+    hash "sha256:be47d73d1c269266e7364203bc8296db7b4377427d059358f6217c9757de21c9"
+}
+
+resolution @akr.work.relevance-based-context-budget/1 {
+    slot derived_from
+    to @akr.papercut.collated-15-papercuts-from-evidence-intake/1
+    hash "sha256:6cf7e8f66b341f1ea592a5ccb284ff8b8821eed31491ebb593f0b521148f944e"
+}
+
+resolution @akr.work.relevance-based-context-budget/1 {
+    slot derived_from
+    to @akr.papercut.collated-17-papercuts-from-legeos/1
+    hash "sha256:3d3af0bfa943787957abbb0ba86115a6039328edc230f149b0e83f94c3f92c27"
+}
+
+resolution @akr.work.relevance-based-context-budget/1 {
+    slot derived_from
+    to @akr.papercut.collated-20-papercuts-from-bend-experiment-lege/1
+    hash "sha256:0c881e86a29f0acaa19a1eae380abc6fefaa7f61673434288b8caa4821519718"
+}
+
+resolution @akr.work.relevance-based-context-budget/1 {
+    slot derived_from
+    to @akr.papercut.collated-35-papercuts-from-kitchen-concept-lege/1
+    hash "sha256:c5c50b268132b65f88ddb379fbece2a5dd46776c503f755cd3c0a985d22c0999"
+}
+
+resolution @akr.work.rename-aware-scope-map/1 {
+    slot derived_from
+    to @akr.papercut.collated-15-papercuts-from-evidence-intake/1
+    hash "sha256:6cf7e8f66b341f1ea592a5ccb284ff8b8821eed31491ebb593f0b521148f944e"
+}
+
+resolution @akr.work.rename-aware-scope-map/1 {
+    slot derived_from
+    to @akr.papercut.collated-20-papercuts-from-bend-experiment-lege/1
+    hash "sha256:0c881e86a29f0acaa19a1eae380abc6fefaa7f61673434288b8caa4821519718"
+}
+
 resolution @akr.work.revise-repoints-pinned-referrers/1 {
     slot derived_from
-    to @akr.papercut.collated-7-papercuts-from-lege-ecosystem-jpegxl/1
-    hash "sha256:6e927a6b431f3e7ccf7a057417a8dc0df489215d829b0e45394c6eee4246ba09"
+    to @akr.papercut.collated-7-papercuts-from-lege-ecosystem-jpegxl/2
+    hash "sha256:0b38b8a927177f8cb9492a60466d518a1997cc158301bd6b1f62168e0c1ae281"
 }
 
 resolution @akr.work.session-head-briefing/1 {
@@ -310,6 +430,54 @@ resolution @akr.work.sister-papercut-fixes/1 {
     slot verified_by
     to @akr.evidence.sister-papercut-fixes/1
     hash "sha256:5759b4db139bb1216a32d630262c67b5910061d0dbd177510d973ce7e5cfe998"
+}
+
+resolution @akr.work.sources-merge-or-refuse/1 {
+    slot derived_from
+    to @akr.papercut.collated-35-papercuts-from-kitchen-concept-lege/1
+    hash "sha256:c5c50b268132b65f88ddb379fbece2a5dd46776c503f755cd3c0a985d22c0999"
+}
+
+resolution @akr.work.supersede-onto-sealed-successor/1 {
+    slot derived_from
+    to @akr.papercut.collated-15-papercuts-from-evidence-intake/1
+    hash "sha256:6cf7e8f66b341f1ea592a5ccb284ff8b8821eed31491ebb593f0b521148f944e"
+}
+
+resolution @akr.work.supersede-onto-sealed-successor/1 {
+    slot derived_from
+    to @akr.papercut.collated-35-papercuts-from-kitchen-concept-lege/1
+    hash "sha256:c5c50b268132b65f88ddb379fbece2a5dd46776c503f755cd3c0a985d22c0999"
+}
+
+resolution @akr.work.t002-names-valid-slots/1 {
+    slot derived_from
+    to @akr.papercut.collated-18-papercuts-from-evidence-intake/2
+    hash "sha256:be47d73d1c269266e7364203bc8296db7b4377427d059358f6217c9757de21c9"
+}
+
+resolution @akr.work.unify-disposition-carry-prune/1 {
+    slot derived_from
+    to @akr.papercut.collated-15-papercuts-from-evidence-intake/1
+    hash "sha256:6cf7e8f66b341f1ea592a5ccb284ff8b8821eed31491ebb593f0b521148f944e"
+}
+
+resolution @akr.work.unify-disposition-carry-prune/1 {
+    slot derived_from
+    to @akr.papercut.collated-17-papercuts-from-legeos/1
+    hash "sha256:3d3af0bfa943787957abbb0ba86115a6039328edc230f149b0e83f94c3f92c27"
+}
+
+resolution @akr.work.unify-disposition-carry-prune/1 {
+    slot derived_from
+    to @akr.papercut.collated-35-papercuts-from-kitchen-concept-lege/1
+    hash "sha256:c5c50b268132b65f88ddb379fbece2a5dd46776c503f755cd3c0a985d22c0999"
+}
+
+resolution @akr.work.validate-commits-before-write/1 {
+    slot derived_from
+    to @akr.papercut.collated-35-papercuts-from-kitchen-concept-lege/1
+    hash "sha256:c5c50b268132b65f88ddb379fbece2a5dd46776c503f755cd3c0a985d22c0999"
 }
 
 seal @akr.assessment.papercut-reconciliation-2026-08-11/1 {
@@ -903,18 +1071,33 @@ seal @akr.observation.the-normative-layer-is-stuck-at-proposed/1 {
 }
 
 seal @akr.papercut.a-command-orchestration-typo-caused-a-tool-call/1 {
+    state superseded
+    hash "sha256:f469dd5fbc0ba91e30734e1927bc60ba1821b8ed5c4c0eb273094463f783b556"
+}
+
+seal @akr.papercut.a-command-orchestration-typo-caused-a-tool-call/2 {
     state verified
-    hash "sha256:1100d5ed6acfd62c003ecde87a9f13f99f97aa645bafd89de858737335551967"
+    hash "sha256:d3027f748d33c734e5000f517706d70e0b9dec8da0ac6a90b3ce43e80076b21a"
 }
 
 seal @akr.papercut.a-shell-orchestration-typo-interrupted-a-read/1 {
+    state superseded
+    hash "sha256:53e37a1aeb42f89454230fb28ca31c3fe3d39930af0f3533bcf40ca895c8e88d"
+}
+
+seal @akr.papercut.a-shell-orchestration-typo-interrupted-a-read/2 {
     state verified
-    hash "sha256:a4b3f916bec70b6eef42bf15d3859a4b9a028ec0789864581cbd5b2deb58b8a9"
+    hash "sha256:2c60585a40daed0acf00f5fe06cb95680a1a96d7adfce5f5afc100bceb6df8a1"
 }
 
 seal @akr.papercut.a-subagent-spawned-with-worktree-isolation-into/1 {
+    state superseded
+    hash "sha256:fc226d797226822174eb544cdbe626c6870327e8d0ae32d6c16b84630272b494"
+}
+
+seal @akr.papercut.a-subagent-spawned-with-worktree-isolation-into/2 {
     state verified
-    hash "sha256:f0228bf0f56b8661d18617680e1529fd495092af4bfc27150a01b334e92e4390"
+    hash "sha256:7c82641473c1be88c34a0f96c2c0ed6424d8277fdd9da954c73d7708f8d4914d"
 }
 
 seal @akr.papercut.after-an-immediate-akr-check-akr-77-records-88/1 {
@@ -928,18 +1111,33 @@ seal @akr.papercut.after-an-immediate-akr-check-akr-77-records-88/2 {
 }
 
 seal @akr.papercut.agents-md-maps-knowledge-propose-to-akr-propose/1 {
+    state superseded
+    hash "sha256:e429d1e8be4c2d8a06a7634103b3151069803c36016128e570ce655284c16597"
+}
+
+seal @akr.papercut.agents-md-maps-knowledge-propose-to-akr-propose/2 {
     state verified
-    hash "sha256:3a19655ed7bffcd8f1ec98f5f8cf9058be91b1e19fd4465b9a7f5e95fdb1ff26"
+    hash "sha256:63d7c436a7d744dafb01f3cf5abf49d12433a1fc026d34d25156c65e61532022"
 }
 
 seal @akr.papercut.agents-write-working-files-to-agent-scratch/1 {
+    state superseded
+    hash "sha256:d69a3e53c2a8725a7b57e0e59a51adc55ceb31132ccb24701f14c77f77de14a6"
+}
+
+seal @akr.papercut.agents-write-working-files-to-agent-scratch/2 {
     state verified
-    hash "sha256:74d41ea1f07e71a5eb77b146442bd5117a07e73f8792e4fb5aeacd0bc732ee27"
+    hash "sha256:fe29baf08d1ab633cf421929e4e2ad30ac1080290a647adad68e9e3dec58b7f7"
 }
 
 seal @akr.papercut.akr-change-prepare-staged-reports-code-n-files/1 {
+    state superseded
+    hash "sha256:089b91aec4fa8aa5e99eb7e9f7ef15b28ae54f09e9dd33e7d67f644b6d85b9b7"
+}
+
+seal @akr.papercut.akr-change-prepare-staged-reports-code-n-files/2 {
     state verified
-    hash "sha256:c9e863839579982103856a02552b9270ead8e5f9021156f1c3989816af830fa3"
+    hash "sha256:91a88a11c6e7d82fdb8061795590fa3b7082f264675c46a88ed182bc7e94c2ad"
 }
 
 seal @akr.papercut.akr-context-rejects-a-collated-papercut-key/1 {
@@ -948,13 +1146,23 @@ seal @akr.papercut.akr-context-rejects-a-collated-papercut-key/1 {
 }
 
 seal @akr.papercut.akr-git-commit-m-message-accepted-the-flag-but/1 {
+    state superseded
+    hash "sha256:477dbe6b5aabc84c73ff0345b67306743cf8cd3a0549a0cc8a2ca3ce5efdbf36"
+}
+
+seal @akr.papercut.akr-git-commit-m-message-accepted-the-flag-but/2 {
     state verified
-    hash "sha256:4eb88175609562a16a99924fa2f6023775dbda3f7815a1940eb9e21d1fdb3855"
+    hash "sha256:6099badb8682c2f8b27407bea2fed0f75ad5a09d0be41508fd546ef2e576514f"
 }
 
 seal @akr.papercut.akr-validate-check-in-saveyourskin-hangs-10/1 {
+    state superseded
+    hash "sha256:4f8dbb9ec8b75b7cf7fba33f368ab1624c50eef9792f8895cdd23d23d33e95cc"
+}
+
+seal @akr.papercut.akr-validate-check-in-saveyourskin-hangs-10/2 {
     state verified
-    hash "sha256:6dd26a277d9a7e0ee6d76712187b9d5eba9a76a7b943ae87507ce15409519b47"
+    hash "sha256:af0a899926d459c4f86d53d3a1009bcd9ba33c9cd33ed966de99ee7baf3e3ff0"
 }
 
 seal @akr.papercut.bug-needs-a-decision-d-028-is-incomplete/1 {
@@ -988,18 +1196,33 @@ seal @akr.papercut.cargo-fmt-check-fails-on-the-committed-tree/2 {
 }
 
 seal @akr.papercut.collated-1-papercuts-from-evidence-intake/1 {
+    state superseded
+    hash "sha256:62aef90e2077705b65b8b3be3c48c08600befeefc4aadabf8e49e5ac7b91cf6e"
+}
+
+seal @akr.papercut.collated-1-papercuts-from-evidence-intake/2 {
     state verified
-    hash "sha256:d8f19f696ded8cc779fc4ebb56809292af207ab267cc9731deccddbc8cd87beb"
+    hash "sha256:56cafabd836f1a4e07c365feb2a3d91147b997b183d40f6a687660ed7ea69545"
 }
 
 seal @akr.papercut.collated-1-papercuts-from-evidence-intake-2/1 {
+    state superseded
+    hash "sha256:e06d0412413ede75958d37b5d568864dd0e52a6a8d3f64d2d46841ec6adddf99"
+}
+
+seal @akr.papercut.collated-1-papercuts-from-evidence-intake-2/2 {
     state verified
-    hash "sha256:17daab91c36f30c353328095a16ed4e1026e15f775853a8982b0fe31fc6425ee"
+    hash "sha256:8de0b206986345341955b6112563bdf398cd3c6a576ea593cf56f84798f6f4ae"
 }
 
 seal @akr.papercut.collated-1-papercuts-from-saveyourskin/1 {
+    state superseded
+    hash "sha256:b3351800e5d0614cb729dbb13db1c1ff0d45077640105bb90c325319082bb2f7"
+}
+
+seal @akr.papercut.collated-1-papercuts-from-saveyourskin/2 {
     state verified
-    hash "sha256:4bc29f83188330f60c72552dc4a1195aedfcc87e4fd031b3eb5c7f32556875d7"
+    hash "sha256:5e8cd21e7d810447a06fd58e83a4e2f63fe1dbaf966683bfc3c37af180957636"
 }
 
 seal @akr.papercut.collated-10-papercuts-from-evidence-intake/1 {
@@ -1008,8 +1231,13 @@ seal @akr.papercut.collated-10-papercuts-from-evidence-intake/1 {
 }
 
 seal @akr.papercut.collated-10-papercuts-from-evidence-intake/2 {
+    state superseded
+    hash "sha256:96b3a3691ffcf3b44217dcdadffdae5ac85f52596f1afe2ea56899bc1f44f5a2"
+}
+
+seal @akr.papercut.collated-10-papercuts-from-evidence-intake/3 {
     state verified
-    hash "sha256:db0b196d843a9ee777def3e851c181726350fdab0ea0605f284f2754845aa95c"
+    hash "sha256:73cfd323537aa52231174be427eb1de3d151468c14c51dff331c4b5738b9016b"
 }
 
 seal @akr.papercut.collated-10-papercuts-from-evidence-intake-2/1 {
@@ -1028,23 +1256,48 @@ seal @akr.papercut.collated-15-papercuts-from-evidence-intake/1 {
 }
 
 seal @akr.papercut.collated-16-papercuts-from-kitchen-concept-lege/1 {
+    state superseded
+    hash "sha256:df4a5bc433323755ea0f2933b75ec63dbef99331ee5cc1821205916fe2b39e5a"
+}
+
+seal @akr.papercut.collated-16-papercuts-from-kitchen-concept-lege/2 {
     state verified
-    hash "sha256:909f322cc384e608da42b81effae631d9723fe31ec74e7b93ab30a422d871de6"
+    hash "sha256:d83f085b3cd1a16db245ec5f85d812e967c774c016baa5822c8d04032a20d5b3"
 }
 
 seal @akr.papercut.collated-17-papercuts-from-evidence-intake/1 {
+    state superseded
+    hash "sha256:4c65a1045c0c4f446475bc1ede8ae5367f3c5ffeb923110ce316467f62fd9ed7"
+}
+
+seal @akr.papercut.collated-17-papercuts-from-evidence-intake/2 {
     state verified
-    hash "sha256:2c7c6bcd0d6195c510b74bb6598916294dd31e081fb25ce9e1e22cc3a6b97ce6"
+    hash "sha256:523726d35ffcd6660607883cd59b495ac9d64abf5ac50e49cc08d7e753380fb9"
+}
+
+seal @akr.papercut.collated-17-papercuts-from-legeos/1 {
+    state verified
+    hash "sha256:3d3af0bfa943787957abbb0ba86115a6039328edc230f149b0e83f94c3f92c27"
 }
 
 seal @akr.papercut.collated-18-papercuts-from-evidence-intake/1 {
+    state superseded
+    hash "sha256:611e567a2c5df61a25920c6d6be044990bf4d10a4d623c48b7e3e0d8e62c9be7"
+}
+
+seal @akr.papercut.collated-18-papercuts-from-evidence-intake/2 {
     state verified
-    hash "sha256:088a420747382b87caa194da80aa9091157b5151822f59219d4047f1055f1866"
+    hash "sha256:be47d73d1c269266e7364203bc8296db7b4377427d059358f6217c9757de21c9"
 }
 
 seal @akr.papercut.collated-18-papercuts-from-kitchen-concept-lege/1 {
+    state superseded
+    hash "sha256:a9e216284504f5a6826600cf3d44d42c7e2c394f2b8c8d749fbf6174cefd6bd8"
+}
+
+seal @akr.papercut.collated-18-papercuts-from-kitchen-concept-lege/2 {
     state verified
-    hash "sha256:400f9620560f042c1732878794a91bc46dea5e495e4d2953e7abc195f656a97d"
+    hash "sha256:c914a564ccec7c2e49ef21ec3c704059af337152e688543699690048c7d87cb3"
 }
 
 seal @akr.papercut.collated-19-papercuts-from-evidence-intake/1 {
@@ -1058,13 +1311,28 @@ seal @akr.papercut.collated-19-papercuts-from-evidence-intake/2 {
 }
 
 seal @akr.papercut.collated-2-papercuts-from-evidence-intake/1 {
+    state superseded
+    hash "sha256:16acc91e7b6a89c330e3b1d1fbb162eceecff8f287060d5c2db7ca1fb9059f9c"
+}
+
+seal @akr.papercut.collated-2-papercuts-from-evidence-intake/2 {
     state verified
-    hash "sha256:058b1aa6a901ed6bede52ce8cfc3b51aeeee13822605eb952d514209fe7ad230"
+    hash "sha256:0ee75df20c96e5e5e35b2b36967ff7741bc0f8c2d3312be6e465ec4cee7df11d"
+}
+
+seal @akr.papercut.collated-20-papercuts-from-bend-experiment-lege/1 {
+    state verified
+    hash "sha256:0c881e86a29f0acaa19a1eae380abc6fefaa7f61673434288b8caa4821519718"
 }
 
 seal @akr.papercut.collated-20-papercuts-from-kitchen-concept-lege/1 {
+    state superseded
+    hash "sha256:022f965bbe6750b8ca1dca18c7ca8a483fb6ed15040082b1b9567ff74330cc5f"
+}
+
+seal @akr.papercut.collated-20-papercuts-from-kitchen-concept-lege/2 {
     state verified
-    hash "sha256:dff334a2668b19052bcb8f7c66aa24848da1765b9546282ba07a0a94c4a5697d"
+    hash "sha256:8a8ffc43cbf526f368de2878dae590eb9023a7e15f7282f22351b4d2071d669e"
 }
 
 seal @akr.papercut.collated-35-papercuts-from-kitchen-concept-lege/1 {
@@ -1073,23 +1341,43 @@ seal @akr.papercut.collated-35-papercuts-from-kitchen-concept-lege/1 {
 }
 
 seal @akr.papercut.collated-7-papercuts-from-lege-ecosystem-jpegxl/1 {
+    state superseded
+    hash "sha256:adfd0a1800cab8b45335ff3b10c85b2f6f56b4685bc73183434fdb9a0b067325"
+}
+
+seal @akr.papercut.collated-7-papercuts-from-lege-ecosystem-jpegxl/2 {
     state verified
-    hash "sha256:6e927a6b431f3e7ccf7a057417a8dc0df489215d829b0e45394c6eee4246ba09"
+    hash "sha256:0b38b8a927177f8cb9492a60466d518a1997cc158301bd6b1f62168e0c1ae281"
 }
 
 seal @akr.papercut.collated-8-papercuts-from-lege-ecosystem/1 {
+    state superseded
+    hash "sha256:097acfc7d2b869d5dbd97892f87e9da756e767ff647cbc2aa0423866dfbacbe8"
+}
+
+seal @akr.papercut.collated-8-papercuts-from-lege-ecosystem/2 {
     state verified
-    hash "sha256:40f3338a6d97f05f8be9d295a53c7908fb2a2b633ca94703a21b0ba100c205f9"
+    hash "sha256:49d397ea6ecc7b2dfb656655d4f7521e751bd40ad9cace2f873c4efb2063bc05"
 }
 
 seal @akr.papercut.collated-8-papercuts-from-lege-ecosystem-legeos/1 {
+    state superseded
+    hash "sha256:fa3fc0b08679f90dedb60d1797d2615f5009dbad9219753760aff868263b2f3e"
+}
+
+seal @akr.papercut.collated-8-papercuts-from-lege-ecosystem-legeos/2 {
     state verified
-    hash "sha256:74d6900d491942cda4ceb9383a08b4ab136944a163cfe18646fa71d426c613e0"
+    hash "sha256:5f7351cefeb644b4c23397d5201679adc9f8a006ae547bb440c3b2836e66e6f8"
 }
 
 seal @akr.papercut.collated-9-papercuts-from-lege-ecosystem/1 {
+    state superseded
+    hash "sha256:4e01ee9532060b777a7e29551caea285721642dd026326d7942e096d0f347964"
+}
+
+seal @akr.papercut.collated-9-papercuts-from-lege-ecosystem/2 {
     state verified
-    hash "sha256:3820b1cffed6532843f7b46cd19682d5b062d479c12d196882df4cd9fc6dba0c"
+    hash "sha256:e1a055e432039bfe826b3e0828908eb74718088e7f69b4ec86d254169268ae14"
 }
 
 seal @akr.papercut.completing-a-milestone-failed-because-a/1 {
@@ -1113,13 +1401,23 @@ seal @akr.papercut.crates-akr-cli-tests-commands-rs-is-the-only/2 {
 }
 
 seal @akr.papercut.crates-akr-core-src-git-mod-rs-file-versions/1 {
+    state superseded
+    hash "sha256:55220e1331f0cd18742d2b6fc9bc34b3549b4a41d82f8d7a73fa45920d2d3fce"
+}
+
+seal @akr.papercut.crates-akr-core-src-git-mod-rs-file-versions/2 {
     state verified
-    hash "sha256:bfb90fd403fa84e4a48190db352c05681b2852da2538ae056764b19482312e58"
+    hash "sha256:859f89dd63ad3e98830915bb788f845d277b759792fd65d89295c6c83f8ce351"
 }
 
 seal @akr.papercut.every-akr-c0nn-usage-refusal-raised-through/1 {
+    state superseded
+    hash "sha256:13de54af4161697cfe77f3812d38e89582b3d07b3c361778168e94abdce0b6b1"
+}
+
+seal @akr.papercut.every-akr-c0nn-usage-refusal-raised-through/2 {
     state verified
-    hash "sha256:330f4cf5b4ef8949e778bb2d73f92f27fac083bcca731c0f5999b7ca5e4d4e03"
+    hash "sha256:9c50a4a2cfc6991aec83eebfe665225cc7891bdd1016d932e1e48f87ee964322"
 }
 
 seal @akr.papercut.evidence-recorded-after-tests-but-before/1 {
@@ -1133,8 +1431,13 @@ seal @akr.papercut.evidence-recorded-after-tests-but-before/2 {
 }
 
 seal @akr.papercut.grok-build-1-0-25-mcp-client-validates/1 {
+    state superseded
+    hash "sha256:8853340f81716a75d0ee27ae3c69f979968ad3ac44a4e7a18db3f56a4c58fc4b"
+}
+
+seal @akr.papercut.grok-build-1-0-25-mcp-client-validates/2 {
     state verified
-    hash "sha256:7d42c0b2850b0342b8389fe82bfc38bffd8877b3957acbe0551e85b511ba7fbf"
+    hash "sha256:e857cfb1b477c9df1abcdede2649e5c3ea2400dcb0e9b1b70dca1909d746d076"
 }
 
 seal @akr.papercut.historical-port-design-gap-recovered-from-a/1 {
@@ -1155,6 +1458,16 @@ seal @akr.papercut.i-tried-assuming-get-supported-a-source/1 {
 seal @akr.papercut.i-tried-assuming-get-supported-a-source/2 {
     state withdrawn
     hash "sha256:2294503df26ab41813dc7221bc48907edde4a62157bd2effe14602380455b42c"
+}
+
+seal @akr.papercut.investigating-an-agent-report-that-akr/1 {
+    state superseded
+    hash "sha256:6df503c3226fc1c1b35e539894311771baecf9ba963fe2f206b975c7072c4955"
+}
+
+seal @akr.papercut.investigating-an-agent-report-that-akr/2 {
+    state verified
+    hash "sha256:9d66291dfccfa31c875f0c6c6594f9d45c89b58b1237c97da3ab23aa24acfaa0"
 }
 
 seal @akr.papercut.knowledge-context-guidance-suggests-reading-a/1 {
@@ -1223,8 +1536,13 @@ seal @akr.papercut.running-akr-papercut-collate-m-agent-silently/2 {
 }
 
 seal @akr.papercut.running-rustfmt-directly-on-akr-s-rust-2024/1 {
+    state superseded
+    hash "sha256:0be2a1d20c88dd1c6e192648bae7dfa25acd463a7415866c871e74ce7604bb0a"
+}
+
+seal @akr.papercut.running-rustfmt-directly-on-akr-s-rust-2024/2 {
     state verified
-    hash "sha256:82e30f8c4a47408cb188f3797a1d4cc1804c14f561f5f0ec4b6fa26518445946"
+    hash "sha256:e8e8fdaf39ee03934c8814a88d2de38ae040969c4897ad0930315e47c831062f"
 }
 
 seal @akr.papercut.strict-clippy-for-the-new-gui-crate-promoted/1 {
@@ -1303,13 +1621,23 @@ seal @akr.papercut.while-creating-work-to-fix-a-collated-papercut/1 {
 }
 
 seal @akr.papercut.while-creating-work-to-fix-a-collated-papercut/2 {
+    state superseded
+    hash "sha256:3e816dc8640a9bb76265d04e4d08e20020860bfa4044e49eb625f0043ad88f53"
+}
+
+seal @akr.papercut.while-creating-work-to-fix-a-collated-papercut/3 {
     state verified
-    hash "sha256:1b44e6d5472f8e96ce885e22614b31d70cae51ef6d8dda7a5f9be9d2b7f3ecd0"
+    hash "sha256:57f699ac0ab18a6d9fb6511221540dfc6703399d8deb58a59fe4f9cdb8e02f82"
 }
 
 seal @akr.papercut.while-locating-the-non-fts-start-and/1 {
+    state superseded
+    hash "sha256:3e0e02c61840741222f6191bb7c5ce80ce3ce15da7e3ebfb632178f4202b5af2"
+}
+
+seal @akr.papercut.while-locating-the-non-fts-start-and/2 {
     state verified
-    hash "sha256:c3300f371bd5b01ea0ddf9efa26236dbfe9fa5b7e3c9d6ea6aeedce3ca7745f8"
+    hash "sha256:bffd77a19c9c259048af355cd40d5bc060481f677bc78897a809837318eb51d5"
 }
 
 seal @akr.papercut.while-running-the-workspace-suite-on-windows/1 {

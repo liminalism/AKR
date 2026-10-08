@@ -544,6 +544,12 @@ pub fn unmatched_watches(
             }),
     );
     let submodules = repository.run_ls_tree_submodules(head)?;
+    // A glob that matches nothing at HEAD but does match the working tree's changed
+    // paths is not dead — its files are new and simply not committed yet. Without
+    // this the author of a scope over staged-but-uncommitted implementation was told
+    // the path had moved or been deleted, which reads as a repointing instruction for
+    // a scope that is already right.
+    let changed = repository.working_tree_changes().unwrap_or_default();
     let mut out = Vec::new();
     for record in sorted_records(ledger) {
         if !asserts_its_scope(record) {
@@ -554,6 +560,7 @@ pub fn unmatched_watches(
                 continue; // AKR-G021 already reported it
             }
             if !listing.iter().any(|path| glob_matches(&glob, path)) {
+                let uncommitted = changed.iter().any(|path| glob_matches(&glob, path));
                 out.push(
                     Diagnostic::warning(
                         codes::G022,
@@ -565,7 +572,11 @@ pub fn unmatched_watches(
                             glob.as_str()
                         ),
                     )
-                    .help("the watched code moved or was deleted; the record can no longer go stale by that glob"),
+                    .help(if uncommitted {
+                        "the watched code is new in the working tree and not committed yet; the watch starts firing once it is"
+                    } else {
+                        "the watched code moved or was deleted; the record can no longer go stale by that glob"
+                    }),
                 );
             }
         }
@@ -598,6 +609,7 @@ pub fn unmatched_watches(
                 continue;
             }
             if !listing.iter().any(|path| glob_matches(glob, path)) {
+                let uncommitted = changed.iter().any(|path| glob_matches(glob, path));
                 out.push(
                     Diagnostic::warning(
                         codes::G023,
@@ -609,7 +621,11 @@ pub fn unmatched_watches(
                             glob.as_str()
                         ),
                     )
-                    .help("the path moved or was deleted; an unmatched scope cannot govern or become stale with its intended code"),
+                    .help(if uncommitted {
+                        "the path is new in the working tree and not committed yet; commit it rather than repointing the scope"
+                    } else {
+                        "the path moved or was deleted; an unmatched scope cannot govern or become stale with its intended code"
+                    }),
                 );
             }
         }

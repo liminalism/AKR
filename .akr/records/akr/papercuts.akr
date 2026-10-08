@@ -3,7 +3,7 @@ project akr
 
 record akr.papercut.a-command-orchestration-typo-caused-a-tool-call/1 : papercut {
     title "A command orchestration typo caused a tool call to fail before…"
-    state verified
+    state superseded
     statement """
         A command orchestration typo caused a tool call to fail before execution while inspecting MCP record handling; retrying with the corrected command resolved it.
         """
@@ -13,9 +13,23 @@ record akr.papercut.a-command-orchestration-typo-caused-a-tool-call/1 : papercut
     created_at 2026-09-18
 }
 
+record akr.papercut.a-command-orchestration-typo-caused-a-tool-call/2 : papercut {
+    title "A command orchestration typo caused a tool call to fail before…"
+    state verified
+    statement """
+        A command orchestration typo caused a tool call to fail before execution while inspecting MCP record handling; retrying with the corrected command resolved it.
+        """
+    observed_at git:1cbe540937e1126ebcaf6787c6e675324638d033
+    about "akr"
+    closed_at 2026-10-06
+    supersedes [ @akr.papercut.a-command-orchestration-typo-caused-a-tool-call/1 ]
+    author "Codex"
+    created_at 2026-09-18
+}
+
 record akr.papercut.a-shell-orchestration-typo-interrupted-a-read/1 : papercut {
     title "A shell-orchestration typo interrupted a read-only inspection command…"
-    state verified
+    state superseded
     statement """
         A shell-orchestration typo interrupted a read-only inspection command while investigating papercut closure; the corrected command was retried.
         """
@@ -25,7 +39,33 @@ record akr.papercut.a-shell-orchestration-typo-interrupted-a-read/1 : papercut {
     created_at 2026-09-18
 }
 
+record akr.papercut.a-shell-orchestration-typo-interrupted-a-read/2 : papercut {
+    title "A shell-orchestration typo interrupted a read-only inspection command…"
+    state verified
+    statement """
+        A shell-orchestration typo interrupted a read-only inspection command while investigating papercut closure; the corrected command was retried.
+        """
+    observed_at git:655f7527d73bf9a2e3c98607bdd3a3fe069fa853
+    about "akr"
+    closed_at 2026-10-06
+    supersedes [ @akr.papercut.a-shell-orchestration-typo-interrupted-a-read/1 ]
+    author "Codex"
+    created_at 2026-09-18
+}
+
 record akr.papercut.a-subagent-spawned-with-worktree-isolation-into/1 : papercut {
+    title "A subagent spawned with worktree isolation into .claude/worktrees/<id>…"
+    state superseded
+    statement """
+        A subagent spawned with worktree isolation into .claude/worktrees/<id> ran for an hour in a directory that was never a valid git worktree: git resolved its working tree back to the main repo, so `git worktree list` never listed it and `git status` inside it reported the MAIN tree's in-flight changes from other agents as if they were its own. The failure was silent at spawn time and only surfaced when a later resume refused it with work-tree-elsewhere. It cost an hour of a subagent's work and left an orphan directory holding a full cargo target/. Validate the worktree at creation and fail loudly, rather than handing the agent a directory that reads as the parent repo.
+        """
+    observed_at git:9b534026ceff084e33ac987b959f3824eabaa409
+    about "claude-code"
+    author "claude-opus-5"
+    created_at 2026-08-18
+}
+
+record akr.papercut.a-subagent-spawned-with-worktree-isolation-into/2 : papercut {
     title "A subagent spawned with worktree isolation into .claude/worktrees/<id>…"
     state verified
     statement """
@@ -33,6 +73,8 @@ record akr.papercut.a-subagent-spawned-with-worktree-isolation-into/1 : papercut
         """
     observed_at git:9b534026ceff084e33ac987b959f3824eabaa409
     about "claude-code"
+    closed_at 2026-10-06
+    supersedes [ @akr.papercut.a-subagent-spawned-with-worktree-isolation-into/1 ]
     author "claude-opus-5"
     created_at 2026-08-18
 }
@@ -178,7 +220,7 @@ record akr.papercut.after-an-immediate-akr-check-akr-77-records-88/2 : papercut 
 
 record akr.papercut.agents-md-maps-knowledge-propose-to-akr-propose/1 : papercut {
     title "AGENTS.md maps knowledge.propose to 'akr propose <key> --from <file>',…"
-    state verified
+    state superseded
     statement """
         AGENTS.md maps knowledge.propose to 'akr propose <key> --from <file>', but that documented form fails AKR-C003 because the CLI additionally requires --kind even when the canonical input declares ': work'.
         """
@@ -187,9 +229,22 @@ record akr.papercut.agents-md-maps-knowledge-propose-to-akr-propose/1 : papercut
     created_at 2026-09-04
 }
 
+record akr.papercut.agents-md-maps-knowledge-propose-to-akr-propose/2 : papercut {
+    title "AGENTS.md maps knowledge.propose to 'akr propose <key> --from <file>',…"
+    state verified
+    statement """
+        AGENTS.md maps knowledge.propose to 'akr propose <key> --from <file>', but that documented form fails AKR-C003 because the CLI additionally requires --kind even when the canonical input declares ': work'.
+        """
+    observed_at git:f418e73ed37887f47c3d4156f4c72081e2670dcf
+    closed_at 2026-10-06
+    supersedes [ @akr.papercut.agents-md-maps-knowledge-propose-to-akr-propose/1 ]
+    author "codex"
+    created_at 2026-09-04
+}
+
 record akr.papercut.agents-write-working-files-to-agent-scratch/1 : papercut {
     title "Agents write working files to .agent/scratch/ because the protocol…"
-    state verified
+    state superseded
     statement """
         Agents write working files to .agent/scratch/ because the protocol tells them to, and nothing ever removes them. Unlike the OS temp directory or target/, that path is inside the repository, is gitignored rather than transient, and no tool, harness or convention prunes it -- so it accumulates across every session until a human hunts it down by hand, reportedly reaching 30GB+ across projects. The guidance makes it worse rather than better: AGENTS.md says scratch notes go there and that 'nobody reviews them and nothing depends on them', which reads as permission to forget them, and scripts/agent-section.md -- the brief actually installed into every agent's global instructions -- does not mention scratch at all, so agents working in other projects never learn the directory is persistent. Spelling has drifted too: the guidance says .agent/scratch/ while this repo tracks a separate .agents/, and several sibling projects now have both.
         """
@@ -198,13 +253,39 @@ record akr.papercut.agents-write-working-files-to-agent-scratch/1 : papercut {
     created_at 2026-08-19
 }
 
+record akr.papercut.agents-write-working-files-to-agent-scratch/2 : papercut {
+    title "Agents write working files to .agent/scratch/ because the protocol…"
+    state verified
+    statement """
+        Agents write working files to .agent/scratch/ because the protocol tells them to, and nothing ever removes them. Unlike the OS temp directory or target/, that path is inside the repository, is gitignored rather than transient, and no tool, harness or convention prunes it -- so it accumulates across every session until a human hunts it down by hand, reportedly reaching 30GB+ across projects. The guidance makes it worse rather than better: AGENTS.md says scratch notes go there and that 'nobody reviews them and nothing depends on them', which reads as permission to forget them, and scripts/agent-section.md -- the brief actually installed into every agent's global instructions -- does not mention scratch at all, so agents working in other projects never learn the directory is persistent. Spelling has drifted too: the guidance says .agent/scratch/ while this repo tracks a separate .agents/, and several sibling projects now have both.
+        """
+    observed_at git:f923ecd03ba64429d775c518ca4a8aede1ca0dad
+    closed_at 2026-10-06
+    supersedes [ @akr.papercut.agents-write-working-files-to-agent-scratch/1 ]
+    author "claude-opus-5"
+    created_at 2026-08-19
+}
+
 record akr.papercut.akr-change-prepare-staged-reports-code-n-files/1 : papercut {
+    title "`akr change prepare --staged` reports \"code N files\" as the whole…"
+    state superseded
+    statement """
+        `akr change prepare --staged` reports "code N files" as the whole repository's tracked implementation count, not what the change touches: it read 388 for a change that touched 12, because `Repository::staged_entries` runs `git ls-files --stage`, which lists the entire index rather than what is staged against HEAD. `implementation_digest` wants that whole-tree view and is right to have it, but `SemanticDelta::code` is documented as "implementation files staged" and rendered as this change's contents, so it needs the diff against HEAD instead. Second sighting; misread once as a staging mistake.
+        """
+    observed_at git:bf981795d30f434ed4ac3b8864af6b154cabf3e0
+    author "claude"
+    created_at 2026-08-25
+}
+
+record akr.papercut.akr-change-prepare-staged-reports-code-n-files/2 : papercut {
     title "`akr change prepare --staged` reports \"code N files\" as the whole…"
     state verified
     statement """
         `akr change prepare --staged` reports "code N files" as the whole repository's tracked implementation count, not what the change touches: it read 388 for a change that touched 12, because `Repository::staged_entries` runs `git ls-files --stage`, which lists the entire index rather than what is staged against HEAD. `implementation_digest` wants that whole-tree view and is right to have it, but `SemanticDelta::code` is documented as "implementation files staged" and rendered as this change's contents, so it needs the diff against HEAD instead. Second sighting; misread once as a staging mistake.
         """
     observed_at git:bf981795d30f434ed4ac3b8864af6b154cabf3e0
+    closed_at 2026-10-06
+    supersedes [ @akr.papercut.akr-change-prepare-staged-reports-code-n-files/1 ]
     author "claude"
     created_at 2026-08-25
 }
@@ -223,7 +304,7 @@ record akr.papercut.akr-context-rejects-a-collated-papercut-key/1 : papercut {
 
 record akr.papercut.akr-git-commit-m-message-accepted-the-flag-but/1 : papercut {
     title "`akr git commit -m <message>` accepted the flag but silently ignored…"
-    state verified
+    state superseded
     statement """
         `akr git commit -m <message>` accepted the flag but silently ignored it, committing the generated prose instead. The wrapper should honor Git-style repeated `-m` paragraphs while retaining AKR's canonical trailers.
         """
@@ -232,13 +313,39 @@ record akr.papercut.akr-git-commit-m-message-accepted-the-flag-but/1 : papercut 
     created_at 2026-08-29
 }
 
+record akr.papercut.akr-git-commit-m-message-accepted-the-flag-but/2 : papercut {
+    title "`akr git commit -m <message>` accepted the flag but silently ignored…"
+    state verified
+    statement """
+        `akr git commit -m <message>` accepted the flag but silently ignored it, committing the generated prose instead. The wrapper should honor Git-style repeated `-m` paragraphs while retaining AKR's canonical trailers.
+        """
+    observed_at git:ccb4ae57f1c55bb765fd81b3c2c99cfa64d3beb3
+    closed_at 2026-10-06
+    supersedes [ @akr.papercut.akr-git-commit-m-message-accepted-the-flag-but/1 ]
+    author "codex"
+    created_at 2026-08-29
+}
+
 record akr.papercut.akr-validate-check-in-saveyourskin-hangs-10/1 : papercut {
+    title "akr validate/check in SaveYourSkin hangs 10+ minutes in the V-105…"
+    state superseded
+    statement """
+        akr validate/check in SaveYourSkin hangs 10+ minutes in the V-105 phantom-command gate: command_tokens treats the '_' in SYS_WORLD= as a test-name needle, then git grep -o -F of 321 needles including '_' emits ~2.9M matches across 154MB of tracked docs/. SaveYourSkin already recorded this (papercut 2026-09-13) and patched AKR locally on the MacBook; stock 0.5.1 on Linux does not have that patch, so the hang returned after the machine switch.
+        """
+    observed_at git:c9ee23ccf721c19d7e02eb8b5fd58e32855ffdda
+    author "grok"
+    created_at 2026-09-17
+}
+
+record akr.papercut.akr-validate-check-in-saveyourskin-hangs-10/2 : papercut {
     title "akr validate/check in SaveYourSkin hangs 10+ minutes in the V-105…"
     state verified
     statement """
         akr validate/check in SaveYourSkin hangs 10+ minutes in the V-105 phantom-command gate: command_tokens treats the '_' in SYS_WORLD= as a test-name needle, then git grep -o -F of 321 needles including '_' emits ~2.9M matches across 154MB of tracked docs/. SaveYourSkin already recorded this (papercut 2026-09-13) and patched AKR locally on the MacBook; stock 0.5.1 on Linux does not have that patch, so the hang returned after the machine switch.
         """
     observed_at git:c9ee23ccf721c19d7e02eb8b5fd58e32855ffdda
+    closed_at 2026-10-06
+    supersedes [ @akr.papercut.akr-validate-check-in-saveyourskin-hangs-10/1 ]
     author "grok"
     created_at 2026-09-17
 }
@@ -314,7 +421,7 @@ record akr.papercut.cargo-fmt-check-fails-on-the-committed-tree/2 : papercut {
 
 record akr.papercut.collated-1-papercuts-from-evidence-intake/1 : papercut {
     title "Collated 1 papercut from Evidence-intake-project"
-    state verified
+    state superseded
     statement """
         Collated 1 papercut from /mnt/Samsung980_1TB/Rust-projects on 2026-08-09 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
 
@@ -329,9 +436,28 @@ record akr.papercut.collated-1-papercuts-from-evidence-intake/1 : papercut {
     created_at 2026-08-09
 }
 
-record akr.papercut.collated-1-papercuts-from-evidence-intake-2/1 : papercut {
+record akr.papercut.collated-1-papercuts-from-evidence-intake/2 : papercut {
     title "Collated 1 papercut from Evidence-intake-project"
     state verified
+    statement """
+        Collated 1 papercut from /mnt/Samsung980_1TB/Rust-projects on 2026-08-09 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
+
+        ## Evidence-intake-project @evidence-intake-project.papercut.ran-knowledge-context-goal-on-a-project-whose [about akr]
+        Ran knowledge.context --goal on a project whose ledger held only the namespace stub in project.akr; it failed with AKR-X001 "does not resolve to a record" rather than saying the ledger is empty. On a fresh project that reads as a broken tool call. A distinct message ("no records yet; start with knowledge.propose") would tell an agent to author the first record instead of retrying with different goal strings.
+        """
+    observed_at git:de899cd260ab7b8f303a53ed5051118f211c2eb9
+    about "akr"
+    collated [
+        "evidence-intake-project.papercut.ran-knowledge-context-goal-on-a-project-whose"
+    ]
+    closed_at 2026-10-06
+    supersedes [ @akr.papercut.collated-1-papercuts-from-evidence-intake/1 ]
+    created_at 2026-08-09
+}
+
+record akr.papercut.collated-1-papercuts-from-evidence-intake-2/1 : papercut {
+    title "Collated 1 papercut from Evidence-intake-project"
+    state superseded
     statement """
         Collated 1 papercut from .. on 2026-08-19 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
 
@@ -345,7 +471,40 @@ record akr.papercut.collated-1-papercuts-from-evidence-intake-2/1 : papercut {
     created_at 2026-08-19
 }
 
+record akr.papercut.collated-1-papercuts-from-evidence-intake-2/2 : papercut {
+    title "Collated 1 papercut from Evidence-intake-project"
+    state verified
+    statement """
+        Collated 1 papercut from .. on 2026-08-19 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
+
+        ## Evidence-intake-project @evidence-intake-project.papercut.knowledge-revise-on-a-proposed-decision-in [about akr]
+        knowledge.revise on a proposed decision (in-place, rev stays 1) silently dropped the record's source attributions when `sources` was omitted, and passing `sources` explicitly on a later revise did not write them back (content hash unchanged, no `source` block in the file); knowledge.propose with the same payload had persisted them. Also, propose rejects a source with start_line/end_line alone (needs start_byte/end_byte too) which forces callers to compute byte offsets by hand.
+        """
+    observed_at git:daad9b2500fec8acbb1b684e03de4a497bc21af4
+    about "akr"
+    collated [ "evidence-intake-project.papercut.knowledge-revise-on-a-proposed-decision-in" ]
+    closed_at 2026-10-06
+    supersedes [ @akr.papercut.collated-1-papercuts-from-evidence-intake-2/1 ]
+    author "GitHub Uploader"
+    created_at 2026-08-19
+}
+
 record akr.papercut.collated-1-papercuts-from-saveyourskin/1 : papercut {
+    title "Collated 1 papercut from SaveYourSkin"
+    state superseded
+    statement """
+        Collated 1 papercut from /mnt/Samsung980_1TB/Rust-projects on 2026-08-29 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
+
+        ## SaveYourSkin @saveyourskin.papercut.akr-check-and-akr-validate-0-3-3-exit-1-and [about akr]
+        `akr check` and `akr validate` (0.3.3) exit 1 and report `ok: false` with a trailing "1 error" summary line, while emitting zero error-severity diagnostics: `akr --format json check` returns 24 diagnostics, all `warning`, and the MCP `knowledge.validate` agrees (24 total, none error). The count in the summary has no diagnostic behind it, so there is nothing to act on and no way to tell a real failure from this one. Confirmed pre-existing rather than caused by this session's writes by stashing the ledger changes and re-running: identical output at the unmodified HEAD. Guess: the error counter and the diagnostic emitter disagree about a rule that is being suppressed from the report — possibly AKR-T023 (evidence artifact under .agent/scratch), which the same binary DOES print, 14 of them, when run against a fresh worktree where the cited scratch paths are absent.
+        """
+    observed_at git:ccb4ae57f1c55bb765fd81b3c2c99cfa64d3beb3
+    about "akr"
+    collated [ "saveyourskin.papercut.akr-check-and-akr-validate-0-3-3-exit-1-and" ]
+    created_at 2026-08-29
+}
+
+record akr.papercut.collated-1-papercuts-from-saveyourskin/2 : papercut {
     title "Collated 1 papercut from SaveYourSkin"
     state verified
     statement """
@@ -357,6 +516,8 @@ record akr.papercut.collated-1-papercuts-from-saveyourskin/1 : papercut {
     observed_at git:ccb4ae57f1c55bb765fd81b3c2c99cfa64d3beb3
     about "akr"
     collated [ "saveyourskin.papercut.akr-check-and-akr-validate-0-3-3-exit-1-and" ]
+    closed_at 2026-10-06
+    supersedes [ @akr.papercut.collated-1-papercuts-from-saveyourskin/1 ]
     created_at 2026-08-29
 }
 
@@ -414,7 +575,7 @@ record akr.papercut.collated-10-papercuts-from-evidence-intake/1 : papercut {
 
 record akr.papercut.collated-10-papercuts-from-evidence-intake/2 : papercut {
     title "Collated 6 AKR papercuts from Lege-ecosystem"
-    state verified
+    state superseded
     statement """
         Collated 6 AKR papercuts from /mnt/Samsung980_1TB/Rust-projects on 2026-08-09 (D-030). Four untagged Lege-ecosystem papercuts were mistakenly absorbed by the previous revision and are excluded here; each retained source key is in the collated slot.
 
@@ -447,6 +608,45 @@ record akr.papercut.collated-10-papercuts-from-evidence-intake/2 : papercut {
         "lege-ecosystem-perf.papercut.while-recording-the-renderer-decision-knowledge"
     ]
     supersedes [ @akr.papercut.collated-10-papercuts-from-evidence-intake/1 ]
+    created_at 2026-08-09
+}
+
+record akr.papercut.collated-10-papercuts-from-evidence-intake/3 : papercut {
+    title "Collated 6 AKR papercuts from Lege-ecosystem"
+    state verified
+    statement """
+        Collated 6 AKR papercuts from /mnt/Samsung980_1TB/Rust-projects on 2026-08-09 (D-030). Four untagged Lege-ecosystem papercuts were mistakenly absorbed by the previous revision and are excluded here; each retained source key is in the collated slot.
+
+        ## Lege-ecosystem @lege-ecosystem-perf.papercut.after-committing-validated-akr-record-changes [about akr]
+        After committing validated AKR record changes with ordinary Git, `akr lock --check` rejected the embedded build commit because the lock was generated against the parent source commit. The workflow needs an atomic documented commit path or an explicit follow-up lock-only commit; otherwise a seemingly clean knowledge commit fails the required post-commit audit.
+
+        ## Lege-ecosystem @lege-ecosystem-perf.papercut.at-handoff-knowledge-validate-withheld-its [about akr]
+        At handoff, knowledge.validate withheld its entire 8.5k-token result and suggested narrower arguments even though the tool exposes no scope/filter argument; diagnosing required the separate `akr check` CLI (the protocol's `knowledge.validate` name is not a CLI subcommand). A summarized diagnostics mode would make the required handoff check actionable.
+
+        ## Lege-ecosystem @lege-ecosystem-perf.papercut.correcting-an-inaccurate-papercut-via-knowledge [about akr]
+        Correcting an inaccurate papercut via knowledge.supersede failed because the connected workspace vocabulary 0.1 does not support the tool schema's `new_key` option. The correction had to reuse the original key instead of creating a clearer replacement key.
+
+        ## Lege-ecosystem @lege-ecosystem-perf.papercut.creating-the-finalization-work-record-failed [about akr]
+        Creating the finalization work record failed because `depends_on` cannot reference a completed work record, but the propose schema does not identify which relation should capture historical provenance. The write was retried with only the live decision dependency.
+
+        ## Lege-ecosystem @lege-ecosystem-perf.papercut.knowledge-context-withheld-a-4-1k-token-bundle [about akr]
+        knowledge.context withheld a 4.1k-token bundle even though I requested a 16k budget, then advised requesting fewer tokens. The MCP response ceiling is lower than the tool's advertised budget parameter, so context had to be retried with narrower paths.
+
+        ## Lege-ecosystem @lege-ecosystem-perf.papercut.while-recording-the-renderer-decision-knowledge [about akr]
+        While recording the renderer decision, knowledge.propose rejected a dotted decision topic even though the key is dot-delimited; the topic segment syntax was not apparent from the tool schema, so the write had to be retried with a single hyphenated segment. The response also warned that the connected MCP vocabulary 0.2 is newer than the workspace build vocabulary 0.1.
+        """
+    observed_at git:de899cd260ab7b8f303a53ed5051118f211c2eb9
+    about "akr"
+    collated [
+        "lege-ecosystem-perf.papercut.after-committing-validated-akr-record-changes",
+        "lege-ecosystem-perf.papercut.at-handoff-knowledge-validate-withheld-its",
+        "lege-ecosystem-perf.papercut.correcting-an-inaccurate-papercut-via-knowledge",
+        "lege-ecosystem-perf.papercut.creating-the-finalization-work-record-failed",
+        "lege-ecosystem-perf.papercut.knowledge-context-withheld-a-4-1k-token-bundle",
+        "lege-ecosystem-perf.papercut.while-recording-the-renderer-decision-knowledge"
+    ]
+    closed_at 2026-10-06
+    supersedes [ @akr.papercut.collated-10-papercuts-from-evidence-intake/2 ]
     created_at 2026-08-09
 }
 
@@ -632,7 +832,7 @@ record akr.papercut.collated-15-papercuts-from-evidence-intake/1 : papercut {
 
 record akr.papercut.collated-16-papercuts-from-kitchen-concept-lege/1 : papercut {
     title "Collated 16 papercuts from Kitchen-Concept, Lege-ecosystem, SaveYourSkin, jpegXL-rs and 1 more"
-    state verified
+    state superseded
     statement """
         Collated 16 papercuts from /mnt/Samsung980_1TB/Rust-projects on 2026-08-14 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
 
@@ -707,9 +907,88 @@ record akr.papercut.collated-16-papercuts-from-kitchen-concept-lege/1 : papercut
     created_at 2026-08-14
 }
 
+record akr.papercut.collated-16-papercuts-from-kitchen-concept-lege/2 : papercut {
+    title "Collated 16 papercuts from Kitchen-Concept, Lege-ecosystem, SaveYourSkin, jpegXL-rs and 1 more"
+    state verified
+    statement """
+        Collated 16 papercuts from /mnt/Samsung980_1TB/Rust-projects on 2026-08-14 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
+
+        ## Kitchen-Concept @kitchen.papercut.akr-mcp-server-failed-to-connect-at-session [about akr]
+        AKR MCP server failed to connect at session start, so knowledge.start/context were unavailable; used the akr CLI instead.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.akr-papercut-collate-defaults-to-scanning [about akr]
+        akr papercut collate defaults to scanning sibling workspaces of the current root, so running it in Lege-ecosystem looks like it should list this folder's cuts but instead walks Rust-projects/*. Local review is akr view papercuts; collate is an aggregator. Defaulting --projects to the current workspace (and requiring --projects .. to scan sisters) would match the obvious meaning.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.akr-propose-from-rejected-a-yaml-like-statement [about akr]
+        akr propose --from rejected a YAML-like statement: fragment with expected a value, found :. The accepted shape is an AKR slot-list (statement """ ... """), which CLI help does not show.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.knowledge-evidence-add-many-rejected-an [about akr]
+        knowledge.evidence_add_many rejected an otherwise valid evidence batch because the repository shorthand `lege` is not the declared `lege-ecosystem` namespace; surfacing valid namespaces in the write error or start bundle would avoid the retry.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.knowledge-papercut-failed-on-first-use-because [about akr]
+        knowledge.papercut failed on first use because this multi-namespace workspace required an explicit namespace, but knowledge.start did not surface the available namespace choices in its session head. Including them in the handoff would prevent the retry.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.knowledge-start-returned-a-2350-token-compact [about akr]
+        knowledge.start returned a 2350-token compact preview that exceeded its own 2000-token hard limit and required a second narrower call; honoring the requested/default hard limit on the first response would avoid the retry.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.while-proposing-a-work-record-the-callable [about akr]
+        While proposing a work record, the callable schema did not expose that `intent` is mandatory or that `topic` is invalid for planning kinds; the validator rejected the otherwise structured call. Including kind-specific required slots and field applicability in tool metadata would avoid the retry.
+
+        ## SaveYourSkin @saveyourskin.papercut.akr-build-fails-on-this-working-tree-with-error [about akr]
+        `akr build` fails on this working tree with "error[AKR-I002]: cannot write revisions: CHECK constraint failed: method IS NULL OR method IN ('manual','command','observation','instrumented')". It succeeds against HEAD, so one of the uncommitted record edits in .akr/records/saveyourskin/ carries a method value outside that set. The error names neither the record nor the offending value, which makes it hard to find; reporting the key and method would fix that. Consequence: the lock cannot be refreshed, so knowledge.validate reports AKR-R052 for every newly written record.
+
+        ## SaveYourSkin @saveyourskin.papercut.akr-mcp-server-failed-to-connect-used-the-akr [about akr]
+        AKR MCP server failed to connect; used the akr CLI for start/context/propose/validate.
+
+        ## SaveYourSkin @saveyourskin.papercut.knowledge-get-rendered-a-work-record-s-main [about akr]
+        knowledge.get rendered a work record's main slot without naming it, so a faithful knowledge.revise first tried `goal`; the schema only then revealed the slot is `intent`. Exposing slot names in body/canonical output would avoid a failed write attempt.
+
+        ## SaveYourSkin @saveyourskin.papercut.knowledge-propose-accepted-an-implements [about akr]
+        knowledge.propose accepted an `implements` relation to a work record at the call boundary and only later rejected it under V-005; relation target-kind constraints in the tool description would make completed-slice recording single-pass.
+
+        ## SaveYourSkin @saveyourskin.papercut.knowledge-propose-accepted-observation-method [about akr]
+        knowledge.propose accepted observation method `inspection` and wrote a verified revision, but `akr build` rejects that stored historical revision because the index CHECK allows only manual/command/observation/instrumented. Revising the head to `instrumented` cannot repair the now-invalid sealed revision, so write-time validation and the index schema need the same enum or a supported repair path.
+
+        ## SaveYourSkin @saveyourskin.papercut.while-recording-a-completed-work-slice [about akr]
+        While recording a completed work slice, knowledge.propose's schema exposed slots as an unconstrained object and did not tell me that work records accept intent/target/note rather than summary; the call failed only after validation. Publishing per-kind slot names in the tool schema or description would avoid the retry.
+
+        ## SaveYourSkin @saveyourskin.papercut.while-recording-a-verified-gameplay-video [about akr]
+        While recording a verified gameplay-video observation, knowledge.propose parsed a descriptive method containing `15 fps` and punctuation as slot syntax instead of rejecting it as an invalid enum value. The schema should validate/quote the method argument before serializing it.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.while-checking-an-in-progress-akr-change-akr [about akr]
+        While checking an in-progress AKR change, `akr change status` was rejected because the CLI exposes `change show` instead; a status alias or help hint would make this transition easier to discover.
+
+        ## orderflower @orderflower.papercut.on-a-freshly-initialised-repo-with-no-commits [about akr]
+        On a freshly initialised repo with no commits yet, knowledge.evidence_add and knowledge.papercut both fail with "no commit to record: not inside a git repository". That blocks knowledge.complete for every acceptance check at exactly the moment a first milestone finishes, and the message points at the wrong cause: git init had been run, there simply were no commits. A message naming the real fix (make an initial commit, or pass observed_at) would have saved a detour.
+        """
+    observed_at git:a72ffa4be531adbf3e9abcac9d8fa1717819b2ca
+    about "akr"
+    collated [
+        "kitchen.papercut.akr-mcp-server-failed-to-connect-at-session",
+        "lege-ecosystem.papercut.akr-papercut-collate-defaults-to-scanning",
+        "lege-ecosystem.papercut.akr-propose-from-rejected-a-yaml-like-statement",
+        "lege-ecosystem.papercut.knowledge-evidence-add-many-rejected-an",
+        "lege-ecosystem.papercut.knowledge-papercut-failed-on-first-use-because",
+        "lege-ecosystem.papercut.knowledge-start-returned-a-2350-token-compact",
+        "lege-ecosystem.papercut.while-proposing-a-work-record-the-callable",
+        "saveyourskin.papercut.akr-build-fails-on-this-working-tree-with-error",
+        "saveyourskin.papercut.akr-mcp-server-failed-to-connect-used-the-akr",
+        "saveyourskin.papercut.knowledge-get-rendered-a-work-record-s-main",
+        "saveyourskin.papercut.knowledge-propose-accepted-an-implements",
+        "saveyourskin.papercut.knowledge-propose-accepted-observation-method",
+        "saveyourskin.papercut.while-recording-a-completed-work-slice",
+        "saveyourskin.papercut.while-recording-a-verified-gameplay-video",
+        "jpegxl-rs.papercut.while-checking-an-in-progress-akr-change-akr",
+        "orderflower.papercut.on-a-freshly-initialised-repo-with-no-commits"
+    ]
+    closed_at 2026-10-06
+    supersedes [ @akr.papercut.collated-16-papercuts-from-kitchen-concept-lege/1 ]
+    created_at 2026-08-14
+}
+
 record akr.papercut.collated-17-papercuts-from-evidence-intake/1 : papercut {
     title "Collated 17 papercuts from Evidence-intake-project, Lege-ecosystem, LegeOS, SaveYourSkin and 3 more"
-    state verified
+    state superseded
     statement """
         Collated 17 papercuts from /mnt/Samsung980_1TB/Rust-projects on 2026-08-25 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
 
@@ -788,9 +1067,173 @@ record akr.papercut.collated-17-papercuts-from-evidence-intake/1 : papercut {
     created_at 2026-08-25
 }
 
+record akr.papercut.collated-17-papercuts-from-evidence-intake/2 : papercut {
+    title "Collated 17 papercuts from Evidence-intake-project, Lege-ecosystem, LegeOS, SaveYourSkin and 3 more"
+    state verified
+    statement """
+        Collated 17 papercuts from /mnt/Samsung980_1TB/Rust-projects on 2026-08-25 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
+
+        ## Evidence-intake-project @evidence-intake-project.papercut.correcting-an-invalid-scratch-backed-evidence [about akr]
+        Correcting an invalid scratch-backed evidence artifact with knowledge.revise was rejected because the superseded invalid revision still had to validate. The required bridge was to `akr scratch keep` first, then revise to the durable artifact.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.while-recording-a-review-assessment-knowledge [about akr]
+        While recording a review assessment, knowledge.propose rejected the write because the tool schema did not surface the assessment kind's required `statement` slot. The validation diagnostic explained the missing slot, but kind-specific required slots in the tool description would prevent the failed round trip.
+
+        ## LegeOS @legeos.papercut.knowledge-propose-exposes-a-generic-slots [about akr]
+        knowledge.propose exposes a generic slots object but not each kind's valid slot names; authoring this work item required failed retries to learn that work accepts `intent`, not `work` (and that topic is normative-only). Including kind-slot guidance in the tool schema would avoid this.
+
+        ## SaveYourSkin @saveyourskin.papercut.a-decision-proposal-with-a-natural-language [about akr]
+        A decision proposal with a natural-language `topic` produced parser errors that treated later topic words as nonexistent slots. Topic values need token-safe slug syntax (or omission), but the tool schema only says `topic?: string`.
+
+        ## SaveYourSkin @saveyourskin.papercut.i-tried-to-record-a-user-settled-decision-with [about akr]
+        I tried to record a user-settled decision with state `accepted`, but decision lifecycle states are `proposed|active|rejected|superseded|withdrawn`; the schema error did not suggest the valid replacement. `knowledge.explain decision` supplied it, so use `active` plus a supported_by/implements edge.
+
+        ## SaveYourSkin @saveyourskin.papercut.knowledge-context-for-the-focused-mealtime-work [about akr]
+        knowledge.context for the focused mealtime work returned roughly 29-30k tokens and was transport-truncated even with budget_tokens 4500; the bundle included hundreds of unrelated work/evidence records, so the requested budget did not yield a fully readable bundle.
+
+        ## SaveYourSkin @saveyourskin.papercut.knowledge-get-detail-body-omitted-a-work-record [about akr]
+        knowledge.get detail=body omitted a work record's inherited acceptance checks, so the first knowledge.complete call lacked its 10 required mappings; completion listed the IDs, while only CLI canonical output exposed their statements/methods.
+
+        ## SaveYourSkin @saveyourskin.papercut.knowledge-propose-advertises-scope-as-array [about akr]
+        knowledge.propose advertises scope as Array<unknown>, but path objects were rejected as 'unknown scope form' without showing the accepted shape; the canonical context output suggests plain `path ...` strings.
+
+        ## SaveYourSkin @saveyourskin.papercut.knowledge-propose-exposes-topic-for-every-kind [about akr]
+        knowledge.propose exposes `topic` for every kind in its schema, but an observation proposal then fails AKR-C004 because topic is normative-only; surfacing that restriction in the field description would avoid a failed write/retry.
+
+        ## SaveYourSkin @saveyourskin.papercut.starting-the-mealtime-furniture-session [about akr]
+        Starting the mealtime furniture session, knowledge.start excluded the working ledger because two older evidence records cited unkept scratch artifacts; one cited directory had already been pruned. The validator's keep guidance was clear, but a missing cited path makes knowledge.revise circular until the path is reconstructed and retained.
+
+        ## bpg-rs @bpg.papercut.tried-to-assemble-context-from-a-licensing [about akr]
+        Tried to assemble context from a licensing observation key, but knowledge.context only accepts a milestone, work, or track. The ledger error clarified the accepted goal kinds.
+
+        ## bpg-rs @bpg.papercut.while-recording-the-licensing-observation [about akr]
+        While recording the licensing observation, knowledge.propose rejected local line citations because the source file was not registered as an AKR source. The error was clear; I will record the observation with its manual method and project scope instead of registering a source solely for this release audit.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.a-work-revision-that-cites-already-committed [about akr]
+        A work revision that cites already-committed evidence in verified_by lands "not satisfied - predates the last change" unless the evidence rows are committed in the very same commit as the revision (the current-together grace); revising a record in a later .akr-only commit therefore un-satisfies checks whose measurements are still perfectly valid, and there is no way to re-land unchanged evidence. Retargeting a check citation onto fresh evidence needs either an observed_at at-or-after the revision commit (chicken-and-egg) or duplicated evidence records. Hit while pointing pqc-usable-efforts-cost's workspace-gates check at the 2026-08-25 gates evidence; repaired by dropping the revision commit.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.after-akr-scratch-keep-visibly-added-a-new [about akr]
+        After `akr scratch keep` visibly added a new entry, knowledge.evidence_add still rejected that kept artifact from its cached workspace. The CLI fallback revalidated ~230 unrelated historical scratch citations lacking current keep markers and refused an otherwise valid atomic write; omitting the typed artifact was the only scoped path forward.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.amending-an-akr-generated-commit-message-to [about akr]
+        Amending an akr-generated commit message (to replace the generic "chore:" subject with a descriptive one while keeping the AKR trailers byte-identical) is rejected by the commit-msg hook with AKR-C031 because the change transaction closes at akr git commit; the only way through is git commit --amend --no-verify. Either akr git commit could accept a subject/body override, or the hook could allow amends whose trailers match the last commit.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.knowledge-propose-s-generic-slots-schema-does [about akr]
+        knowledge.propose's generic `slots` schema does not expose that an observation's `method` must be one of manual/command/instrumented/observation. V-022 said to add `method`; supplying explanatory prose then produced dozens of parser diagnostics before the enum expectation appeared.
+
+        ## orderflower @orderflower.papercut.while-proposing-a-work-record-the-generic [about akr]
+        While proposing a work record, the generic schema exposed `topic` and `knowledge.explain work` did not say work rejects it; the proposal failed with AKR-C004. The kind explanation could list forbidden shared fields or the tool schema could be kind-discriminated.
+        """
+    observed_at git:4b3212b16511e2cd2546c26c35271ada3d1cea6a
+    about "akr"
+    collated [
+        "evidence-intake-project.papercut.correcting-an-invalid-scratch-backed-evidence",
+        "lege-ecosystem.papercut.while-recording-a-review-assessment-knowledge",
+        "legeos.papercut.knowledge-propose-exposes-a-generic-slots",
+        "saveyourskin.papercut.a-decision-proposal-with-a-natural-language",
+        "saveyourskin.papercut.i-tried-to-record-a-user-settled-decision-with",
+        "saveyourskin.papercut.knowledge-context-for-the-focused-mealtime-work",
+        "saveyourskin.papercut.knowledge-get-detail-body-omitted-a-work-record",
+        "saveyourskin.papercut.knowledge-propose-advertises-scope-as-array",
+        "saveyourskin.papercut.knowledge-propose-exposes-topic-for-every-kind",
+        "saveyourskin.papercut.starting-the-mealtime-furniture-session",
+        "bpg.papercut.tried-to-assemble-context-from-a-licensing",
+        "bpg.papercut.while-recording-the-licensing-observation",
+        "jpegxl-rs.papercut.a-work-revision-that-cites-already-committed",
+        "jpegxl-rs.papercut.after-akr-scratch-keep-visibly-added-a-new",
+        "jpegxl-rs.papercut.amending-an-akr-generated-commit-message-to",
+        "jpegxl-rs.papercut.knowledge-propose-s-generic-slots-schema-does",
+        "orderflower.papercut.while-proposing-a-work-record-the-generic"
+    ]
+    closed_at 2026-10-06
+    supersedes [ @akr.papercut.collated-17-papercuts-from-evidence-intake/1 ]
+    created_at 2026-08-25
+}
+
+record akr.papercut.collated-17-papercuts-from-legeos/1 : papercut {
+    title "Collated 17 papercuts from LegeOS"
+    state verified
+    statement """
+        Collated 17 papercuts from /home/dk/rust-projects on 2026-10-06 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
+
+        ## LegeOS @legeos.papercut.akr-context-budget-16000-emitted-a-45k-token [about akr]
+        AKR context --budget 16000 emitted a ~45k-token broad crate/compositor/shell bundle and truncated prose; narrowing paths reduced it. The source/reference labels are not record kinds; akr source is the separate immutable-document command.
+
+        ## LegeOS @legeos.papercut.akr-context-requires-goal-key-not-a-positional [about akr]
+        AKR context requires --goal KEY, not a positional key. The native workstation also has no unzip binary; unpack the five known ZIP members through archive reads and file writes rather than assuming extraction tooling.
+
+        ## LegeOS @legeos.papercut.akr-context-takes-paths-repeatable-not-path-the [about akr]
+        akr context takes --paths (repeatable), not --path; the unknown-flag error does not suggest the right spelling.
+
+        ## LegeOS @legeos.papercut.akr-explain-akr-g023-describes-a-stale [about akr]
+        akr explain AKR-G023 describes a stale generated-view tool stamp, but akr check emits AKR-G023 for scope paths that match no tracked path; the explain text and the emitted diagnostic disagree (and the explain text cites itself as an exemption).
+
+        ## LegeOS @legeos.papercut.akr-git-log-record-reports-no-commits-for [about akr]
+        akr git log <record> reports no commits for trailer commits on a non-main branch, with no hint about its search scope; had to verify linkage with git log --grep instead
+
+        ## LegeOS @legeos.papercut.akr-papercut-close-key-always-fails-with-akr [about akr]
+        akr papercut close <key> always fails with AKR-C003 requires a key: args.rs finds the first non-dash arg (close itself) then filters it out, so the key is never read. Worked around via akr revise with a closed_at overlay; no CLI test covers close.
+
+        ## LegeOS @legeos.papercut.archive-menu-setup-akr-context-requires-goal [about akr]
+        Archive-menu setup: akr context requires --goal rather than a positional key; libarchive runtime exists but pkg-config development metadata is absent on the native host.
+
+        ## LegeOS @legeos.papercut.backlog-children-use-bare-part-of-references [about akr]
+        Backlog children use bare part_of references. Supplying carried_forward dispositions for them aborts with R016 not part_of OLD/1 once the successor resolves; bare references auto-forward and dispositions are only needed for pinned children, unlike the broad revise help wording.
+
+        ## LegeOS @legeos.papercut.cli-evidence-keys-omit-the-displayed-revision [about akr]
+        CLI evidence keys omit the displayed /revision suffix; copying /1 from rendered AKR output failed validation. Native appearance fixture first assumed rustix was a workspace dependency (it is direct 1.1) and included API modules one level above their production super::appearance namespace, requiring manifest/module correction.
+
+        ## LegeOS @legeos.papercut.creating-desktop-acceptance-checks-akr-explain [about akr]
+        Creating desktop acceptance checks: akr explain acceptance is unsupported (only kinds/codes/rules), so consulted an existing work record for check syntax instead.
+
+        ## LegeOS @legeos.papercut.generating-the-predeploy-checklist-empty-akr [about akr]
+        Generating the predeploy checklist: empty akr search returns zero rather than all active records; use authoritative active-work view then get heads. Reference extraction must exclude a sentence's trailing dot, otherwise get fails with an invalid key.
+
+        ## LegeOS @legeos.papercut.orienting-homegarden-calendar-work-akr-context [about akr]
+        Orienting Homegarden/calendar work: akr context KEY failed because it requires --goal KEY, unlike get; retried with the required flag.
+
+        ## LegeOS @legeos.papercut.recording-integration-evidence-evidence-add-is [about akr]
+        Recording integration evidence: evidence-add is not the accepted CLI spelling; the command is akr evidence add. A failed attempt required retry before the runtime observations could be recorded.
+
+        ## LegeOS @legeos.papercut.revising-the-backlog-with-carried-forward [about akr]
+        Revising the backlog with carried_forward dispositions rejected an into target written as KEY/2: the disposition parser requires a bare key, not a D-009 revision reference. Use the bare revised planning key for every child.
+
+        ## LegeOS @legeos.papercut.s13-s14-context-scoped-to-appd-plus-docs [about akr]
+        S13/S14 context scoped to appd plus docs/architecture expanded to unrelated work and oversized prose; get --format json plus artifact :raw was needed to read complete relevant safety statements. HistoryStore implementation lives in history.rs, not a history/sqlite.rs child.
+
+        ## LegeOS @legeos.papercut.the-integration-pack-uses-symbolic-source [about akr]
+        The integration pack uses symbolic source labels (PixelKit) but the build sibling is lowercase ../pixelkit; direct eval reads do not accept read-tool archive selectors. Also context's mandatory graph can exceed a requested budget; retry with the reported minimum rather than assuming it truncates.
+
+        ## LegeOS @legeos.papercut.while-loading-terminal-workload-context-budget [about akr]
+        While loading terminal-workload context, --budget 7000 still emitted ~21,586 tokens/129 records (an unconstrained path bundle emitted ~55,653). Required acceptance/relations dominate; narrow exact paths and read spill artifacts in full instead of treating the budget as a cap.
+        """
+    observed_at git:475045cdb223ccce985fe4234d9fb52832854aae
+    about "akr"
+    collated [
+        "legeos.papercut.akr-context-budget-16000-emitted-a-45k-token",
+        "legeos.papercut.akr-context-requires-goal-key-not-a-positional",
+        "legeos.papercut.akr-context-takes-paths-repeatable-not-path-the",
+        "legeos.papercut.akr-explain-akr-g023-describes-a-stale",
+        "legeos.papercut.akr-git-log-record-reports-no-commits-for",
+        "legeos.papercut.akr-papercut-close-key-always-fails-with-akr",
+        "legeos.papercut.archive-menu-setup-akr-context-requires-goal",
+        "legeos.papercut.backlog-children-use-bare-part-of-references",
+        "legeos.papercut.cli-evidence-keys-omit-the-displayed-revision",
+        "legeos.papercut.creating-desktop-acceptance-checks-akr-explain",
+        "legeos.papercut.generating-the-predeploy-checklist-empty-akr",
+        "legeos.papercut.orienting-homegarden-calendar-work-akr-context",
+        "legeos.papercut.recording-integration-evidence-evidence-add-is",
+        "legeos.papercut.revising-the-backlog-with-carried-forward",
+        "legeos.papercut.s13-s14-context-scoped-to-appd-plus-docs",
+        "legeos.papercut.the-integration-pack-uses-symbolic-source",
+        "legeos.papercut.while-loading-terminal-workload-context-budget"
+    ]
+    created_at 2026-10-06
+}
+
 record akr.papercut.collated-18-papercuts-from-evidence-intake/1 : papercut {
     title "Collated 18 papercuts from Evidence-intake-project, Lege-ecosystem, SaveYourSkin, jpegXL-rs and 1 more"
-    state verified
+    state superseded
     statement """
         Collated 18 papercuts from /mnt/Samsung980_1TB/Rust-projects on 2026-08-11 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
 
@@ -873,7 +1316,143 @@ record akr.papercut.collated-18-papercuts-from-evidence-intake/1 : papercut {
     created_at 2026-08-11
 }
 
+record akr.papercut.collated-18-papercuts-from-evidence-intake/2 : papercut {
+    title "Collated 18 papercuts from Evidence-intake-project, Lege-ecosystem, SaveYourSkin, jpegXL-rs and 1 more"
+    state verified
+    statement """
+        Collated 18 papercuts from /mnt/Samsung980_1TB/Rust-projects on 2026-08-11 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
+
+        ## Evidence-intake-project @evidence-intake-project.papercut.i-passed-scope-terms-as-path-src-gui-winsafe-rs [about akr]
+        I passed scope terms as "path src/gui/winsafe.rs" to knowledge.propose, copying the `path "..."` form the generated views render, and it was accepted silently — producing scope `path "path src/gui/winsafe.rs"`, a glob that can never match a file, so the records would never have gone stale when winsafe.rs changed. Nothing validates that a scope glob is well-formed or warns that it currently matches zero paths. A warning when a path term matches nothing in the worktree would have caught this at propose time instead of three records later.
+
+        ## Evidence-intake-project @evidence-intake-project.papercut.knowledge-explain-crashed-with-akr-x099 [about akr]
+        knowledge.explain crashed with AKR-X099 (internal) for both `decision` and `constraint` after knowledge.propose rejected my slots with AKR-T002. The propose error names the bad slot but not the valid ones, and explain -- the documented way to find them -- is exactly what fails, so I had to read .akr/records/*.akr by hand to learn that a decision uses `decision` plus `claim` blocks and has no `rationale` or `note` slot. Suggest AKR-T002 list the kind's valid slots inline.
+
+        ## Evidence-intake-project @evidence-intake-project.papercut.knowledge-propose-returns-lock-stale-true-on [about akr]
+        knowledge.propose returns lock_stale:true on every write but does not refresh akr.lock, so a later knowledge.validate fails with AKR-R052 ("akr.lock has no hash for <the record I just wrote>"). The fix is `akr lock --update`, but nothing in the propose result or the diagnostic says so, and AGENTS.md's "never hand-edit .akr/" made me hesitant to touch the lock at all. Suggest either refreshing the lock as part of propose, or having AKR-R052 name `akr lock --update` as the remedy.
+
+        ## Lege-ecosystem @lege-ecosystem-perf.papercut.after-several-successful-akr-writes-the-mcp [about akr]
+        After several successful AKR writes, the MCP transport closed persistently: knowledge.explain and knowledge.revise both failed immediately, and error[AKR-C004]: "D-011" is neither a registered diagnostic code, a known rule, nor a record kind also rejected a decision identifier even though tool guidance names it. The local  fallback completed the handoff update.
+
+        ## Lege-ecosystem @lege-ecosystem-perf.papercut.knowledge-papercut-rejected-its-first-call [about akr]
+        `knowledge.papercut` rejected its first call because this multi-namespace project requires an explicit namespace, although the task protocol's example does not mention that requirement. Retrying with `namespace: lege-ecosystem-perf` succeeded.
+
+        ## SaveYourSkin @saveyourskin.papercut.after-knowledge-revise-changed-an-existing [about akr]
+        After knowledge.revise changed an existing milestone revision from proposed to ready in place, a second revise with the same base revision and state active created a new revision in proposed state instead of activating it. This repeated on revisions 3 and 4; completing directly from ready worked.
+
+        ## SaveYourSkin @saveyourskin.papercut.authoring-a-new-track-s-records-cost-three [about akr]
+        Authoring a new track's records cost three failed writes to discover relation/slot rules that aren't visible from the propose schema: a `constraint` rejects the `note` slot (planning kinds only, D-026), an `observation` may not declare `supported_by`, and a `milestone` may not declare `implements` (both V-005). The tool description lists relation names generically, so the per-kind restrictions only surface as errors after a full record body is composed. Either the propose schema's relations field could name the allowed relations per kind, or the V-005 error could suggest the nearest legal relation (`derived_from` in both of my cases). Separately, an `observation`'s `observed_at` requires a 40-hex commit while the kind's description just says "observed_at", so an ISO date is a natural first guess and fails with a parse cascade of three diagnostics.
+
+        ## SaveYourSkin @saveyourskin.papercut.knowledge-context-rejected-a-valid-key-revision [about akr]
+        knowledge.context rejected a valid @key/revision reference even though knowledge.get accepts that canonical reference form; it required the bare logical key, making goal resumption take two retries. The context tool/docs could state or normalize this syntax.
+
+        ## SaveYourSkin @saveyourskin.papercut.knowledge-supersede-documents-a-new-key-option [about akr]
+        knowledge.supersede documents a new_key option, but AKR 0.1 rejects every different-key supersession with AKR-C004. I had to supersede the existing key in place, which prevents giving a materially changed design ruling a more accurate key.
+
+        ## SaveYourSkin @saveyourskin.papercut.revising-an-active-decision-s-content [about akr]
+        Revising an active decision's content implicitly returned its lifecycle state to proposed, requiring a second state-only revise. Preserving the head state by default, or explicitly warning that omitted state resets it, would avoid an easy accidental deactivation.
+
+        ## SaveYourSkin @saveyourskin.papercut.while-removing-37-acknowledged-missing-source [about akr]
+        While removing 37 acknowledged missing-source citations, knowledge.get, knowledge.revise, knowledge.explain, and knowledge.validate repeatedly returned Transport closed; the local akr CLI remained healthy and provided the necessary fallback.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.knowledge-propose-documents-observation [about akr]
+        knowledge.propose documents observation observed_at as required but does not say it must be a git:<40-hex> locator; passing the natural ISO date 2026-08-11 produced parser errors about a 4-digit commit hash.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.knowledge-propose-says-observation-requires [about akr]
+        knowledge.propose says observation requires statement and observed_at, but a verified observation also requires method/source/evidence (V-022); after adding method, the natural accompanying command slot is rejected because observation does not permit command.
+
+        ## raw-autotune @raw-autotune.papercut.akr-explain-assessment-lists-optional-as-of-but [about akr]
+        akr explain assessment lists optional as_of but not that it requires a git commit; using an ISO date caused a safe parse failure. Showing slot types in explain would avoid this retry.
+
+        ## raw-autotune @raw-autotune.papercut.akr-propose-from-rejected-a-prose-body-as-does [about akr]
+        akr propose --from rejected a prose body as 'does not parse as a record'; the CLI help calls it a body source but this build requires a complete canonical record.
+
+        ## raw-autotune @raw-autotune.papercut.knowledge-explain-observation-and-knowledge [about akr]
+        knowledge.explain observation and knowledge.papercut both failed with Transport closed while recording the sky-stage diagnosis; the local akr CLI worked as a fallback.
+
+        ## raw-autotune @raw-autotune.papercut.the-akr-cli-search-syntax-differs-from-the-mcp [about akr]
+        The AKR CLI search syntax differs from the MCP shape: --query is rejected and the help must be consulted separately.
+
+        ## raw-autotune @raw-autotune.papercut.the-knowledge-context-mcp-connector-returned [about akr]
+        The knowledge.context MCP connector returned 'Transport closed' at the start of implementation; using the equivalent akr CLI workflow.
+        """
+    observed_at git:03e4af3c2e62cb07ab00436e512bedc41cd88436
+    about "akr"
+    collated [
+        "evidence-intake-project.papercut.i-passed-scope-terms-as-path-src-gui-winsafe-rs",
+        "evidence-intake-project.papercut.knowledge-explain-crashed-with-akr-x099",
+        "evidence-intake-project.papercut.knowledge-propose-returns-lock-stale-true-on",
+        "lege-ecosystem-perf.papercut.after-several-successful-akr-writes-the-mcp",
+        "lege-ecosystem-perf.papercut.knowledge-papercut-rejected-its-first-call",
+        "saveyourskin.papercut.after-knowledge-revise-changed-an-existing",
+        "saveyourskin.papercut.authoring-a-new-track-s-records-cost-three",
+        "saveyourskin.papercut.knowledge-context-rejected-a-valid-key-revision",
+        "saveyourskin.papercut.knowledge-supersede-documents-a-new-key-option",
+        "saveyourskin.papercut.revising-an-active-decision-s-content",
+        "saveyourskin.papercut.while-removing-37-acknowledged-missing-source",
+        "jpegxl-rs.papercut.knowledge-propose-documents-observation",
+        "jpegxl-rs.papercut.knowledge-propose-says-observation-requires",
+        "raw-autotune.papercut.akr-explain-assessment-lists-optional-as-of-but",
+        "raw-autotune.papercut.akr-propose-from-rejected-a-prose-body-as-does",
+        "raw-autotune.papercut.knowledge-explain-observation-and-knowledge",
+        "raw-autotune.papercut.the-akr-cli-search-syntax-differs-from-the-mcp",
+        "raw-autotune.papercut.the-knowledge-context-mcp-connector-returned"
+    ]
+    closed_at 2026-10-06
+    supersedes [ @akr.papercut.collated-18-papercuts-from-evidence-intake/1 ]
+    created_at 2026-08-11
+}
+
 record akr.papercut.collated-18-papercuts-from-kitchen-concept-lege/1 : papercut {
+    title "Collated 18 papercuts from Kitchen-Concept, Lege-ecosystem, SaveYourSkin, bpg-rs and 4 more"
+    state superseded
+    statement """
+        Collated 18 papercuts from /mnt/Samsung980_1TB/Rust-projects on 2026-08-07 (D-030). Each source key is in the collated slot; see the owning project's ledger for the full statement.
+
+        - Kitchen-Concept @kitchen.papercut.porting-a-12-document-40kb-source-planning — Porting a 12-document, ~40KB-source planning corpus by hand-authoring…
+        - Kitchen-Concept @kitchen.papercut.relation-domain-range-e-g-resolves-work — Relation domain/range (e.g. resolves:…
+        - Kitchen-Concept @kitchen.papercut.two-policy-records-with-the-same-topic-and — Two policy records with the same topic and overlapping scope silently…
+        - Lege-ecosystem @lege-ecosystem-perf.papercut.imported-lege-ecosystem-perf-audit-work-records — Imported lege-ecosystem-perf audit work records (2026-08-05) are stale…
+        - SaveYourSkin @saveyourskin.papercut.akr-check-akr-build-akr-lock-update-each-took — akr check / akr build / akr lock --update each took >120s (timed out…
+        - SaveYourSkin @saveyourskin.papercut.akr-check-build-validate-the-whole-ledger-with — akr check/build validate the whole ledger with no way to scope to just…
+        - bpg-rs @bpg.papercut.task-brief-for-a-historical-port-asked-for-docs — Task brief for a historical port asked for…
+        - bpg-rs @bpg.papercut.v-020-s-descendant-commit-freshness-gate-akr — V-020's descendant-commit freshness gate (AKR-R022) is structurally…
+        - jpegXL-rs @jpegxl-rs.papercut.akr-check-strict-exits-1-on-akr-g004-alone-when — akr check --strict exits 1 on AKR-G004 alone when watched paths have…
+        - jpegXL-rs @jpegxl-rs.papercut.akr-import-of-performance-md-dry-run-proposed — akr import of PERFORMANCE.md --dry-run proposed every section as kind…
+        - jpegXL-rs @jpegxl-rs.papercut.akr-mcp-install-setup-akr-mcp-sh-cp-fails-with — akr-mcp install: setup-akr-mcp.sh cp fails with Text file busy when an…
+        - jpegXL-rs @jpegxl-rs.papercut.akr-propose-from-rejects-slot-only-bodies — akr propose --from rejects slot-only bodies; requires full akr 0.1…
+        - jpegXL-rs @jpegxl-rs.papercut.akr-view-active-work-current-state-etc-returned — akr view ACTIVE-WORK/CURRENT-STATE/etc returned AKR-E003 (renderer…
+        - jpegXL-rs @jpegxl-rs.papercut.hybrid-intel-plain-cycles-u-records-cpu-atom — Hybrid Intel: plain cycles:u records cpu_atom+cpu_core; atom samples…
+        - jpegXL-rs @jpegxl-rs.papercut.jpxl-bench-fingerprints-outputs-with-fnv-1a-64 — jpxl bench fingerprints outputs with FNV-1a-64, but PERFORMANCE.md…
+        - jpegXL-rs @jpegxl-rs.papercut.knowledge-complete-s-cited-evidence-gets-its — knowledge.complete's cited evidence gets its observed_at commit hash…
+        - jpegXL-rs @jpegxl-rs.papercut.opt-f-multiplicity-counters-are-still-only — Opt-F multiplicity counters are still only listed in PERFORMANCE.md —…
+        - raw-autotune @raw-autotune.papercut.knowledge-search-and-knowledge-start-via-the — knowledge.search and knowledge.start via the akr MCP tool repeatedly…
+        """
+    observed_at git:fb8ec6e5dcaa91b0e0f988935489d55c8badade5
+    collated [
+        "kitchen.papercut.porting-a-12-document-40kb-source-planning",
+        "kitchen.papercut.relation-domain-range-e-g-resolves-work",
+        "kitchen.papercut.two-policy-records-with-the-same-topic-and",
+        "lege-ecosystem-perf.papercut.imported-lege-ecosystem-perf-audit-work-records",
+        "saveyourskin.papercut.akr-check-akr-build-akr-lock-update-each-took",
+        "saveyourskin.papercut.akr-check-build-validate-the-whole-ledger-with",
+        "bpg.papercut.task-brief-for-a-historical-port-asked-for-docs",
+        "bpg.papercut.v-020-s-descendant-commit-freshness-gate-akr",
+        "jpegxl-rs.papercut.akr-check-strict-exits-1-on-akr-g004-alone-when",
+        "jpegxl-rs.papercut.akr-import-of-performance-md-dry-run-proposed",
+        "jpegxl-rs.papercut.akr-mcp-install-setup-akr-mcp-sh-cp-fails-with",
+        "jpegxl-rs.papercut.akr-propose-from-rejects-slot-only-bodies",
+        "jpegxl-rs.papercut.akr-view-active-work-current-state-etc-returned",
+        "jpegxl-rs.papercut.hybrid-intel-plain-cycles-u-records-cpu-atom",
+        "jpegxl-rs.papercut.jpxl-bench-fingerprints-outputs-with-fnv-1a-64",
+        "jpegxl-rs.papercut.knowledge-complete-s-cited-evidence-gets-its",
+        "jpegxl-rs.papercut.opt-f-multiplicity-counters-are-still-only",
+        "raw-autotune.papercut.knowledge-search-and-knowledge-start-via-the"
+    ]
+    created_at 2026-08-07
+}
+
+record akr.papercut.collated-18-papercuts-from-kitchen-concept-lege/2 : papercut {
     title "Collated 18 papercuts from Kitchen-Concept, Lege-ecosystem, SaveYourSkin, bpg-rs and 4 more"
     state verified
     statement """
@@ -919,6 +1498,8 @@ record akr.papercut.collated-18-papercuts-from-kitchen-concept-lege/1 : papercut
         "jpegxl-rs.papercut.opt-f-multiplicity-counters-are-still-only",
         "raw-autotune.papercut.knowledge-search-and-knowledge-start-via-the"
     ]
+    closed_at 2026-10-06
+    supersedes [ @akr.papercut.collated-18-papercuts-from-kitchen-concept-lege/1 ]
     created_at 2026-08-07
 }
 
@@ -1128,7 +1709,7 @@ record akr.papercut.collated-19-papercuts-from-evidence-intake/2 : papercut {
 
 record akr.papercut.collated-2-papercuts-from-evidence-intake/1 : papercut {
     title "Collated 2 papercuts from Evidence-intake-project, Kitchen-Concept, Lege-ecosystem, SaveYourSkin and 5 more"
-    state verified
+    state superseded
     statement """
         Collated 2 papercuts from /mnt/Samsung980_1TB/Rust-projects on 2026-08-09 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
 
@@ -1146,7 +1727,175 @@ record akr.papercut.collated-2-papercuts-from-evidence-intake/1 : papercut {
     created_at 2026-08-09
 }
 
+record akr.papercut.collated-2-papercuts-from-evidence-intake/2 : papercut {
+    title "Collated 2 papercuts from Evidence-intake-project, Kitchen-Concept, Lege-ecosystem, SaveYourSkin and 5 more"
+    state verified
+    statement """
+        Collated 2 papercuts from /mnt/Samsung980_1TB/Rust-projects on 2026-08-09 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
+
+        ## SaveYourSkin @saveyourskin.papercut.fff-find-files-transport-closed-while-locating [about FFF]
+        FFF find_files transport closed while locating the user-directed Sources/current-plan-80626.md, so discovery had to fall back to direct read-only shell inspection.
+
+        ## SaveYourSkin @saveyourskin.papercut.knowledge-context-accepted-budget-tokens-18000 [about akr]
+        knowledge.context accepted budget_tokens=18000 but then withheld a 16208-token bundle because of an undocumented 4000-token response ceiling; callers should be told/capped before the expensive assembly.
+        """
+    observed_at git:911c29573461ba912cc141f49f4d8c05c61ec5e1
+    collated [
+        "saveyourskin.papercut.fff-find-files-transport-closed-while-locating",
+        "saveyourskin.papercut.knowledge-context-accepted-budget-tokens-18000"
+    ]
+    closed_at 2026-10-06
+    supersedes [ @akr.papercut.collated-2-papercuts-from-evidence-intake/1 ]
+    created_at 2026-08-09
+}
+
+record akr.papercut.collated-20-papercuts-from-bend-experiment-lege/1 : papercut {
+    title "Collated 20 papercuts from Bend-experiment, Lege-ecosystem, LegeOS, SYS and 1 more"
+    state verified
+    statement """
+        Collated 20 papercuts from /home/dk/rust-projects on 2026-10-06 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
+
+        ## Bend-experiment @vulkan-port.papercut.akr-git-commit-successfully-created [about akr]
+        akr git commit successfully created 4ad255df1a20f5ffc797a6f17e7851e06de5f710 but printed the previous HEAD f2b45769fbd5 beside the new subject. git log confirmed the new commit and a clean index; this looks like a stale cached HEAD in the commit result.
+
+        ## Bend-experiment @vulkan-port.papercut.deferred-report-from-the-pre-commit-work-2026 [about akr]
+        Deferred report from the pre-commit work: 2026-10-06, akr 0.5.1: `context` requires `--goal`, not a positional key; `papercut` still fails without a commit and suggests `observed_at` despite exposing no such flag.
+
+        ## Bend-experiment @vulkan-port.papercut.deferred-report-from-the-pre-commit-work-akr-0 [about akr]
+        Deferred report from the pre-commit work: akr 0.1 (--about akr): `akr papercut` refuses in a repo with no commits (AKR-G001) and has no --observed-at escape, so frictions hit before the first commit cannot be logged in the moment.
+
+        ## Bend-experiment @vulkan-port.papercut.during-integration-validate-warned-that-newly [about akr]
+        During integration, validate warned that newly proposed scope paths matched no tracked path and suggested moved/deleted files, although the new implementation files simply had not been committed yet. The staged implementation commit will establish those paths; the warning would be clearer if it distinguished new untracked files.
+
+        ## Bend-experiment @vulkan-port.papercut.starting-the-hardware-vulkan-baseline-akr-start [about akr]
+        Starting the hardware Vulkan baseline, akr start rejected --task; the task is positional, unlike the conceptual knowledge.start API. Consulted CLI help before retrying.
+
+        ## Bend-experiment @vulkan-port.papercut.the-vulkan-baseline-proposal-used-inline-check [about akr]
+        The Vulkan baseline proposal used inline check blocks with triple-quoted statements and failed as an unclosed brace. Expanding statements and block fields onto separate lines resolved the ambiguous parser diagnostic.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.knowledge-get-requires-ref-not-id-passing-the [about akr]
+        knowledge.get requires `ref`, not `id`. Passing the record key as `id` fails with AKR-C003 even though search_tool's description talks about retrieving a record by reference.
+
+        ## LegeOS @legeos.papercut.a-context-bundle-with-only-audio-rs-audio1-xml [about akr]
+        A context bundle with only audio.rs/Audio1.xml and --budget 7000 still expanded 135 records to about 19135 tokens including unrelated ancestor acceptance blocks. Reading the full required bundle flooded the audio task before native work.
+
+        ## SYS @saveyourskin.papercut.a-narrowed-knowledge-context-call-with-budget [about akr]
+        A narrowed knowledge.context call with budget_tokens=3000 failed AKR-X021 (mandatory sections require5135) rather than returning the over-budget mandatory bundle as the earlier broad context did. Retried the same scoped request with7500; distinguish the small-budget failure from absence of governing context.
+
+        ## SYS @saveyourskin.papercut.after-committing-raw-kitchen-dinner-evidence [about akr]
+        After committing raw kitchen/dinner evidence, knowledge.validate and CLI akr check each launched the same repository-wide git grep at HEAD 38347baf and ran over four minutes (roughly five CPU minutes each). I cancelled only those read-only grep children; the callers then returned the same 267 diagnostics/four pre-existing strict errors with no remaining generated-view drift. Do not treat that interrupted symbol scan as complete validation; the earlier completed check is retained in akr-final-check.log. Avoid duplicating the expensive scan across CLI and MCP.
+
+        ## SYS @saveyourskin.papercut.during-project-review-akr-context-with-a-17000 [about akr]
+        During project review, akr context with a 17000-token budget and broad source paths emitted about 97575 tokens, exceeding the tool output window; a no-path bundle and targeted get calls were needed to read governing records and warnings. CLI also uses --goal and --kind rather than positional context or --kinds.
+
+        ## SYS @saveyourskin.papercut.knowledge-get-body-for-simulation-and [about akr]
+        knowledge.get body for simulation-and-engineering-laws truncates rule text at the 1500-token preview and advises relations:false; retrying with relations:false still truncates and repeats the same advice. CLI akr get --detail body returned the full rule, so the retry suggestion should offer a real complete-read path.
+
+        ## SYS @saveyourskin.papercut.knowledge-mcp-tools-are-absent-cli-context [about akr]
+        knowledge MCP tools are absent; CLI context works in original checkout but fresh HEAD worktree handoff session reports 9 validation errors. Checking the inherited ledger before dinner implementation; no records edited by hand.
+
+        ## SYS @saveyourskin.papercut.knowledge-search-for-office-causality-returned [about akr]
+        knowledge_search for "office-causality" returned 0 results seconds after 7 records with that substring were proposed and built, while knowledge_get resolves them fine; likely the disposable search index did not refresh from the loaded ledger.
+
+        ## SYS @saveyourskin.papercut.knowledge-tools-are-absent-from-the-catalogue [about akr]
+        knowledge tools are absent from the catalogue; CLI context with a 3200-token budget emitted roughly 14000 tokens of mostly truncated out-of-scope records. Used targeted get calls and inspected contradiction/staleness sections.
+
+        ## SYS @saveyourskin.papercut.knowledge-tools-were-absent-from-the-mcp [about akr]
+        knowledge tools were absent from the MCP catalogue; used the akr CLI. context requires --goal despite positional mapping in the agent index; its 4500-token bundle reported 9967 tokens and included unrelated work.
+
+        ## SYS @saveyourskin.papercut.the-knowledge-mcp-tools-were-absent-from-the [about akr]
+        The knowledge.* MCP tools were absent from the tool catalogue while implementing the episode planner, so I had to use the akr CLI for context and validation.
+
+        ## SYS @saveyourskin.papercut.while-reconciling-final-evidence-i-supplied-an [about akr]
+        While reconciling final evidence I supplied an unsupported justified_by relation to knowledge.revise; it correctly refused without writing. The open dictionary schema does not list relation names; retry uses documented derived_from and planning-check verified_by, preserving evidence direction.
+
+        ## liminaldoc @docwrite.papercut.knowledge-start-via-the-mcp-server-attached-at [about akr]
+        knowledge_start via the MCP server attached at the projects workspace failed with AKR-C011 (no .akr there). The lege-docwrite ledger is nested, and the MCP tool has no --dir argument, so the session had to switch to the akr CLI with --dir.
+
+        ## liminaldoc @docwrite.papercut.while-correcting-a-proposed-pdf-tab-work-record [about akr]
+        While correcting a proposed PDF-tab work record, akr revise rejected the displayed key with /1 even though akr propose returned that form; revise expects the base key without its revision suffix.
+        """
+    observed_at git:475045cdb223ccce985fe4234d9fb52832854aae
+    about "akr"
+    collated [
+        "vulkan-port.papercut.akr-git-commit-successfully-created",
+        "vulkan-port.papercut.deferred-report-from-the-pre-commit-work-2026",
+        "vulkan-port.papercut.deferred-report-from-the-pre-commit-work-akr-0",
+        "vulkan-port.papercut.during-integration-validate-warned-that-newly",
+        "vulkan-port.papercut.starting-the-hardware-vulkan-baseline-akr-start",
+        "vulkan-port.papercut.the-vulkan-baseline-proposal-used-inline-check",
+        "lege-ecosystem.papercut.knowledge-get-requires-ref-not-id-passing-the",
+        "legeos.papercut.a-context-bundle-with-only-audio-rs-audio1-xml",
+        "saveyourskin.papercut.a-narrowed-knowledge-context-call-with-budget",
+        "saveyourskin.papercut.after-committing-raw-kitchen-dinner-evidence",
+        "saveyourskin.papercut.during-project-review-akr-context-with-a-17000",
+        "saveyourskin.papercut.knowledge-get-body-for-simulation-and",
+        "saveyourskin.papercut.knowledge-mcp-tools-are-absent-cli-context",
+        "saveyourskin.papercut.knowledge-search-for-office-causality-returned",
+        "saveyourskin.papercut.knowledge-tools-are-absent-from-the-catalogue",
+        "saveyourskin.papercut.knowledge-tools-were-absent-from-the-mcp",
+        "saveyourskin.papercut.the-knowledge-mcp-tools-were-absent-from-the",
+        "saveyourskin.papercut.while-reconciling-final-evidence-i-supplied-an",
+        "docwrite.papercut.knowledge-start-via-the-mcp-server-attached-at",
+        "docwrite.papercut.while-correcting-a-proposed-pdf-tab-work-record"
+    ]
+    created_at 2026-10-06
+}
+
 record akr.papercut.collated-20-papercuts-from-kitchen-concept-lege/1 : papercut {
+    title "Collated 20 papercuts from Kitchen-Concept, Lege-ecosystem, SaveYourSkin, bpg-rs and 4 more"
+    state superseded
+    statement """
+        Collated 20 papercuts from /mnt/Samsung980_1TB/Rust-projects on 2026-08-08 (D-030). Each source key is in the collated slot; see the owning project's ledger for the full statement.
+
+        - Kitchen-Concept @kitchen.papercut.adding-sql-migration-0015-also-requires — Adding SQL migration 0015 also requires updating the handwritten…
+        - Kitchen-Concept @kitchen.papercut.akr-propose-from-describes-a-record-body-source — akr propose --from describes a record body source, but rejects one…
+        - Kitchen-Concept @kitchen.papercut.akr-propose-from-expects-a-complete-akr-record — akr propose --from expects a complete AKR record rather than the prose…
+        - Kitchen-Concept @kitchen.papercut.akr-search-kind-milestone-returned-zero-results — akr search --kind milestone returned zero results without explaining…
+        - Kitchen-Concept @kitchen.papercut.cargo-test-workspace-warns-that-keypad-lab-and — cargo test --workspace warns that keypad-lab and back-office both…
+        - Kitchen-Concept @kitchen.papercut.project-instructions-name-knowledge-context-but — Project instructions name knowledge.context, but this workspace exposes…
+        - Kitchen-Concept @kitchen.papercut.the-agents-protocol-names-knowledge-propose-but — The AGENTS protocol names knowledge.propose, but the installed CLI has…
+        - Kitchen-Concept @kitchen.papercut.the-first-multi-file-apply-patch-missed-the — The first multi-file apply_patch missed the escaped newline in…
+        - Kitchen-Concept @kitchen.papercut.the-requested-restaurant-post-sources-path-did — The requested restaurant-post/sources path did not exist; the material…
+        - raw-autotune @raw-autotune.papercut.a-release-build-invocation-returned-without — A release build invocation returned without Cargo's Finished line and…
+        - raw-autotune @raw-autotune.papercut.a-targeted-cargo-test-invocation-with-two-exact — A targeted `cargo test` invocation with two exact test filters fails…
+        - raw-autotune @raw-autotune.papercut.a-two-frame-lens-correction-profile-exact — A two-frame --lens-correction profile-exact render was killed after…
+        - raw-autotune @raw-autotune.papercut.forwarding-six-full-resolution-diagnostic-pngs — Forwarding six full-resolution diagnostic PNGs through the image viewer…
+        - raw-autotune @raw-autotune.papercut.grade-sky-py-reported-zero-pairs-on-a-normal — `grade_sky.py` reported zero pairs on a normal recursive batch output…
+        - raw-autotune @raw-autotune.papercut.knowledge-context-rejects-a-completed-work — knowledge.context rejects a completed work record even when a follow-up…
+        - raw-autotune @raw-autotune.papercut.re-running-stage-dumps-into-an-explicit-tmp — Re-running stage dumps into an explicit `/tmp` diagnostic directory was…
+        - raw-autotune @raw-autotune.papercut.the-full-batch-process-stopped-at-the-execution — The full batch process stopped at the execution harness's ~30-second…
+        - raw-autotune @raw-autotune.papercut.the-unit-tests-that-pinned-the-da23c5f-near — The unit tests that pinned the da23c5f near-white anchor rule were kept…
+        - raw-autotune @raw-autotune.papercut.while-proposing-the-follow-on-work-record-a — While proposing the follow-on work record, a dense inline MCP payload…
+        - raw-autotune @raw-autotune.papercut.while-running-three-targeted-rust-tests-i — While running three targeted Rust tests I passed multiple test filters…
+        """
+    observed_at git:911c29573461ba912cc141f49f4d8c05c61ec5e1
+    collated [
+        "kitchen.papercut.adding-sql-migration-0015-also-requires",
+        "kitchen.papercut.akr-propose-from-describes-a-record-body-source",
+        "kitchen.papercut.akr-propose-from-expects-a-complete-akr-record",
+        "kitchen.papercut.akr-search-kind-milestone-returned-zero-results",
+        "kitchen.papercut.cargo-test-workspace-warns-that-keypad-lab-and",
+        "kitchen.papercut.project-instructions-name-knowledge-context-but",
+        "kitchen.papercut.the-agents-protocol-names-knowledge-propose-but",
+        "kitchen.papercut.the-first-multi-file-apply-patch-missed-the",
+        "kitchen.papercut.the-requested-restaurant-post-sources-path-did",
+        "raw-autotune.papercut.a-release-build-invocation-returned-without",
+        "raw-autotune.papercut.a-targeted-cargo-test-invocation-with-two-exact",
+        "raw-autotune.papercut.a-two-frame-lens-correction-profile-exact",
+        "raw-autotune.papercut.forwarding-six-full-resolution-diagnostic-pngs",
+        "raw-autotune.papercut.grade-sky-py-reported-zero-pairs-on-a-normal",
+        "raw-autotune.papercut.knowledge-context-rejects-a-completed-work",
+        "raw-autotune.papercut.re-running-stage-dumps-into-an-explicit-tmp",
+        "raw-autotune.papercut.the-full-batch-process-stopped-at-the-execution",
+        "raw-autotune.papercut.the-unit-tests-that-pinned-the-da23c5f-near",
+        "raw-autotune.papercut.while-proposing-the-follow-on-work-record-a",
+        "raw-autotune.papercut.while-running-three-targeted-rust-tests-i"
+    ]
+    created_at 2026-08-08
+}
+
+record akr.papercut.collated-20-papercuts-from-kitchen-concept-lege/2 : papercut {
     title "Collated 20 papercuts from Kitchen-Concept, Lege-ecosystem, SaveYourSkin, bpg-rs and 4 more"
     state verified
     statement """
@@ -1196,6 +1945,8 @@ record akr.papercut.collated-20-papercuts-from-kitchen-concept-lege/1 : papercut
         "raw-autotune.papercut.while-proposing-the-follow-on-work-record-a",
         "raw-autotune.papercut.while-running-three-targeted-rust-tests-i"
     ]
+    closed_at 2026-10-06
+    supersedes [ @akr.papercut.collated-20-papercuts-from-kitchen-concept-lege/1 ]
     created_at 2026-08-08
 }
 
@@ -1354,7 +2105,7 @@ record akr.papercut.collated-35-papercuts-from-kitchen-concept-lege/1 : papercut
 
 record akr.papercut.collated-7-papercuts-from-lege-ecosystem-jpegxl/1 : papercut {
     title "Collated 7 papercuts from Lege-ecosystem, jpegXL-rs and raw-autotune"
-    state verified
+    state superseded
     statement """
         Collated 7 papercuts from /mnt/Samsung980_1TB/Rust-projects on 2026-08-27 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
 
@@ -1393,9 +2144,52 @@ record akr.papercut.collated-7-papercuts-from-lege-ecosystem-jpegxl/1 : papercut
     created_at 2026-08-27
 }
 
+record akr.papercut.collated-7-papercuts-from-lege-ecosystem-jpegxl/2 : papercut {
+    title "Collated 7 papercuts from Lege-ecosystem, jpegXL-rs and raw-autotune"
+    state verified
+    statement """
+        Collated 7 papercuts from /mnt/Samsung980_1TB/Rust-projects on 2026-08-27 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.akr-revise-from-body-on-a-completed-work-record [about akr]
+        `akr revise --from <body>` on a completed work record silently reset it to `proposed` even though the supplied body said `state completed`, and the only signal was the generated commit message reading 'completed -> proposed'. Because a proposed record is exempt from V-020, the AKR-R022 errors I was repairing vanished for the wrong reason. Either honour the state in --from or refuse a body whose state contradicts the lifecycle step.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.healing-an-inherited-akr-t023-on-an-evidence [about akr]
+        Healing an inherited AKR-T023 on an evidence record that another record pins by revision deadlocks: revising the evidence introduces AKR-L021 on the referrer, and the referrer cannot be repointed first because the target revision does not exist yet. The escape is a three-write dance (drop the reference, revise the evidence, re-add it at the new revision); a single write that repoints referrers, or tolerating a superseded pin inside one transaction, would remove it.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.knowledge-get-with-detail-canonical-on-jpegxl [about akr]
+        knowledge.get with detail canonical on jpegxl-rs.work.pqc-usable-efforts-cost/7 truncated at the tool's token cap and the suggested continuation (detail summary) cannot return the acceptance block's source text either, so reproducing checks verbatim for a revision required reading .akr/records/jpegxl-rs/work.akr by hand. A continuation or an acceptance-only detail level would remove the need to touch the records directory.
+
+        ## raw-autotune @raw-autotune.papercut.akr-mcp-server-failed-to-connect-at-session [about akr]
+        AKR MCP server failed to connect at session start (timeout); fell back to akr CLI. knowledge.start/context still work via CLI.
+
+        ## raw-autotune @raw-autotune.papercut.akr-revise-from-on-an-active-work-head-without [about akr]
+        akr revise --from on an active work head, without --state, created rev 2 as proposed and dropped the live head out of active. Had to akr revise --state active to put it back. --from should preserve state unless the fragment sets it.
+
+        ## raw-autotune @raw-autotune.papercut.akr-revise-from-with-a-partial-fragment-dropped [about akr]
+        akr revise --from with a partial fragment dropped unspecified slots: slice-8 lost acceptance+scope, phase-4 lost depends_on+verified_by, Candidate D lost scope+derived_from. Restore by a second --from that lists every slot. Partial --from is not a merge.
+
+        ## raw-autotune @raw-autotune.papercut.state-only-revise-on-sealed-work-head-l002 [about akr 0.3.3 revise --state]
+        akr revise --state completed on raw-autotune.work.train-camsdd-scene-classifier failed with AKR-L002 claiming 3 revisions are unsuperseded although states were consistent (1-3 superseded, head proposed/active). Root cause: revisions 2 and 3 had been written without supersedes back-edges, so edge-based head resolution goes ambiguous the moment every revision is state-terminal. The failure only surfaces on the transition to a terminal state, and the message points at revision count rather than the missing edges, which cost a debugging detour. Fix that worked: give the new head supersedes [ @key/1, @key/2, @key/3 ]. A friendlier diagnostic would name the edge-less revisions.
+        """
+    observed_at git:ffbf6c028a430cef77bcbd907d27f0b2fdb293c1
+    about "akr"
+    collated [
+        "lege-ecosystem.papercut.akr-revise-from-body-on-a-completed-work-record",
+        "lege-ecosystem.papercut.healing-an-inherited-akr-t023-on-an-evidence",
+        "jpegxl-rs.papercut.knowledge-get-with-detail-canonical-on-jpegxl",
+        "raw-autotune.papercut.akr-mcp-server-failed-to-connect-at-session",
+        "raw-autotune.papercut.akr-revise-from-on-an-active-work-head-without",
+        "raw-autotune.papercut.akr-revise-from-with-a-partial-fragment-dropped",
+        "raw-autotune.papercut.state-only-revise-on-sealed-work-head-l002"
+    ]
+    closed_at 2026-10-06
+    supersedes [ @akr.papercut.collated-7-papercuts-from-lege-ecosystem-jpegxl/1 ]
+    created_at 2026-08-27
+}
+
 record akr.papercut.collated-8-papercuts-from-lege-ecosystem/1 : papercut {
     title "Collated 8 papercuts from Lege-ecosystem and SaveYourSkin"
-    state verified
+    state superseded
     statement """
         Collated 8 papercuts from /mnt/Samsung980_1TB/Rust-projects on 2026-08-13 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
 
@@ -1438,9 +2232,56 @@ record akr.papercut.collated-8-papercuts-from-lege-ecosystem/1 : papercut {
     created_at 2026-08-13
 }
 
+record akr.papercut.collated-8-papercuts-from-lege-ecosystem/2 : papercut {
+    title "Collated 8 papercuts from Lege-ecosystem and SaveYourSkin"
+    state verified
+    statement """
+        Collated 8 papercuts from /mnt/Samsung980_1TB/Rust-projects on 2026-08-13 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.while-proposing-the-jbig2-smask-preservation [about akr]
+        While proposing the JBIG2 SMask preservation work record, source citations with start_line/end_line were rejected because AKR also requires exact start_byte/end_byte. The proposal schema does not make that coupled range requirement obvious at authoring time; I retried with path-level citations.
+
+        ## SaveYourSkin @saveyourskin.papercut.after-completing-all-g1-g7-children-revising [about akr]
+        After completing all G1-G7 children, revising the spatial track from active to completed was refused because active normative records legitimately depend on the track and the validator treated the resulting completed revision as a superseded target (`slot depends_on may not reference ... /2, which is superseded`). A completed planning prerequisite should remain satisfiable, or the diagnostic should identify the exact dependent that requires repointing.
+
+        ## SaveYourSkin @saveyourskin.papercut.completing-sound-acoustic-studio-and-walk-test [about akr]
+        Completing sound-acoustic-studio-and-walk-test was refused because its inherited part_of relation still targets superseded sound-design/1 even though context also derives it under /2. The child must be revised to the current parent before completion; superseding a track should ideally retarget or clearly disposition child parentage.
+
+        ## SaveYourSkin @saveyourskin.papercut.completing-sound-source-profile-and-lod-audit [about akr]
+        Completing sound-source-profile-and-lod-audit failed because its recovered part_of relations still included terminal sound-design/1 alongside the current track, even though the context bundle had already dispositioned it into sound-design/2. Completion required a relation-only revision first.
+
+        ## SaveYourSkin @saveyourskin.papercut.knowledge-revise-activates-a-proposed [about akr]
+        knowledge.revise activates a proposed constraint cleanly, but a follow-up revision using `retired_claims` (with or without replacement claims) emits malformed-source parser diagnostics such as unclosed brackets and `constraint has no slot claim`. The API appears to serialize claim retirement incorrectly, preventing removal of a now-false live-counterexample claim.
+
+        ## SaveYourSkin @saveyourskin.papercut.knowledge-search-could-not-refresh-or-use-the [about akr]
+        knowledge.search could not refresh or use the ledger index because the cache was built without FTS5, forcing direct reads of already-known record keys for gameplay prioritization.
+
+        ## SaveYourSkin @saveyourskin.papercut.while-proposing-a-work-record-i-used-a-natural [about akr]
+        While proposing a work record I used a natural `summary` slot and had to retry after schema rejection; surfacing the valid kind-specific slots in the proposal tool description or accepting `summary` as an alias would avoid this round trip.
+
+        ## SaveYourSkin @saveyourskin.papercut.while-recording-an-unplanned-completed [about akr]
+        While recording an unplanned completed integration slice, knowledge.propose did not surface the required `work.intent` slot until validation rejected the first write; including kind-specific required slots in the tool schema or error-free template would avoid the retry.
+        """
+    observed_at git:94498f67d73d18323a5b06a3e5e59e307286947b
+    about "akr"
+    collated [
+        "lege-ecosystem.papercut.while-proposing-the-jbig2-smask-preservation",
+        "saveyourskin.papercut.after-completing-all-g1-g7-children-revising",
+        "saveyourskin.papercut.completing-sound-acoustic-studio-and-walk-test",
+        "saveyourskin.papercut.completing-sound-source-profile-and-lod-audit",
+        "saveyourskin.papercut.knowledge-revise-activates-a-proposed",
+        "saveyourskin.papercut.knowledge-search-could-not-refresh-or-use-the",
+        "saveyourskin.papercut.while-proposing-a-work-record-i-used-a-natural",
+        "saveyourskin.papercut.while-recording-an-unplanned-completed"
+    ]
+    closed_at 2026-10-06
+    supersedes [ @akr.papercut.collated-8-papercuts-from-lege-ecosystem/1 ]
+    created_at 2026-08-13
+}
+
 record akr.papercut.collated-8-papercuts-from-lege-ecosystem-legeos/1 : papercut {
     title "Collated 8 papercuts from Lege-ecosystem, LegeOS, jpegXL-rs and orderflower"
-    state verified
+    state superseded
     statement """
         Collated 8 papercuts from \\?\D:\Rust-projects on 2026-08-18 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
 
@@ -1484,7 +2325,104 @@ record akr.papercut.collated-8-papercuts-from-lege-ecosystem-legeos/1 : papercut
     created_at 2026-08-18
 }
 
+record akr.papercut.collated-8-papercuts-from-lege-ecosystem-legeos/2 : papercut {
+    title "Collated 8 papercuts from Lege-ecosystem, LegeOS, jpegXL-rs and orderflower"
+    state verified
+    statement """
+        Collated 8 papercuts from \\?\D:\Rust-projects on 2026-08-18 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.knowledge-start-returned-a-truncated-preview [about akr]
+        knowledge.start returned a truncated preview and required an immediate second call with its suggested lower budget, even though the task/path query had no planning matches; the papercut logger then also required a namespace retry in this multi-namespace workspace. Returning the compact no-match session directly and surfacing the namespace requirement earlier would avoid redundant round trips.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.while-orienting-an-installer-readiness-review [about akr]
+        While orienting an installer-readiness review, knowledge.context rejected an absolute Windows path using native backslashes; its path-glob interface requires forward slashes even on Windows. The diagnostic was clear, but accepting native separators would make Windows usage smoother.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.while-proposing-installer-work-knowledge [about akr]
+        While proposing installer work, knowledge.propose accepted free-form acceptance.method strings in its tool schema but the ledger requires the enum command/manual/observation, producing low-level parser errors before the clearer T012 diagnostic. The tool description or JSON schema should expose the enum.
+
+        ## LegeOS @legeos.papercut.promoting-decisions-to-active-with-akr-revise [about akr]
+        Promoting decisions to active with `akr revise <key> --state active` in text mode printed only "nothing written" — the actual reason (V-021: active decision cites nothing; and V-005: supported_by may not target a constraint, use implements) only appeared with --format json. Text mode should print the blocking diagnostics too.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.the-first-phase-25-work-proposal-was-rejected [about akr]
+        The first Phase 25 work proposal was rejected because the work intent was supplied at the top level with an invalid topic slot; retrying with the documented slots.intent form succeeded.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.the-installed-akr-0-3-1-rejected-four-existing [about akr]
+        The installed akr 0.3.1 rejected four existing observation records because it expected method instrumented, while current official AKR source accepts the documented method observation. A temporary build from official HEAD was required to read context, update evidence, and validate the ledger.
+
+        ## orderflower @orderflower.papercut.akr-mcp-server-failed-to-connect-at-session [about akr]
+        AKR MCP server failed to connect at session start, so knowledge.start/context were unavailable and I had to fall back to the akr CLI. Same pattern as a down integration rather than a workspace problem.
+
+        ## orderflower @orderflower.papercut.knowledge-mcp-server-failed-to-connect-timed [about akr]
+        knowledge.* MCP server failed to connect (timed out). Used the akr CLI instead; start/context still work, but the protocol's first-call path is the MCP tools.
+        """
+    observed_at git:9b534026ceff084e33ac987b959f3824eabaa409
+    about "akr"
+    collated [
+        "lege-ecosystem.papercut.knowledge-start-returned-a-truncated-preview",
+        "lege-ecosystem.papercut.while-orienting-an-installer-readiness-review",
+        "lege-ecosystem.papercut.while-proposing-installer-work-knowledge",
+        "legeos.papercut.promoting-decisions-to-active-with-akr-revise",
+        "jpegxl-rs.papercut.the-first-phase-25-work-proposal-was-rejected",
+        "jpegxl-rs.papercut.the-installed-akr-0-3-1-rejected-four-existing",
+        "orderflower.papercut.akr-mcp-server-failed-to-connect-at-session",
+        "orderflower.papercut.knowledge-mcp-server-failed-to-connect-timed"
+    ]
+    closed_at 2026-10-06
+    supersedes [ @akr.papercut.collated-8-papercuts-from-lege-ecosystem-legeos/1 ]
+    author "GitHub Uploader"
+    created_at 2026-08-18
+}
+
 record akr.papercut.collated-9-papercuts-from-lege-ecosystem/1 : papercut {
+    title "Collated 9 papercuts from Lege-ecosystem, SaveYourSkin and jpegXL-rs"
+    state superseded
+    statement """
+        Collated 9 papercuts from /mnt/Samsung980_1TB/Rust-projects on 2026-08-12 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.knowledge-get-did-not-display-a-work-record-s [about akr]
+        knowledge.get did not display a work record's acceptance checks even at canonical detail, so knowledge.complete had to fail once to reveal the four check IDs needed for evidence mapping.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.while-creating-ocr-work-records-from-a [about akr]
+        While creating OCR work records from a registered source, using the apparent @source.<id> derived_from form produced AKR-L001. The tool could make the source-vs-record citation distinction clearer in relation errors; papercut logging also required a namespace only after the first call failed.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.while-creating-the-auto-toc-work-record [about akr]
+        While creating the auto-TOC work record, `knowledge.propose` accepted a `topic` argument in its API schema but rejected it at validation because planning kinds cannot use topics. The schema could make that kind-specific restriction visible before submission.
+
+        ## SaveYourSkin @saveyourskin.papercut.knowledge-start-foregrounded-the-blender [about akr]
+        knowledge.start foregrounded the Blender authority decision, but knowledge.context rejects decisions as goals; the handoff could expose the nearest live milestone/track alongside the decision to avoid a failed orientation call.
+
+        ## SaveYourSkin @saveyourskin.papercut.on-akr-0-3-0-for-windows-knowledge-start [about akr]
+        On AKR 0.3.0 for Windows, knowledge.start ignored budget_tokens 1400, assembled about 2116 tokens, then withheld the entire handoff at the 2000-token cap. A later knowledge.context request at 1850 returned a bundle labeled about 4345 tokens, so budget and hard-limit behavior were inconsistent and required multiple slow retries.
+
+        ## SaveYourSkin @saveyourskin.papercut.while-importing-a-connected-sound-design-record [about akr]
+        While importing a connected sound-design record batch, knowledge.propose reported nested validation failures only after each write attempt; a dry-run/schema-introspection mode for slots and reference heads would prevent cascaded retries. One policy also accepts `rationale`, not the otherwise common `context` slot.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.knowledge-start-withheld-a-6440-token [about akr]
+        knowledge.start withheld a ~6440-token orientation bundle despite a requested 18000-token budget because of an internal 2000-token hard limit; discovering the governing goal therefore requires a separate search/context round trip.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.orienting-on-this-project-through-the-knowledge [about akr]
+        Orienting on this project through the knowledge.* MCP tools failed at the first step: knowledge.start truncated at a 2000-token hard limit even with budget_tokens=1800 (estimated 3245, continuation null, no way to page), and knowledge.search truncated at 1000 tokens with 20 results. Both returned only a truncation notice with zero usable content, so the sanctioned fallback (AGENTS.md section 10) of reading .akr/records/**/*.akr and docs/generated/ directly was the only route to a project summary. A continuation token, or honouring budget_tokens above the hard limit, would make the tools usable on a ledger this size.
+
+        ## jpegXL-rs @jpegxl-rs.papercut.while-repairing-phase-4l-evidence-chronology [about akr]
+        While repairing Phase 4L evidence chronology, knowledge.revise returned the completed work revision to proposed even though the call explicitly passed state="completed". A follow-up knowledge.complete restored the intended terminal state; the tool documentation and project gotcha both say re-passing state should preserve it.
+        """
+    observed_at git:2dd07efa746065e627b1445587e3bb0ca0af553b
+    about "akr"
+    collated [
+        "lege-ecosystem.papercut.knowledge-get-did-not-display-a-work-record-s",
+        "lege-ecosystem.papercut.while-creating-ocr-work-records-from-a",
+        "lege-ecosystem.papercut.while-creating-the-auto-toc-work-record",
+        "saveyourskin.papercut.knowledge-start-foregrounded-the-blender",
+        "saveyourskin.papercut.on-akr-0-3-0-for-windows-knowledge-start",
+        "saveyourskin.papercut.while-importing-a-connected-sound-design-record",
+        "jpegxl-rs.papercut.knowledge-start-withheld-a-6440-token",
+        "jpegxl-rs.papercut.orienting-on-this-project-through-the-knowledge",
+        "jpegxl-rs.papercut.while-repairing-phase-4l-evidence-chronology"
+    ]
+    created_at 2026-08-12
+}
+
+record akr.papercut.collated-9-papercuts-from-lege-ecosystem/2 : papercut {
     title "Collated 9 papercuts from Lege-ecosystem, SaveYourSkin and jpegXL-rs"
     state verified
     statement """
@@ -1530,6 +2468,8 @@ record akr.papercut.collated-9-papercuts-from-lege-ecosystem/1 : papercut {
         "jpegxl-rs.papercut.orienting-on-this-project-through-the-knowledge",
         "jpegxl-rs.papercut.while-repairing-phase-4l-evidence-chronology"
     ]
+    closed_at 2026-10-06
+    supersedes [ @akr.papercut.collated-9-papercuts-from-lege-ecosystem/1 ]
     created_at 2026-08-12
 }
 
@@ -1590,7 +2530,7 @@ record akr.papercut.crates-akr-cli-tests-commands-rs-is-the-only/2 : papercut {
 
 record akr.papercut.crates-akr-core-src-git-mod-rs-file-versions/1 : papercut {
     title "crates/akr-core/src/git/mod.rs file_versions() rebound `let mut out =…"
-    state verified
+    state superseded
     statement """
         crates/akr-core/src/git/mod.rs file_versions() rebound `let mut out = BTreeMap::new()` after the memo-hit loop, shadowing the map that already held every version the memo answered. A partially warm call therefore returned only the freshly fetched versions, and last_changes() reads a missing entry as "the file did not exist at that commit" — so a warm memo could move a record's last definitional change. Fixed by collecting fetched versions separately and extending.
         """
@@ -1599,13 +2539,39 @@ record akr.papercut.crates-akr-core-src-git-mod-rs-file-versions/1 : papercut {
     created_at 2026-09-03
 }
 
+record akr.papercut.crates-akr-core-src-git-mod-rs-file-versions/2 : papercut {
+    title "crates/akr-core/src/git/mod.rs file_versions() rebound `let mut out =…"
+    state verified
+    statement """
+        crates/akr-core/src/git/mod.rs file_versions() rebound `let mut out = BTreeMap::new()` after the memo-hit loop, shadowing the map that already held every version the memo answered. A partially warm call therefore returned only the freshly fetched versions, and last_changes() reads a missing entry as "the file did not exist at that commit" — so a warm memo could move a record's last definitional change. Fixed by collecting fetched versions separately and extending.
+        """
+    observed_at git:968ac272d86cf36888f22f557aa4ba06d5156f85
+    closed_at 2026-10-06
+    supersedes [ @akr.papercut.crates-akr-core-src-git-mod-rs-file-versions/1 ]
+    author "claude"
+    created_at 2026-09-03
+}
+
 record akr.papercut.every-akr-c0nn-usage-refusal-raised-through/1 : papercut {
+    title "Every AKR-C0nn usage refusal raised through EnvError exits 3…"
+    state superseded
+    statement """
+        Every AKR-C0nn usage refusal raised through EnvError exits 3 (environment) rather than the exit 2 the diagnostic registry documents for that class — akr evidence add --result nope and --artifact under scratch both do it, so a caller branching on exit status reads a usage error as a broken checkout. The mapping lives in session::EnvError and predates the collated batch.
+        """
+    observed_at git:1414d0107e6bde1dfb7b05911e0be53a15b1b33d
+    author "claude"
+    created_at 2026-08-22
+}
+
+record akr.papercut.every-akr-c0nn-usage-refusal-raised-through/2 : papercut {
     title "Every AKR-C0nn usage refusal raised through EnvError exits 3…"
     state verified
     statement """
         Every AKR-C0nn usage refusal raised through EnvError exits 3 (environment) rather than the exit 2 the diagnostic registry documents for that class — akr evidence add --result nope and --artifact under scratch both do it, so a caller branching on exit status reads a usage error as a broken checkout. The mapping lives in session::EnvError and predates the collated batch.
         """
     observed_at git:1414d0107e6bde1dfb7b05911e0be53a15b1b33d
+    closed_at 2026-10-06
+    supersedes [ @akr.papercut.every-akr-c0nn-usage-refusal-raised-through/1 ]
     author "claude"
     created_at 2026-08-22
 }
@@ -1641,12 +2607,26 @@ record akr.papercut.evidence-recorded-after-tests-but-before/2 : papercut {
 
 record akr.papercut.grok-build-1-0-25-mcp-client-validates/1 : papercut {
     title "Grok Build 1.0.25 MCP client validates advertised tool names against…"
+    state superseded
+    statement """
+        Grok Build 1.0.25 MCP client validates advertised tool names against ^[a-zA-Z_][a-zA-Z0-9_-]{0,63}$ and silently skips dotted names, so akr-mcp knowledge.* attached with tool_count:0 while grok mcp doctor reported 37 tools and no decode error. Workaround: advertise knowledge_* when clientInfo.name starts with grok; tools/call accepts both forms.
+        """
+    observed_at git:0dd6057aafb21ef86ae8d2bc7a659ed3c7fd1ebc
+    about "grok"
+    author "grok"
+    created_at 2026-09-10
+}
+
+record akr.papercut.grok-build-1-0-25-mcp-client-validates/2 : papercut {
+    title "Grok Build 1.0.25 MCP client validates advertised tool names against…"
     state verified
     statement """
         Grok Build 1.0.25 MCP client validates advertised tool names against ^[a-zA-Z_][a-zA-Z0-9_-]{0,63}$ and silently skips dotted names, so akr-mcp knowledge.* attached with tool_count:0 while grok mcp doctor reported 37 tools and no decode error. Workaround: advertise knowledge_* when clientInfo.name starts with grok; tools/call accepts both forms.
         """
     observed_at git:0dd6057aafb21ef86ae8d2bc7a659ed3c7fd1ebc
     about "grok"
+    closed_at 2026-10-06
+    supersedes [ @akr.papercut.grok-build-1-0-25-mcp-client-validates/1 ]
     author "grok"
     created_at 2026-09-10
 }
@@ -1700,6 +2680,30 @@ record akr.papercut.i-tried-assuming-get-supported-a-source/2 : papercut {
     supersedes [ @akr.papercut.i-tried-assuming-get-supported-a-source/1 ]
     author "codex"
     created_at 2026-08-09
+}
+
+record akr.papercut.investigating-an-agent-report-that-akr/1 : papercut {
+    title "Investigating an agent report that AKR knowledge.* tools were…"
+    state superseded
+    statement """
+        Investigating an agent report that AKR knowledge.* tools were unavailable: scripts/setup-akr-mcp.sh registers Codex, OpenCode and Claude but not Muse, so on a distro where muse is the only client every registration step is skipped and no agent gets MCP tools. Fix would be a Muse step writing the akr stdio entry into ~/.config/muse/settings.json mcpServers.
+        """
+    observed_at git:475045cdb223ccce985fe4234d9fb52832854aae
+    author "muse-code"
+    created_at 2026-10-05
+}
+
+record akr.papercut.investigating-an-agent-report-that-akr/2 : papercut {
+    title "Investigating an agent report that AKR knowledge.* tools were…"
+    state verified
+    statement """
+        Investigating an agent report that AKR knowledge.* tools were unavailable: scripts/setup-akr-mcp.sh registers Codex, OpenCode and Claude but not Muse, so on a distro where muse is the only client every registration step is skipped and no agent gets MCP tools. Fix would be a Muse step writing the akr stdio entry into ~/.config/muse/settings.json mcpServers.
+        """
+    observed_at git:475045cdb223ccce985fe4234d9fb52832854aae
+    closed_at 2026-10-06
+    supersedes [ @akr.papercut.investigating-an-agent-report-that-akr/1 ]
+    author "muse-code"
+    created_at 2026-10-05
 }
 
 record akr.papercut.knowledge-context-guidance-suggests-reading-a/1 : papercut {
@@ -2283,12 +3287,26 @@ record akr.papercut.running-akr-papercut-collate-m-agent-silently/2 : papercut {
 
 record akr.papercut.running-rustfmt-directly-on-akr-s-rust-2024/1 : papercut {
     title "Running rustfmt directly on AKR's Rust 2024 files defaulted to an older…"
+    state superseded
+    statement """
+        Running rustfmt directly on AKR's Rust 2024 files defaulted to an older edition and rejected existing let-chains; the non-obvious required invocation is rustfmt --edition 2024.
+        """
+    observed_at git:2dd07efa746065e627b1445587e3bb0ca0af553b
+    about "rustfmt"
+    author "codex"
+    created_at 2026-08-12
+}
+
+record akr.papercut.running-rustfmt-directly-on-akr-s-rust-2024/2 : papercut {
+    title "Running rustfmt directly on AKR's Rust 2024 files defaulted to an older…"
     state verified
     statement """
         Running rustfmt directly on AKR's Rust 2024 files defaulted to an older edition and rejected existing let-chains; the non-obvious required invocation is rustfmt --edition 2024.
         """
     observed_at git:2dd07efa746065e627b1445587e3bb0ca0af553b
     about "rustfmt"
+    closed_at 2026-10-06
+    supersedes [ @akr.papercut.running-rustfmt-directly-on-akr-s-rust-2024/1 ]
     author "codex"
     created_at 2026-08-12
 }
@@ -2509,7 +3527,7 @@ record akr.papercut.while-creating-work-to-fix-a-collated-papercut/1 : papercut 
 
 record akr.papercut.while-creating-work-to-fix-a-collated-papercut/2 : papercut {
     title "While creating work to fix a collated papercut, `resolves` rejected a…"
-    state verified
+    state superseded
     statement """
         While creating work to fix a collated papercut, `resolves` rejected a papercut target (AKR-L031) without naming the valid provenance relation. Retrying with `derived_from` worked; the rejection should suggest that relation so the remediation link is not buried in prose.
         """
@@ -2517,7 +3535,30 @@ record akr.papercut.while-creating-work-to-fix-a-collated-papercut/2 : papercut 
     supersedes [ @akr.papercut.while-creating-work-to-fix-a-collated-papercut/1 ]
 }
 
+record akr.papercut.while-creating-work-to-fix-a-collated-papercut/3 : papercut {
+    title "While creating work to fix a collated papercut, `resolves` rejected a…"
+    state verified
+    statement """
+        While creating work to fix a collated papercut, `resolves` rejected a papercut target (AKR-L031) without naming the valid provenance relation. Retrying with `derived_from` worked; the rejection should suggest that relation so the remediation link is not buried in prose.
+        """
+    observed_at git:ccb4ae57f1c55bb765fd81b3c2c99cfa64d3beb3
+    closed_at 2026-10-06
+    supersedes [ @akr.papercut.while-creating-work-to-fix-a-collated-papercut/2 ]
+}
+
 record akr.papercut.while-locating-the-non-fts-start-and/1 : papercut {
+    title "While locating the non-FTS start and differential harness code, the…"
+    state superseded
+    statement """
+        While locating the non-FTS start and differential harness code, the first FFF multi_grep call failed because its transport closed; rg was the only usable fallback.
+        """
+    observed_at git:2dd07efa746065e627b1445587e3bb0ca0af553b
+    about "fff"
+    author "codex"
+    created_at 2026-08-12
+}
+
+record akr.papercut.while-locating-the-non-fts-start-and/2 : papercut {
     title "While locating the non-FTS start and differential harness code, the…"
     state verified
     statement """
@@ -2525,6 +3566,8 @@ record akr.papercut.while-locating-the-non-fts-start-and/1 : papercut {
         """
     observed_at git:2dd07efa746065e627b1445587e3bb0ca0af553b
     about "fff"
+    closed_at 2026-10-06
+    supersedes [ @akr.papercut.while-locating-the-non-fts-start-and/1 ]
     author "codex"
     created_at 2026-08-12
 }
