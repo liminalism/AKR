@@ -3292,6 +3292,32 @@ record akr.papercut.papercut-baseline-reset-on-2026-09-18/1 : papercut {
     created_at 2026-09-18
 }
 
+record akr.papercut.release-verification-after-a-commit-fails-akr/1 : papercut {
+    title "Release verification after a commit fails akr build --check solely…"
+    state superseded
+    statement """
+        Release verification after a commit fails akr build --check solely because dirty-source provenance stored an empty build.commit while the now-committed identical source graph computes HEAD. All seals and generated views agree; commit metadata makes a freshly committed build self-inconsistent.
+        """
+    observed_at git:e079730536024c00d5142fb21d46d0fc249f6696
+    about "akr"
+    author "codex"
+    created_at 2026-10-14
+}
+
+record akr.papercut.release-verification-after-a-commit-fails-akr/2 : papercut {
+    title "Release verification after a commit fails akr build --check solely…"
+    state verified
+    statement """
+        Release verification after a commit fails akr build --check solely because dirty-source provenance stored an empty build.commit while the now-committed identical source graph computes HEAD. All seals and generated views agree; commit metadata makes a freshly committed build self-inconsistent.
+        """
+    observed_at git:e079730536024c00d5142fb21d46d0fc249f6696
+    about "akr"
+    closed_at 2026-10-14
+    supersedes [ @akr.papercut.release-verification-after-a-commit-fails-akr/1 ]
+    author "codex"
+    created_at 2026-10-14
+}
+
 record akr.papercut.revising-a-sealed-record-through-the-supported/1 : papercut {
     title "Revising a sealed record through the supported knowledge.revise path…"
     state superseded

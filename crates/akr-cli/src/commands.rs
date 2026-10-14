@@ -1277,6 +1277,11 @@ fn build(session: &mut Session, check: bool) -> Result<Output, EnvError> {
     let lock_changed = std::fs::read_to_string(&lock_path).ok().as_deref() != Some(&rendered);
 
     if check {
+        let lock_changed = session
+            .lock_text
+            .as_deref()
+            .and_then(|text| akr_core::lock::Lock::parse(text).ok())
+            .is_none_or(|recorded| !recorded.currency_mismatches(&lock).is_empty());
         let mut text = String::new();
         text.push_str(&format!(
             "akr build --check — {}\n",

@@ -2513,7 +2513,7 @@ record akr.work.reference-supersession-consistency/1 : work {
 
 record akr.work.release-0-5-2/1 : work {
     title "Release AKR 0.5.2 with configuration editing and papercut fixes"
-    state active
+    state completed
     scope [
         path "Cargo.lock",
         path "Cargo.toml",
@@ -2535,6 +2535,7 @@ record akr.work.release-0-5-2/1 : work {
                 """
             method command
             command "cargo test -p akr-cli --test config && cargo test -p akr-mcp --test writes"
+            verified_by [ @akr.evidence.release-052-final-suite/1 ]
         }
         check papercuts {
             statement """
@@ -2542,6 +2543,7 @@ record akr.work.release-0-5-2/1 : work {
                 """
             method command
             command "cargo test --workspace"
+            verified_by [ @akr.evidence.release-052-final-suite/1 ]
         }
         check release {
             statement """
@@ -2549,6 +2551,7 @@ record akr.work.release-0-5-2/1 : work {
                 """
             method command
             command "cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings && akr check --views-current"
+            verified_by [ @akr.evidence.release-052-verification/1 ]
         }
     }
     derived_from [ @akr.papercut.collated-12-papercuts-from-legeos-sys-sys/1 ]

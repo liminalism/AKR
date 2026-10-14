@@ -182,6 +182,26 @@ fn an_unchanged_lock_verifies_clean() {
 }
 
 #[test]
+fn committing_identical_dirty_sources_does_not_invalidate_lock_currency() {
+    let computed = sample();
+    let mut recorded = computed.clone();
+    recorded.build.commit = None;
+    assert!(
+        !recorded.verify(&computed).is_empty(),
+        "exact provenance still differs"
+    );
+    assert!(recorded.currency_mismatches(&computed).is_empty());
+    assert!(currency_diagnostics(&recorded, &computed, ".akr/akr.lock").is_empty());
+    let mut changed = computed.clone();
+    changed.sources[0].hash = hash("9");
+    assert!(!currency_diagnostics(&recorded, &changed, ".akr/akr.lock").is_empty());
+    assert!(
+        !computed.currency_mismatches(&recorded).is_empty(),
+        "losing known provenance remains a mismatch"
+    );
+}
+
+#[test]
 fn built_at_is_excluded_from_verification() {
     // §6: "Verification compares everything except build.built_at". It changes on every
     // build regardless of content; comparing it would make every lock permanently stale.

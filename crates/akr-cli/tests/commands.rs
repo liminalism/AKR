@@ -186,6 +186,52 @@ fn build_is_idempotent() {
 }
 
 #[test]
+fn dirty_source_lock_stays_current_when_the_exact_ledger_is_committed() {
+    let example = Example::materialise("build-lock-postcommit");
+    example.write_file("new-work.akr", "intent \"A freshly authored work item.\"\n");
+    let run = example.run(&[
+        "propose",
+        "sys.work.lock-provenance",
+        "--kind",
+        "work",
+        "--from",
+        "new-work.akr",
+    ]);
+    assert_eq!(run.code, 0, "{}", run.output());
+    assert_eq!(example.run(&["build"]).code, 0);
+    let before = example.read_file(".akr/akr.lock");
+    assert!(!before.contains("    commit git:"));
+    example.git(&["add", "-A"]);
+    example.git(&["commit", "-m", "Commit the exact prebuilt ledger"]);
+    for args in [vec!["build", "--check"], vec!["lock", "--check"]] {
+        let run = example.run(&args);
+        assert_eq!(run.code, 0, "{}", run.output());
+        assert!(
+            !run.output()
+                .contains("lock check                   changed")
+        );
+    }
+    assert_eq!(before, example.read_file(".akr/akr.lock"));
+    example.write_file("more-work.akr", "intent \"A subsequent ledger edit.\"\n");
+    assert_eq!(
+        example
+            .run(&[
+                "propose",
+                "sys.work.lock-drift",
+                "--kind",
+                "work",
+                "--from",
+                "more-work.akr"
+            ])
+            .code,
+        0
+    );
+    let run = example.run(&["build", "--check"]);
+    assert_eq!(run.code, 1, "{}", run.output());
+    assert!(run.output().contains("AKR-R052"));
+}
+
+#[test]
 fn build_check_detects_view_drift() {
     let example = Example::materialise("build-check");
     let build = example.run(&["build"]);

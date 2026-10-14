@@ -552,6 +552,28 @@ record akr.decision.inherited-facts-not-conclusions/1 : decision {
     author "GitHub Uploader"
 }
 
+record akr.decision.lock-currency-accepts-committed-dirty-build/1 : decision {
+    title "Committing identical dirty sources preserves lock currency"
+    state active
+    scope [
+        path "crates/akr-cli/src/commands.rs",
+        path "crates/akr-core/src/lock/**",
+        path "spec/schema/akr-lock.md"
+    ]
+    topic lock-currency
+    decision """
+        Exact lock comparison continues to compare commit provenance. Currency verification
+        additionally accepts an absent recorded commit becoming a known commit only when
+        every other compared field agrees. A lock built from dirty sources remains current
+        after those exact sources are committed, without inventing provenance or rewriting
+        the recorded lock. Tool, source, graph, seal and resolution drift still fail, as does
+        losing or changing a previously recorded commit.
+        """
+    derived_from [ @akr.papercut.release-verification-after-a-commit-fails-akr/2 ]
+    supported_by [ @akr.evidence.release-052-final-suite/1 ]
+    author "dk"
+}
+
 record akr.decision.mcp-budgeted-and-instrumented/1 : decision {
     title "The MCP surface is budgeted and instrumented"
     state superseded

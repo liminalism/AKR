@@ -1251,6 +1251,19 @@ record akr.evidence.relation-fixes-20260908/1 : evidence {
         """
 }
 
+record akr.evidence.release-052-final-suite/1 : evidence {
+    title "827 tests passed, 0 failed, 1 ignored. Includes regression proving a lock built from dirty sources stays current after committing those exact bytes, while subsequent source changes remain rejected; configuration, capture, MCP atomicity and disposition suites passed."
+    state verified
+    result pass
+    method command
+    observed_at git:e079730536024c00d5142fb21d46d0fc249f6696
+    command "cargo test --workspace"
+    summary """
+        827 tests passed, 0 failed, 1 ignored. Includes regression proving a lock built from dirty sources stays current after committing those exact bytes, while subsequent source changes remain rejected; configuration, capture, MCP atomicity and disposition suites passed.
+        """
+    author "dk"
+}
+
 record akr.evidence.release-052-focused/1 : evidence {
     title "Six configuration, fourteen CLI search, forty-three CLI write and thirty-one MCP write tests passed, including removal preservation, refusal atomicity, absent-commit rejection, capture digests and disposition pruning."
     state verified
@@ -1260,6 +1273,19 @@ record akr.evidence.release-052-focused/1 : evidence {
     command "cargo test -p akr-cli --test config --test search --test writes; cargo test -p akr-mcp --test writes"
     summary """
         Six configuration, fourteen CLI search, forty-three CLI write and thirty-one MCP write tests passed, including removal preservation, refusal atomicity, absent-commit rejection, capture digests and disposition pruning.
+        """
+    author "dk"
+}
+
+record akr.evidence.release-052-verification/1 : evidence {
+    title "Distribution verification passed in a fresh tracked-file copy: formatting, 827 workspace tests, strict design checks, build/lock/view parity and source immutability. Optimized workspace build and warning-free clippy passed; 794 no-default-feature tests passed. Installed CLI/MCP report 0.5.2; current checkout validates without diagnostics."
+    state verified
+    result pass
+    method command
+    observed_at git:e079730536024c00d5142fb21d46d0fc249f6696
+    command "scripts/verify-distribution.sh; cargo build --workspace --profile release-final; cargo clippy --workspace --all-targets -- -D warnings; cargo test --workspace --no-default-features; akr check --views-current --scratch-clean"
+    summary """
+        Distribution verification passed in a fresh tracked-file copy: formatting, 827 workspace tests, strict design checks, build/lock/view parity and source immutability. Optimized workspace build and warning-free clippy passed; 794 no-default-feature tests passed. Installed CLI/MCP report 0.5.2; current checkout validates without diagnostics.
         """
     author "dk"
 }

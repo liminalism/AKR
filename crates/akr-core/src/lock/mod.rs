@@ -212,6 +212,28 @@ pub enum Mismatch {
 }
 
 impl Lock {
+    /// Differences relevant to lock currency, preserving exact provenance comparison
+    /// in [`Self::verify`].
+    ///
+    /// A lock authored from dirty sources records no commit. Committing those exact
+    /// bytes supplies provenance without invalidating the build. Accept this one-way
+    /// transition only when every other verified field agrees; never invent a commit
+    /// in the recorded lock or excuse a source, resolution, seal, or tool mismatch.
+    #[must_use]
+    pub fn currency_mismatches(&self, computed: &Self) -> Vec<Mismatch> {
+        let mismatches = self.verify(computed);
+        if self.build.commit.is_none()
+            && computed.build.commit.is_some()
+            && mismatches
+                .iter()
+                .all(|mismatch| matches!(mismatch, Mismatch::Build { slot: "commit", .. }))
+        {
+            Vec::new()
+        } else {
+            mismatches
+        }
+    }
+
     /// Verifies this lock against a freshly computed one.
     ///
     /// Compares **everything except `build.built_at`** (`spec/schema/akr-lock.md` §6).
@@ -704,7 +726,7 @@ fn pinned(text: &str, line: usize) -> Result<RevisionId, LockError> {
 pub fn currency_diagnostics(recorded: &Lock, computed: &Lock, path: &str) -> Vec<Diagnostic> {
     const RULE: RuleId = RuleId(24);
     let mut out = Vec::new();
-    for mismatch in recorded.verify(computed) {
+    for mismatch in recorded.currency_mismatches(computed) {
         let detail = match mismatch {
             Mismatch::Build {
                 slot,

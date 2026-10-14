@@ -264,6 +264,14 @@ Verification compares everything except `build.built_at`. A lock whose `source_g
 longer matches the sources is stale, not wrong: the fix is `akr build`, and the
 diagnostic says so.
 
+Exact comparison (`Lock::verify`) includes commit provenance. Currency checks
+(`akr lock --check`, `akr build --check`) additionally accept a recorded absent
+commit becoming a known commit when every other compared field agrees. This is
+the ordinary commit of an exact ledger built while dirty. The lock retains its
+original absent provenance; the check neither rewrites it nor invents a commit.
+All source, graph, tool, resolution and seal differences remain mismatches, as
+does losing or changing a recorded commit.
+
 A missing lock file is not an error on first build — `akr build` creates it. It **is** an
 error for `akr check` in a repository that has one committed elsewhere in history, which
 is a sign of an accidental deletion rather than a fresh start.
