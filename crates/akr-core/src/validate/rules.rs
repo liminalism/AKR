@@ -171,7 +171,12 @@ pub fn v001_references_resolve(ledger: &Ledger) -> Vec<Diagnostic> {
                         rel_subject(record, relation),
                         format!("no record with key {key}"),
                     )
-                    .note(Label::with_message(subject(record), "referenced here")),
+                    .note(Label::with_message(subject(record), "referenced here"))
+                    .help(if key.to_string().starts_with("source.") {
+                        "registered sources are not record keys; cite the document in a source block using `akr source get <id>` rather than a derived_from relation"
+                    } else {
+                        "check the record key with `akr search <terms>` or create it with `akr propose`; registered documents belong in source blocks"
+                    }),
                 ),
                 Err(HeadError::AmbiguousChainEnd(key, revisions)) => out.push(
                     Diagnostic::error(
@@ -221,7 +226,8 @@ pub fn v002_namespaces_declared(ledger: &Ledger) -> Vec<Diagnostic> {
                     r.id.key.namespace()
                 ),
             )
-            .help("correct the namespace, or declare it if it is genuinely new")
+            .help(format!("declared namespaces: {}; correct the key, or use `akr config set --from <file>` to declare a genuinely new namespace",
+                ledger.project.namespaces.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")))
         })
         .collect()
 }
@@ -1631,12 +1637,15 @@ pub fn v024_seals_match(ledger: &Ledger) -> Vec<Diagnostic> {
                     );
                 }
             }
-            (None, _) => out.push(Diagnostic::error(
-                c::R052,
-                RULE,
-                subject(record),
-                format!("akr.lock has no hash for {}", record.id),
-            )),
+            (None, _) => out.push(
+                Diagnostic::error(
+                    c::R052,
+                    RULE,
+                    subject(record),
+                    format!("akr.lock has no hash for {}", record.id),
+                )
+                .help("run `akr build` to refresh the missing seal hash"),
+            ),
             _ => {}
         }
     }

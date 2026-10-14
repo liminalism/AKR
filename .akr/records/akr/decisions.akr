@@ -946,6 +946,31 @@ record akr.decision.start-collates-session-head/1 : decision {
     supported_by [ @akr.evidence.session-head-briefing-suite/1 ]
 }
 
+record akr.decision.validated-project-configuration-edits/1 : decision {
+    title "Project configuration edits use the validated write pipeline"
+    state active
+    scope [
+        path "crates/akr-cli/src/config.rs",
+        path "crates/akr-core/src/ops/**",
+        path "crates/akr-mcp/src/tools.rs",
+        path "docs/07-cli.md",
+        path "docs/08-mcp.md"
+    ]
+    topic project-configuration
+    decision """
+        Project configuration is edited through akr config (knowledge.config_get and
+        knowledge.config_edit over MCP), not through protocol exceptions for hand edits.
+        Full replacement and exact untracked-path add/remove operations share the record
+        write pipeline's lock, resulting-ledger validation, inherited-diagnostic comparison,
+        canonical formatting and atomic commit boundary. A replacement retains project
+        identity and cannot author records. New untracked declarations covering tracked
+        files are refused; narrower binary globs do not mute unrelated source scopes.
+        Configuration edits preserve unrelated declarations and require akr build afterwards.
+        """
+    supported_by [ @akr.evidence.release-052-workspace/1 ]
+    author "dk"
+}
+
 record akr.decision.write-answers-for-what-it-introduces/1 : decision {
     title "A write answers for what it introduces, not for what it inherits"
     state active

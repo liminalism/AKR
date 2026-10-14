@@ -19,6 +19,22 @@ mod support;
 
 use support::Example;
 
+#[test]
+fn empty_query_lists_filtered_heads_in_stable_order() {
+    let example = Example::materialise("search-list-heads");
+    let run = example.run(&["search", "", "--kind", "milestone"]);
+    assert_eq!(run.code, 0, "{}", run.output());
+    assert!(
+        run.stdout.contains("sys.milestone.m3-playable-day"),
+        "{}",
+        run.stdout
+    );
+    assert_eq!(
+        run.stdout,
+        example.run(&["search", "", "--kind", "milestone"]).stdout
+    );
+}
+
 fn cache(example: &Example) -> std::path::PathBuf {
     example.root().join(".akr/cache/index.sqlite")
 }

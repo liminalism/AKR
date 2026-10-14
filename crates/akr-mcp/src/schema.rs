@@ -25,6 +25,16 @@ pub struct Tool {
 /// The catalogue, in §2's order.
 pub const TOOLS: &[Tool] = &[
     Tool {
+        name: "knowledge.config_get",
+        description: "Read .akr/project.akr through the supported configuration surface (akr config show).",
+        writes: false,
+    },
+    Tool {
+        name: "knowledge.config_edit",
+        description: "Edit project configuration through the locked, validated write pipeline. Matches akr config set and config untracked add/remove; invalid edits write nothing. Run akr build afterwards.",
+        writes: true,
+    },
+    Tool {
         name: "knowledge.search",
         description: "Search the ledger. Ranks; never authorises — nothing enters a context \
                       bundle because it matched a query. A missing or stale disposable index \
@@ -309,6 +319,27 @@ pub fn is_host_safe_name(name: &str) -> bool {
 pub fn input_schema(name: &str) -> Option<Value> {
     let name = canonical_tool_name(name).unwrap_or(name);
     let schema = match name {
+        "knowledge.config_get" => object(Vec::new(), &[]),
+        "knowledge.config_edit" => object(
+            vec![
+                (
+                    "action",
+                    enumeration(
+                        "The configuration operation.",
+                        &["replace", "add_untracked", "remove_untracked"],
+                    ),
+                ),
+                (
+                    "configuration",
+                    string("replace: complete AKR project-file text, retaining the project name."),
+                ),
+                (
+                    "path",
+                    string("add_untracked/remove_untracked: exact declared path glob."),
+                ),
+            ],
+            &["action"],
+        ),
         "knowledge.search" => object(
             vec![
                 (
@@ -966,6 +997,12 @@ fn evidence_schema() -> Value {
                 string("A repository path to the artefact, if one exists."),
             ),
             ("summary", string("One line on what was observed.")),
+            (
+                "capture",
+                string(
+                    "Optional raw capture file to stream-hash into summary with byte count. Requires summary. May be in scratch; it is not copied or cited as an artifact and need not persist.",
+                ),
+            ),
             (
                 "observed_at",
                 string("The full 40-hex commit the observation was made at. Defaults to HEAD."),

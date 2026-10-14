@@ -1,6 +1,18 @@
 akr 0.1
 project akr
 
+record akr.papercut.a-broad-context-bundle-exceeded-tool-output/1 : papercut {
+    title "A broad context bundle exceeded tool output limits; budget 7000 still…"
+    state verified
+    statement """
+        A broad context bundle exceeded tool output limits; budget 7000 still emits mandatory sections beyond the request. Captured supported context output to a temporary file and read it in sections; relevance budgeting remains tracked.
+        """
+    observed_at git:06b41720646019d351672727eed7765e3ac89c58
+    about "akr"
+    author "codex"
+    created_at 2026-10-14
+}
+
 record akr.papercut.a-command-orchestration-typo-caused-a-tool-call/1 : papercut {
     title "A command orchestration typo caused a tool call to fail before…"
     state superseded
@@ -755,6 +767,68 @@ record akr.papercut.collated-10-papercuts-from-evidence-intake-2/2 : papercut {
     ]
     supersedes [ @akr.papercut.collated-10-papercuts-from-evidence-intake-2/1 ]
     created_at 2026-08-23
+}
+
+record akr.papercut.collated-12-papercuts-from-legeos-sys-sys/1 : papercut {
+    title "Collated 12 papercuts from LegeOS, SYS, SYS-baseline-check and SYS-seed-system-review-20261014"
+    state verified
+    statement """
+        Collated 12 papercuts from /media/dk/templaros-root/@home/dk/rust-projects on 2026-10-14 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
+
+        ## LegeOS @legeos.papercut.a-partial-acceptance-overlay-to-a-proposed-work [about akr]
+        A partial acceptance overlay to a proposed work record replaced the entire check set instead of merging checks. Restore the full acceptance block from the current context bundle before applying a narrow edit.
+
+        ## LegeOS @legeos.papercut.adding-integration-evidence-failed-because-the [about akr]
+        Adding integration evidence failed because the artifact slot joined several paths with semicolons, so AKR treated them as one disposable .agent/scratch path. Retry with the single retained delivery directory as the artifact anchor; list individual observations in the summary.
+
+        ## LegeOS @legeos.papercut.cleaning-python-bytecode-hit-the-shell-policy [about akr]
+        Cleaning Python bytecode hit the shell policy rejecting rm even for exact cache directories. Used a narrowly scoped pathlib unlink/rmdir over only the three repository __pycache__ folders instead.
+
+        ## LegeOS @legeos.papercut.recording-a-revised-observation-akr-revise [about akr]
+        Recording a revised observation: akr revise rejected the full key with /1; revise expects the key without its revision suffix. Retried with the canonical key after checking the CLI usage.
+
+        ## LegeOS @legeos.papercut.the-installed-local-bin-akr-built-2026-09-17 [about akr]
+        The installed ~/.local/bin/akr (built 2026-09-17) predated papercut closed_at (AKR 0878556), so 115 closed papercuts read as T002+R051 and the whole ledger failed, blocking akr start. Fixed by installing the current AKR release-final build; check akr's build date before suspecting the ledger.
+
+        ## SYS @saveyourskin.papercut.akr-evidence-add-accepts-multi-mb-artifact [about akr evidence add]
+        akr evidence add accepts multi-MB --artifact files but refuses .agent/scratch ones, so agents copy raw captures into the tree to cite them (787 MB swept into one checkpoint). Suggest: warn/refuse artifacts over ~64 KiB and offer a summary+sha256 form whose raw file may live in scratch.
+
+        ## SYS @saveyourskin.papercut.dinner-playtest-startup-knowledge-start-and [about akr]
+        Dinner playtest startup: knowledge.start and handoff.session_begin reject both working-tree and HEAD due pre-existing sealed papercut hash errors; CLI also rejects closed_at slots. Read-only get/context works; handoff and ledger reconciliation are blocked by validation.
+
+        ## SYS-baseline-check @saveyourskin.papercut.akr-evidence-add-accepts-multi-mb-artifact [about akr evidence add]
+        akr evidence add accepts multi-MB --artifact files but refuses .agent/scratch ones, so agents copy raw captures into the tree to cite them (787 MB swept into one checkpoint). Suggest: warn/refuse artifacts over ~64 KiB and offer a summary+sha256 form whose raw file may live in scratch.
+
+        ## SYS-baseline-check @saveyourskin.papercut.dinner-playtest-startup-knowledge-start-and [about akr]
+        Dinner playtest startup: knowledge.start and handoff.session_begin reject both working-tree and HEAD due pre-existing sealed papercut hash errors; CLI also rejects closed_at slots. Read-only get/context works; handoff and ledger reconciliation are blocked by validation.
+
+        ## SYS-seed-system-review-20261014 @saveyourskin.papercut.a-fresh-seed-review-worktree-at-57cec974-cannot [about akr]
+        A fresh seed-review worktree at 57cec974 cannot open an AKR session: eleven inherited evidence artifacts point into .agent/scratch and the worktree lacks any kept-scratch metadata from main. Proposals succeed with no new errors; final validate reports eleven AKR-T023 errors. Worktree handoff needs durable evidence summaries or explicit kept-artifact handling, not copied main-tree scratch.
+
+        ## SYS-seed-system-review-20261014 @saveyourskin.papercut.akr-evidence-add-accepts-multi-mb-artifact [about akr evidence add]
+        akr evidence add accepts multi-MB --artifact files but refuses .agent/scratch ones, so agents copy raw captures into the tree to cite them (787 MB swept into one checkpoint). Suggest: warn/refuse artifacts over ~64 KiB and offer a summary+sha256 form whose raw file may live in scratch.
+
+        ## SYS-seed-system-review-20261014 @saveyourskin.papercut.dinner-playtest-startup-knowledge-start-and [about akr]
+        Dinner playtest startup: knowledge.start and handoff.session_begin reject both working-tree and HEAD due pre-existing sealed papercut hash errors; CLI also rejects closed_at slots. Read-only get/context works; handoff and ledger reconciliation are blocked by validation.
+        """
+    observed_at git:06b41720646019d351672727eed7765e3ac89c58
+    about "akr"
+    collated [
+        "legeos.papercut.a-partial-acceptance-overlay-to-a-proposed-work",
+        "legeos.papercut.adding-integration-evidence-failed-because-the",
+        "legeos.papercut.cleaning-python-bytecode-hit-the-shell-policy",
+        "legeos.papercut.recording-a-revised-observation-akr-revise",
+        "legeos.papercut.the-installed-local-bin-akr-built-2026-09-17",
+        "saveyourskin.papercut.akr-evidence-add-accepts-multi-mb-artifact",
+        "saveyourskin.papercut.dinner-playtest-startup-knowledge-start-and",
+        "saveyourskin.papercut.akr-evidence-add-accepts-multi-mb-artifact",
+        "saveyourskin.papercut.dinner-playtest-startup-knowledge-start-and",
+        "saveyourskin.papercut.a-fresh-seed-review-worktree-at-57cec974-cannot",
+        "saveyourskin.papercut.akr-evidence-add-accepts-multi-mb-artifact",
+        "saveyourskin.papercut.dinner-playtest-startup-knowledge-start-and"
+    ]
+    author "dk"
+    created_at 2026-10-14
 }
 
 record akr.papercut.collated-15-papercuts-from-evidence-intake/1 : papercut {
@@ -2603,6 +2677,18 @@ record akr.papercut.evidence-recorded-after-tests-but-before/2 : papercut {
     supersedes [ @akr.papercut.evidence-recorded-after-tests-but-before/1 ]
     author "codex"
     created_at 2026-08-11
+}
+
+record akr.papercut.fff-grep-accepts-query-with-inline-directory/1 : papercut {
+    title "FFF grep accepts query with inline directory constraints; supplying…"
+    state verified
+    statement """
+        FFF grep accepts query with inline directory constraints; supplying pattern/path fields silently fell back to an unscoped search. Inspect the tool declaration before using filters.
+        """
+    observed_at git:06b41720646019d351672727eed7765e3ac89c58
+    about "fff"
+    author "codex"
+    created_at 2026-10-14
 }
 
 record akr.papercut.grok-build-1-0-25-mcp-client-validates/1 : papercut {

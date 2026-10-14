@@ -93,26 +93,37 @@ pub fn search(path: &Path, request: &Request) -> Result<Vec<Hit>, IndexError> {
     } else {
         escape_query(&request.query)
     };
-    if expression.trim().is_empty() {
+    let listing = request.query.trim().is_empty() && !request.raw_fts;
+    if expression.trim().is_empty() && !listing {
         return Ok(Vec::new());
     }
-    let mut sql = String::from(
-        "SELECT records_fts.key, records_fts.rev, records_fts.kind, r.state, \
+    let mut sql = if listing {
+        String::from(
+            "SELECT records_fts.key, records_fts.rev, records_fts.kind, r.state, \
+         records_fts.title, 0.0 AS score FROM records_fts \
+         JOIN revisions r ON r.key = records_fts.key AND r.rev = records_fts.rev \
+         WHERE 1 = 1",
+        )
+    } else {
+        String::from(
+            "SELECT records_fts.key, records_fts.rev, records_fts.kind, r.state, \
          records_fts.title, bm25(records_fts) AS score \
          FROM records_fts \
          JOIN revisions r ON r.key = records_fts.key AND r.rev = records_fts.rev \
          WHERE records_fts MATCH ?1",
-    );
+        )
+    };
+    let first_parameter = if listing { 1 } else { 2 };
     if !request.kinds.is_empty() {
         sql.push_str(&format!(
             " AND records_fts.kind IN ({})",
-            placeholders(request.kinds.len(), 2)
+            placeholders(request.kinds.len(), first_parameter)
         ));
     }
     if !request.states.is_empty() {
         sql.push_str(&format!(
             " AND r.state IN ({})",
-            placeholders(request.states.len(), 2 + request.kinds.len())
+            placeholders(request.states.len(), first_parameter + request.kinds.len())
         ));
     }
     // Ascending, because FTS5's bm25 is more negative the better the match. The key
@@ -120,7 +131,11 @@ pub fn search(path: &Path, request: &Request) -> Result<Vec<Hit>, IndexError> {
     sql.push_str(" ORDER BY score ASC, records_fts.key ASC LIMIT ");
     sql.push_str(&limit.to_string());
 
-    let mut bound: Vec<&dyn rusqlite::ToSql> = vec![&expression];
+    let mut bound: Vec<&dyn rusqlite::ToSql> = if listing {
+        Vec::new()
+    } else {
+        vec![&expression]
+    };
     for kind in &request.kinds {
         bound.push(kind);
     }

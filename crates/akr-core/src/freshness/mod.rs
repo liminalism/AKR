@@ -421,19 +421,28 @@ impl std::fmt::Display for UnverifiableReason {
 
 /// Whether a glob lies at or under a tree `project.akr` declares untracked.
 ///
-/// Compares literal prefixes, exactly as [`inside_submodule`] does: the declaration names
-/// a tree, and any scope reaching into that tree inherits it. A declaration is a claim
-/// about the repository, so it is checked against git in [`unmatched_watches`] — declaring
-/// a tree that is in fact tracked is an authoring mistake, not a licence to go quiet.
+/// Whole-tree declarations cover descendants. Other patterns only cover an identical
+/// scope pattern or a matching literal path: a binary-only pattern must not hide source
+/// scopes merely because they share a directory prefix.
 fn is_declared_untracked(declared: &[crate::model::Glob], glob: &str) -> bool {
-    let literal = literal_prefix(glob);
-    if literal.is_empty() {
-        return false;
-    }
-    declared.iter().any(|d| {
-        let root = literal_prefix(d.as_str());
-        !root.is_empty() && (literal == root || literal.starts_with(&format!("{root}/")))
+    declared.iter().any(|declaration| {
+        declaration.as_str() == glob || declaration_covers_path(declaration, glob)
     })
+}
+
+/// Whether an untracked declaration covers a path (or a scope beneath a literal tree).
+///
+/// Literal declarations and `tree/**` describe whole trees; other globs match literal
+/// paths exactly. This is shared by configuration authoring and freshness diagnostics.
+#[must_use]
+pub fn declaration_covers_path(declaration: &Glob, path: &str) -> bool {
+    let declared = declaration.as_str();
+    let tree = declared.strip_suffix("/**").unwrap_or(declared);
+    if !tree.is_empty() && !tree.contains(['*', '?', '[']) {
+        path == tree || path.starts_with(&format!("{tree}/"))
+    } else {
+        !path.contains(['*', '?', '[']) && glob_matches(declaration, path)
+    }
 }
 
 /// The part of a glob before its first wildcard segment.
@@ -635,13 +644,9 @@ pub fn unmatched_watches(
     // rather than taking the author's word: if the tree is in fact tracked, the
     // declaration is muting scopes that git could have answered for all along.
     for glob in &ledger.project.untracked {
-        let root = literal_prefix(glob.as_str());
-        if root.is_empty() {
-            continue;
-        }
-        if listing
+        if let Some(path) = listing
             .iter()
-            .any(|path| path == &root || path.starts_with(&format!("{root}/")))
+            .find(|path| declaration_covers_path(glob, path))
         {
             out.push(
                 Diagnostic::warning(
@@ -649,12 +654,12 @@ pub fn unmatched_watches(
                     crate::git::V102,
                     Subject::Ledger,
                     format!(
-                        "project.akr declares {:?} untracked, but {root:?} is tracked at {head}",
+                        "project.akr declares {:?} untracked, but {path:?} is tracked at {head}",
                         glob.as_str()
                     ),
                 )
                 .help(
-                    "the declaration silences every scope beneath it; drop it, or narrow it to the part git really does not hold",
+                    format!("remove it with `akr config untracked remove {:?}`, or use `akr config set --from <file>` to narrow it to assets git does not hold", glob.as_str()),
                 ),
             );
         }

@@ -1251,6 +1251,32 @@ record akr.evidence.relation-fixes-20260908/1 : evidence {
         """
 }
 
+record akr.evidence.release-052-focused/1 : evidence {
+    title "Six configuration, fourteen CLI search, forty-three CLI write and thirty-one MCP write tests passed, including removal preservation, refusal atomicity, absent-commit rejection, capture digests and disposition pruning."
+    state verified
+    result pass
+    method command
+    observed_at git:06b41720646019d351672727eed7765e3ac89c58
+    command "cargo test -p akr-cli --test config --test search --test writes; cargo test -p akr-mcp --test writes"
+    summary """
+        Six configuration, fourteen CLI search, forty-three CLI write and thirty-one MCP write tests passed, including removal preservation, refusal atomicity, absent-commit rejection, capture digests and disposition pruning.
+        """
+    author "dk"
+}
+
+record akr.evidence.release-052-workspace/1 : evidence {
+    title "The complete AKR 0.5.2 workspace suite passed, including the CLI transcripts regenerated through AKR_BLESS and all new configuration, MCP atomicity, capture and disposition regressions."
+    state verified
+    result pass
+    method command
+    observed_at git:06b41720646019d351672727eed7765e3ac89c58
+    command "cargo test --workspace"
+    summary """
+        The complete AKR 0.5.2 workspace suite passed, including the CLI transcripts regenerated through AKR_BLESS and all new configuration, MCP atomicity, capture and disposition regressions.
+        """
+    author "dk"
+}
+
 record akr.evidence.repairable-ledger-diagnostics/1 : evidence {
     title "79 tests pass, including AKR-T023's help offering the repair that survives a prune, and V-020 separating evidence that genuinely predates a record's last definitional change from evidence observed on a branch this history does not contain — with the reachability fact believed over the topological order, and the verdict unchanged either way."
     state verified

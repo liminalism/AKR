@@ -9,6 +9,124 @@ mod support;
 use akr_core::json::{Value, parse};
 use support::{Example, mcp_binary, one_line};
 
+#[test]
+fn absent_commit_is_rejected_before_propose_and_evidence_batch_write() {
+    let example = Example::materialise("mcp-invalid-commit-atomicity");
+    let before = example.sources();
+    for (tool, arguments) in [
+        (
+            "knowledge.propose",
+            r#"{"key":"sys.observation.missing-commit","kind":"observation","title":"Missing commit","slots":{"statement":"Observed on an absent commit.","observed_at":"git:1111111111111111111111111111111111111111","method":"manual"}}"#,
+        ),
+        (
+            "knowledge.evidence_add_many",
+            r#"{"evidence":[{"key":"sys.evidence.missing-commit","result":"pass","method":"manual","observed_at":"1111111111111111111111111111111111111111"}]}"#,
+        ),
+    ] {
+        let (payload, is_error) = call(&example, tool, arguments);
+        assert!(is_error, "{tool}: {payload:?}");
+        assert!(error_text(&payload).contains("AKR-G011"), "{payload:?}");
+        assert_eq!(
+            before,
+            example.sources(),
+            "{tool} wrote before checking the commit"
+        );
+    }
+}
+
+#[test]
+fn configuration_edit_uses_the_cli_pipeline_and_is_available_over_mcp() {
+    let example = Example::materialise("mcp-config");
+    let original = example.read_file(".akr/project.akr");
+    example.write_file(
+        ".akr/project.akr",
+        &format!("{original}\nuntracked {{ path \"human/**\" path \"binary/**\" }}\n"),
+    );
+    let (payload, is_error) = call(
+        &example,
+        "knowledge.config_edit",
+        r#"{"action":"remove_untracked","path":"human/**"}"#,
+    );
+    assert!(!is_error, "{payload:?}");
+    let text = example.read_file(".akr/project.akr");
+    assert!(!text.contains("human/**"));
+    assert!(text.contains("binary/**"));
+    let (payload, is_error) = call(&example, "knowledge.config_get", "{}");
+    assert!(!is_error, "{payload:?}");
+    assert_eq!(
+        payload.get("configuration").and_then(Value::as_str),
+        Some(text.as_str())
+    );
+}
+
+#[test]
+fn capture_digest_works_for_single_and_batched_mcp_evidence() {
+    let example = Example::materialise("mcp-evidence-capture");
+    example.write_file(".agent/scratch/raw.bin", "abc");
+    for (tool, arguments) in [
+        (
+            "knowledge.evidence_add",
+            r#"{"key":"sys.evidence.capture-single","result":"pass","method":"manual","summary":"Capture inspected.","capture":".agent/scratch/raw.bin"}"#,
+        ),
+        (
+            "knowledge.evidence_add_many",
+            r#"{"evidence":[{"key":"sys.evidence.capture-batch","result":"pass","method":"manual","summary":"Capture inspected.","capture":".agent/scratch/raw.bin"}]}"#,
+        ),
+    ] {
+        let (payload, is_error) = call(&example, tool, arguments);
+        assert!(!is_error, "{payload:?}");
+    }
+    std::fs::remove_file(example.root().join(".agent/scratch/raw.bin")).unwrap();
+    for key in ["sys.evidence.capture-single", "sys.evidence.capture-batch"] {
+        let run = example.run(&["get", key]);
+        assert!(
+            run.stdout
+                .contains("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+        );
+        assert!(!run.stdout.contains("\n  artifact"));
+    }
+    assert_eq!(example.run(&["build"]).code, 0);
+}
+
+#[test]
+fn mcp_and_cli_revise_prune_the_same_historical_dispositions() {
+    let example = Example::materialise("mcp-revise-stale-dispositions");
+    example.write_file(
+        "parent.akr",
+        "state active\nintent \"A parent work item.\"\n",
+    );
+    example.write_file(
+        "child.akr",
+        "intent \"A child on the original revision.\"\npart_of [ @sys.work.parent/1 ]\n",
+    );
+    for (key, file) in [
+        ("sys.work.parent", "parent.akr"),
+        ("sys.work.child", "child.akr"),
+    ] {
+        let run = example.run(&["propose", key, "--kind", "work", "--from", file]);
+        assert_eq!(run.code, 0, "{}", run.output());
+    }
+    let run = example.run(&[
+        "revise",
+        "sys.work.parent",
+        "--title",
+        "First successor",
+        "--disposition",
+        "sys.work.child=intentionally_dropped",
+    ]);
+    assert_eq!(run.code, 0, "{}", run.output());
+    let (payload, is_error) = call(
+        &example,
+        "knowledge.revise",
+        r#"{"key":"sys.work.parent","base_rev":2,"title":"Second successor"}"#,
+    );
+    assert!(!is_error, "{payload:?}");
+    let run = example.run(&["get", "sys.work.parent/3", "--detail", "canonical"]);
+    assert!(!run.stdout.contains("disposition @sys.work.child"));
+    let run = example.run(&["get", "sys.work.parent/2", "--detail", "canonical"]);
+    assert!(run.stdout.contains("disposition @sys.work.child"));
+}
+
 /// One `tools/call`, returning `(payload, is_error)`.
 fn call(example: &Example, tool: &str, arguments: &str) -> (Value, bool) {
     use std::io::Write as _;
@@ -907,12 +1025,15 @@ fn an_artifact_in_a_kept_scratch_entry_is_accepted_on_every_evidence_route() {
     let (payload, is_error) = call(
         &example,
         "knowledge.propose",
-        r#"{
+        &format!(
+            r#"{{
             "key":"sys.evidence.kept-proposal","kind":"evidence","title":"Kept proposal",
-            "slots":{"result":"pass","method":"command","command":"cargo bench",
-                     "observed_at":"git:0123456789abcdef0123456789abcdef01234567",
-                     "artifact":".agent/scratch/ocr-benchmark/out.txt"}
-        }"#,
+            "slots":{{"result":"pass","method":"command","command":"cargo bench",
+                     "observed_at":"git:{}",
+                     "artifact":".agent/scratch/ocr-benchmark/out.txt"}}
+        }}"#,
+            example.commit(5)
+        ),
     );
     assert!(!is_error, "{}", error_text(&payload));
 }

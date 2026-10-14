@@ -97,6 +97,8 @@ impl ToolResult {
 pub fn call(root: &Path, name: &str, arguments: &Value) -> Result<ToolResult, ToolError> {
     let name = crate::schema::canonical_tool_name(name).unwrap_or(name);
     match name {
+        "knowledge.config_get" => run_read(root, Command::ConfigShow),
+        "knowledge.config_edit" => config_edit(root, arguments),
         "knowledge.search" => search(root, arguments),
         "knowledge.start" => start(root, arguments),
         "knowledge.explain" => explain(arguments),
@@ -780,6 +782,30 @@ fn validate(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
 // write tools
 // -------------------------------------------------------------------------------------
 
+fn config_edit(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
+    let action = required_str(arguments, "action")?;
+    let edit = match action {
+        "replace" => akr_core::ops::ProjectEdit::Replace(
+            required_str(arguments, "configuration")?.to_owned(),
+        ),
+        "add_untracked" => {
+            akr_core::ops::ProjectEdit::AddUntracked(required_str(arguments, "path")?.to_owned())
+        }
+        "remove_untracked" => {
+            akr_core::ops::ProjectEdit::RemoveUntracked(required_str(arguments, "path")?.to_owned())
+        }
+        _ => {
+            return Err(ToolError::new(
+                "AKR-C004",
+                "action must be replace, add_untracked, or remove_untracked",
+            ));
+        }
+    };
+    let session = open(root, true)?;
+    let output = akr_cli::config::edit(&session, &edit).map_err(environment)?;
+    Ok(ToolResult::Structured(finish(&session.sources, output)?))
+}
+
 fn propose(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
     let session = open(root, true)?;
     let key = required_str(arguments, "key")?;
@@ -802,6 +828,8 @@ fn propose(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
         arguments,
     )?;
     let template = record::parse(&source, &parsed)?;
+    akr_cli::write::ensure_commits_exist(&session, &akr_cli::write::commits_named_by(&template))
+        .map_err(environment)?;
     let context = write_context(&session);
     Ok(ToolResult::Structured(write_result(
         &session,
@@ -853,7 +881,8 @@ fn revise(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
         },
         &merged(arguments, head),
     )?;
-    let replacement = record::parse(&source, &parsed)?;
+    let mut replacement = record::parse(&source, &parsed)?;
+    replacement.dispositions.clone_from(&head.dispositions);
     let requested_state = arguments
         .get("state")
         .and_then(Value::as_str)
@@ -1013,7 +1042,6 @@ fn evidence_add_many(root: &Path, arguments: &Value) -> Result<ToolResult, ToolE
         records.push(record);
     }
     let target = records[0].id.key.clone();
-    let result = akr_core::ops::propose_many(&context, &records);
     akr_cli::write::ensure_commits_exist(
         &session,
         &records
@@ -1027,6 +1055,7 @@ fn evidence_add_many(root: &Path, arguments: &Value) -> Result<ToolResult, ToolE
             .collect::<Vec<_>>(),
     )
     .map_err(environment)?;
+    let result = akr_core::ops::propose_many(&context, &records);
     Ok(ToolResult::Structured(write_many_result(
         &session, &target, result,
     )?))
@@ -1041,6 +1070,7 @@ fn evidence_request(arguments: &Value) -> Result<akr_cli::write::EvidenceRequest
         title: optional_str(arguments, "title"),
         command: optional_str(arguments, "command"),
         artifact: optional_str(arguments, "artifact"),
+        capture: optional_str(arguments, "capture"),
         summary: optional_str(arguments, "summary"),
         // `git:` is the reference spelling in a record; the request takes the bare hash,
         // as the command line does.
@@ -1697,6 +1727,12 @@ fn write_many_result(
         ),
         ("lock_stale", Value::bool(applied.lock_stale)),
     ];
+    if !applied.notes.is_empty() {
+        fields.push((
+            "notes",
+            Value::array(applied.notes.iter().cloned().map(Value::string).collect()),
+        ));
+    }
     if applied.lock_stale {
         fields.push((
             "next",

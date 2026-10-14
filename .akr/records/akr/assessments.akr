@@ -325,3 +325,44 @@ record akr.assessment.papercut-reconciliation-2026-08-29/2 : assessment {
         @akr.evidence.papercuts-2026-08-29-workspace/1
     ]
 }
+
+record akr.assessment.release-0-5-2-papercut-reconciliation/1 : assessment {
+    title "AKR 0.5.2 papercut reconciliation"
+    state verified
+    statement """
+        AKR 0.5.2 reconciliation of the 2026-10-14 collation and the explicit
+        project-configuration editing report.
+
+        Fixed: configuration reads/replacement/exact untracked add-remove through CLI
+        and MCP, using the locked validated write pipeline. Narrow binary declarations
+        preserve tracked source visibility. MCP proposals and evidence batches validate
+        commit existence before any write. CLI/MCP revisions retain disposition history
+        but prune entries belonging to earlier plan revisions. Empty filtered search lists
+        heads; acceptance syntax and whole-set replacement are discoverable in explain/help.
+        Scope/namespace/reference/seal diagnostics provide executable recovery guidance.
+
+        New capture handling addresses the repeated large-artifact and fresh-worktree
+        reports: evidence add (single or MCP batch) can record a nonempty observation summary
+        plus streamed SHA-256 and byte count without creating an artifact dependency on raw
+        captures. Large file artifacts emit an advisory. A digest identifies raw bytes but
+        does not retain them; users needing replay should retain a compact durable artifact.
+        Kept-scratch metadata remains local and is not implicitly copied to worktrees.
+
+        Correct behavior clarified: acceptance overlays replace the full set; revisions
+        accept the revisioned key printed by reads; these are already covered by existing
+        command tests or newly exposed guidance. closed_at and papercut close were already
+        supported in current source; reports of their rejection came from older installed
+        processes. Reconnect running MCP servers after installing the current binary.
+
+        Not an AKR defect: shell policy refusing cache deletion belongs to the host.
+        Still open: relevance budgeting for broad mandatory context is tracked under
+        @akr.work.relevance-based-context-budget. Invalid inherited seals/evidence in sibling
+        ledgers must be reconciled through supported revision/configuration commands;
+        this release does not declare their unreviewed observations valid or alter sisters.
+        """
+    confidence high
+    as_of git:06b41720646019d351672727eed7765e3ac89c58
+    derived_from [ @akr.papercut.collated-12-papercuts-from-legeos-sys-sys/1 ]
+    supported_by [ @akr.evidence.release-052-workspace/1 ]
+    author "dk"
+}

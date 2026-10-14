@@ -116,6 +116,20 @@ pub struct Invocation {
 /// The commands of `docs/07-cli.md` §6.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
+    /// Read project configuration through the supported surface.
+    ConfigShow,
+    /// Replace project configuration from a complete project file.
+    ConfigSet {
+        /// The replacement file.
+        from: PathBuf,
+    },
+    /// Edit a single deliberately untracked declaration.
+    ConfigUntracked {
+        /// Whether to add rather than remove.
+        add: bool,
+        /// The exact declared glob.
+        path: String,
+    },
     /// Print help and exit 0.
     Help,
     /// Print one command's help and exit 0: `akr <command> --help`.
@@ -556,6 +570,8 @@ pub enum Command {
         command: Option<String>,
         /// A path to the artefact.
         artifact: Option<String>,
+        /// Hash a raw capture into the summary without a persistent artifact dependency.
+        capture: Option<String>,
         /// A one-line summary.
         summary: Option<String>,
         /// The commit it was observed at. Defaults to HEAD.
@@ -645,16 +661,19 @@ impl Command {
     /// Whether the command needs Git history before dispatch.
     ///
     /// Search can use a current disposable index without Git. Task orientation includes
-    /// the Git-backed session head, so only raw search keeps the ledger-only fast path.
+    /// the Git-backed session head. Search and configuration reads remain ledger-only.
     #[must_use]
     pub const fn needs_git_facts(&self) -> bool {
-        !matches!(self, Self::Search { .. })
+        !matches!(self, Self::Search { .. } | Self::ConfigShow)
     }
 
     /// The name the JSON envelope reports.
     #[must_use]
     pub fn name(&self) -> String {
         match self {
+            Self::ConfigShow | Self::ConfigSet { .. } | Self::ConfigUntracked { .. } => {
+                "config".to_owned()
+            }
             Self::Help => "help".to_owned(),
             Self::HelpFor { .. } => "help".to_owned(),
             Self::Version => "version".to_owned(),
@@ -774,6 +793,7 @@ impl UsageError {
 /// command missing here is a command no typo ever finds and whose `--help` nobody
 /// notices is absent — which is how `git-hook` came to answer "unknown command".
 pub const COMMANDS: &[&str] = &[
+    "config",
     "init",
     "fmt",
     "check",
@@ -949,10 +969,15 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
         for arg in tail.iter().filter(|a| a.starts_with("--")) {
             let base = arg.split('=').next().unwrap_or(arg);
             if !allowed.contains(&base) {
-                return Err(UsageError::new(
+                let error = UsageError::new(
                     "AKR-C002",
                     format!("unknown flag {base:?} for command {name:?}"),
-                ));
+                );
+                return Err(if base == "--path" && allowed.contains(&"--paths") {
+                    error.with_help("use --paths <glob>; repeat --paths for multiple paths")
+                } else {
+                    error
+                });
             }
         }
         Ok(())
@@ -966,6 +991,30 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
     };
 
     Ok(match name {
+        "config" => match tail.first().map(String::as_str).unwrap_or("show") {
+            "show" if tail.len() <= 1 => Command::ConfigShow,
+            "set" => {
+                known_flags(&["--from"])?;
+                let from = option_value(tail, "--from").ok_or_else(|| {
+                    UsageError::new("AKR-C003", "config set requires --from <file>")
+                })?;
+                Command::ConfigSet {
+                    from: PathBuf::from(from),
+                }
+            }
+            "untracked" if tail.len() == 3 && matches!(tail[1].as_str(), "add" | "remove") => {
+                Command::ConfigUntracked {
+                    add: tail[1] == "add",
+                    path: tail[2].clone(),
+                }
+            }
+            _ => {
+                return Err(UsageError::new(
+                    "AKR-C004",
+                    "use `akr config show`, `akr config set --from <file>`, or `akr config untracked add|remove <glob>`",
+                ));
+            }
+        },
         "init" => {
             known_flags(&["--project", "--namespace"])?;
             Command::Init {
@@ -1435,6 +1484,7 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
                 "--method",
                 "--command",
                 "--artifact",
+                "--capture",
                 "--summary",
                 "--observed-at",
                 "--from",
@@ -1450,6 +1500,7 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
                     method: option_value(tail, "--method"),
                     command: option_value(tail, "--command"),
                     artifact: option_value(tail, "--artifact"),
+                    capture: option_value(tail, "--capture"),
                     summary: option_value(tail, "--summary"),
                     observed_at: option_value(tail, "--observed-at"),
                 },
@@ -2321,6 +2372,9 @@ fn distance(a: &str, b: &str) -> usize {
 #[allow(clippy::too_many_lines)]
 pub fn help_for(name: &str) -> Option<String> {
     let text = match name {
+        "config" => {
+            "akr config show\nakr config set --from <file>\nakr config untracked add|remove <glob>\n\nRead or edit .akr/project.akr through the locked write pipeline.\nset accepts a complete AKR project file; records and project renames are refused.\nUntracked edits preserve other declarations. Invalid edits write nothing.\nRun `akr build` after changing configuration.\n"
+        }
         "init" => {
             "akr init [--project <name>] [--namespace <name> ...]\n\
              \n\
@@ -2736,6 +2790,7 @@ pub fn help_for(name: &str) -> Option<String> {
              \n\
              FLAGS\n\
              \x20   --from <file>     a slot-list overlay; unmentioned slots stay on the head\n\
+             \x20                     acceptance replaces the entire check set: include all checks\n\
              \x20   --state <state>   move along the class's lifecycle; also honoured from --from\n\
              \x20   --title <text>    replace the title\n\
              \x20   --in-place        force the in-place path; AKR-C032 on a sealed head\n\
@@ -2830,11 +2885,14 @@ pub fn help_for(name: &str) -> Option<String> {
         "evidence" | "evidence add" => {
             "akr evidence add <key> --result pass|fail|inconclusive\n\
              \x20                   --method manual|command|observation\n\
-             \x20                   [--command <text>] [--artifact <path>]\n\
+             \x20                   [--command <text>] [--artifact <path>] [--capture <path>]\n\
              \x20                   [--summary <text>] [--observed-at <commit>]\n\
              akr evidence add-many --from <file>\n\
              \n\
-             Creates an evidence record. --observed-at defaults to HEAD and must be a\n\
+             Creates an evidence record. --capture streams a raw file into a summary with\n\
+             SHA-256 and byte count; it requires --summary and stores no artifact\n\
+             dependency. Raw captures may stay in scratch. Prefer this over committing\n\
+             large captures. --observed-at defaults to HEAD and must be a\n\
              full 40-hex commit in the repository.\n\
              \n\
              There is deliberately no flag for what the evidence verifies (D-016): the\n\
@@ -2883,6 +2941,10 @@ pub fn help() -> String {
     );
     for (name, summary) in [
         ("init", "scaffold a workspace"),
+        (
+            "config",
+            "read or edit project configuration; show, set, untracked",
+        ),
         ("fmt", "canonically format, or --check"),
         (
             "check",

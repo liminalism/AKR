@@ -15,6 +15,120 @@ mod support;
 
 use support::{Example, Run};
 
+#[test]
+fn capture_records_a_digest_without_a_scratch_artifact_dependency() {
+    let example = Example::materialise("evidence-capture");
+    example.write_file(".agent/scratch/capture.bin", "abc");
+    let run = example.run(&[
+        "evidence",
+        "add",
+        "sys.evidence.capture",
+        "--result",
+        "pass",
+        "--method",
+        "manual",
+        "--summary",
+        "Capture inspected.",
+        "--capture",
+        ".agent/scratch/capture.bin",
+    ]);
+    assert_eq!(run.code, 0, "{}", run.output());
+    let get = example.run(&["get", "sys.evidence.capture"]);
+    assert!(get.stdout.contains("Capture inspected."), "{}", get.stdout);
+    assert!(
+        get.stdout
+            .contains("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+    );
+    assert!(get.stdout.contains("3 bytes"));
+    assert!(!get.stdout.contains("\n  artifact"), "{}", get.stdout);
+    std::fs::remove_file(example.root().join(".agent/scratch/capture.bin")).unwrap();
+    assert_eq!(example.run(&["build"]).code, 0);
+}
+
+#[test]
+fn missing_capture_refuses_without_creating_evidence() {
+    let example = Example::materialise("evidence-missing-capture");
+    let before = example.sources();
+    let run = example.run(&[
+        "evidence",
+        "add",
+        "sys.evidence.capture",
+        "--result",
+        "pass",
+        "--method",
+        "manual",
+        "--summary",
+        "Capture inspected.",
+        "--capture",
+        "missing.bin",
+    ]);
+    assert_ne!(run.code, 0, "{}", run.output());
+    assert_eq!(before, example.sources());
+}
+
+#[test]
+fn large_evidence_artifact_offers_the_capture_route() {
+    let example = Example::materialise("evidence-large-artifact");
+    example.write_file("captures/large.bin", &"a".repeat(65_537));
+    let run = example.run(&[
+        "evidence",
+        "add",
+        "sys.evidence.large",
+        "--result",
+        "pass",
+        "--method",
+        "manual",
+        "--artifact",
+        "captures/large.bin",
+    ]);
+    assert_eq!(run.code, 0, "{}", run.output());
+    assert!(run.stdout.contains("--capture"), "{}", run.stdout);
+    assert!(run.stdout.contains("65537 bytes"), "{}", run.stdout);
+}
+
+#[test]
+fn revising_a_successor_prunes_dispositions_from_an_older_plan_revision() {
+    let example = Example::materialise("write-stale-disposition");
+    example.write_file(
+        "parent.akr",
+        "state active\nintent \"A parent work item.\"\n",
+    );
+    example.write_file(
+        "child.akr",
+        "intent \"A child on the original revision.\"\npart_of [ @sys.work.parent/1 ]\n",
+    );
+    for (key, file) in [
+        ("sys.work.parent", "parent.akr"),
+        ("sys.work.child", "child.akr"),
+    ] {
+        let run = example.run(&["propose", key, "--kind", "work", "--from", file]);
+        assert_eq!(run.code, 0, "{}", run.output());
+    }
+    let run = example.run(&[
+        "revise",
+        "sys.work.parent",
+        "--title",
+        "First successor",
+        "--disposition",
+        "sys.work.child=intentionally_dropped",
+    ]);
+    assert_eq!(run.code, 0, "{}", run.output());
+    let run = example.run(&["revise", "sys.work.parent", "--title", "Second successor"]);
+    assert_eq!(run.code, 0, "{}", run.output());
+    let get = example.run(&["get", "sys.work.parent/3", "--detail", "canonical"]);
+    assert!(
+        !get.stdout.contains("disposition @sys.work.child"),
+        "{}",
+        get.stdout
+    );
+    let old = example.run(&["get", "sys.work.parent/2", "--detail", "canonical"]);
+    assert!(
+        old.stdout.contains("disposition @sys.work.child"),
+        "{}",
+        old.stdout
+    );
+}
+
 /// Asserts that a command refuses, exits 1, and writes nothing.
 fn refuses(example: &Example, args: &[&str]) -> String {
     let before = example.sources();

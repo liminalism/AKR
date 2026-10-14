@@ -46,7 +46,7 @@ pub fn budget_for(tool: &str) -> Budget {
     match tool {
         "knowledge.start" => Budget::new(1_500, 2_000),
         "knowledge.search" | "knowledge.source_search" => Budget::new(600, 1_000),
-        "knowledge.get" => Budget::new(1_000, 1_500),
+        "knowledge.get" | "knowledge.config_get" => Budget::new(1_000, 1_500),
         "knowledge.source_get" => Budget::new(1_500, 2_500),
         "knowledge.context" => Budget::new(3_000, 4_000),
         "knowledge.impact" => Budget::new(800, 1_500),

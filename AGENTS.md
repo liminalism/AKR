@@ -28,6 +28,7 @@ shell:
 | `knowledge.papercut` | `akr papercut -m <agent> "<message>"` |
 | `knowledge.handoff_*` | `akr handoff create`, `list`, `open`, `expand`, `reveal`, `verify`, `discard` |
 | `knowledge.validate` | `akr check`, or `akr validate` under the same name |
+| `knowledge.config_get` / `knowledge.config_edit` | `akr config show` / `akr config set --from <file>`, `akr config untracked add|remove <glob>` |
 | `knowledge.source_*` | `akr source add|list|get|search|verify|supersede` |
 
 If the MCP server is unavailable, every step below is still reachable through
@@ -64,6 +65,8 @@ Consult AKR at task and state-transition boundaries, not after every edit.
   where the larger context cost is earned.
 
 **While working**
+- Configuration changes: use `akr config --help` or `knowledge.config_get` /
+  `knowledge.config_edit`, then `akr build`.
 - Look things up with `knowledge.get`; find them with `knowledge.search`.
   Search ranks results; it never grants authority. A record's standing comes from its
   state, its scope, and its relations.

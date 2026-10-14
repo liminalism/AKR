@@ -39,6 +39,7 @@
 #![allow(clippy::result_large_err)]
 
 mod exclusion;
+mod project;
 mod stage;
 
 use crate::diagnostics::codes::cli;
@@ -53,6 +54,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 pub use exclusion::{WriteLock, verify_unchanged};
+pub use project::{ProjectEdit, configure};
 pub use stage::{LoadError, Staged};
 
 // -------------------------------------------------------------------------------------
@@ -74,6 +76,8 @@ pub enum Operation {
     Abandon,
     /// Legacy claims drafted into `proposed` records with a tracking record (P8).
     Import,
+    /// A validated edit of the project configuration.
+    Configure,
 }
 
 impl Operation {
@@ -87,6 +91,7 @@ impl Operation {
             Self::Complete => "complete",
             Self::Abandon => "abandon",
             Self::Import => "import",
+            Self::Configure => "config",
         }
     }
 }
@@ -566,6 +571,20 @@ fn retire_and_replace(
     if !dispositions.is_empty() {
         record.dispositions = dispositions.iter().map(build_disposition).collect();
         record.dispositions.sort_by(|a, b| a.target.cmp(&b.target));
+    } else {
+        // A carried disposition describes a child of the predecessor it replaced.
+        // It is not a claim about every later plan revision. Keep the old revision's
+        // history, but only carry entries applicable to this successor's predecessors.
+        let children: BTreeSet<LogicalKey> = record
+            .targets(Relation::Supersedes)
+            .iter()
+            .filter_map(|reference| staged.ledger.resolve(reference).ok().flatten())
+            .flat_map(|parent| unfinished_children(staged, &parent.id))
+            .map(|child| child.key)
+            .collect();
+        record
+            .dispositions
+            .retain(|entry| children.contains(&entry.target.key));
     }
     if record.author.is_none() {
         record.author.clone_from(&context.author);
@@ -1328,7 +1347,6 @@ fn apply_inner(
     edits: &[(PathBuf, Record, ChangeKind)],
 ) -> WriteResult {
     let project = staged.project.clone();
-    let mut touched: Vec<PathBuf> = Vec::new();
     let mut changes: Vec<Change> = Vec::new();
     let mut before: BTreeMap<PathBuf, Option<String>> = BTreeMap::new();
 
@@ -1351,9 +1369,6 @@ fn apply_inner(
             .unwrap_or_else(|| empty_file(&project));
         splice(&mut tree, node);
         staged.set_tree(file, &tree);
-        if !touched.contains(file) {
-            touched.push(file.clone());
-        }
         changes.push(Change {
             id: record.id.clone(),
             kind: change.clone(),
@@ -1361,6 +1376,19 @@ fn apply_inner(
         });
     }
 
+    finish_staged(context, staged, operation, before, changes, edits)
+}
+
+/// The shared validation and commit boundary for record and configuration writes.
+fn finish_staged(
+    context: &WriteContext,
+    staged: &mut Staged,
+    operation: Operation,
+    before: BTreeMap<PathBuf, Option<String>>,
+    mut changes: Vec<Change>,
+    edits: &[(PathBuf, Record, ChangeKind)],
+) -> WriteResult {
+    let touched: Vec<PathBuf> = before.keys().cloned().collect();
     // Step 3: validate the result, and refuse what this write introduced (D-039).
     staged.reparse();
     let mut diagnostics = staged.diagnostics.clone();
@@ -1409,20 +1437,33 @@ fn apply_inner(
         .with_help("re-read the ledger and retry; another writer or an editor got there first"));
     }
 
-    touched.sort();
     staged
         .commit(&touched)
         .map_err(|error| Refused::new(operation, cli::C031, format!("write failed: {error}")))?;
 
     changes.sort_by(|a, b| a.id.cmp(&b.id));
-    let lock_stale = changes
-        .iter()
-        .any(|c| !matches!(c.kind, ChangeKind::Edited));
+    let lock_stale = operation == Operation::Configure
+        || changes
+            .iter()
+            .any(|c| !matches!(c.kind, ChangeKind::Edited));
     let mut notes = Vec::new();
     if !inherited.is_empty() {
         notes.push(inherited_note(&inherited));
     }
     notes.extend(acceptance_notes(&staged.ledger, operation, edits));
+    if let Some(root) = context.akr_dir.parent() {
+        for (_, record, _) in edits {
+            if record.kind == Kind::Evidence
+                && let Some(crate::model::ContentValue::Text(path)) =
+                    record.get(crate::model::ContentSlot::Artifact)
+                && let Ok(metadata) = std::fs::metadata(root.join(path))
+                && metadata.is_file()
+                && metadata.len() > 65_536
+            {
+                notes.push(format!("artifact {path:?} is {} bytes; prefer a compact durable summary, or `akr evidence add <key> --capture <path> --summary <observation> ...` to record SHA-256 and size without retaining the raw capture (MCP: capture).", metadata.len()));
+            }
+        }
+    }
     Ok(Applied {
         operation,
         changes,

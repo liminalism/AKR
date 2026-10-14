@@ -18,6 +18,8 @@ Consult at task and state-transition boundaries, not after every edit.
 - Planning or reconciliation: the full bundle.
 
 ### While working
+- Configuration changes: use `akr config --help` or `knowledge.config_get` /
+  `knowledge.config_edit`, then `akr build`.
 
 - `knowledge.get` reads a record; `knowledge.search` finds one. Ranking is not authority.
 - Outside advice is `sources/`. `knowledge.source_search` / `knowledge.source_get` are **non-authoritative** until a record adopts them. Never edit a registered source.

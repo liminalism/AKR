@@ -41,6 +41,35 @@ Commands divide into four groups, and the division is worth internalising:
 
 Only the write group touches `.akr/records/`. `akr build` never does (D-003).
 
+### Project configuration
+
+```text
+akr config show
+akr config set --from <file>
+akr config untracked add <glob>
+akr config untracked remove <glob>
+```
+
+`show` (also the default `akr config`) returns the current `project.akr` text;
+JSON exposes it as `configuration`. `set` accepts a complete project file and
+uses the same locked, validated, canonically formatted, atomic write pipeline as
+record operations. Project renames and records in the replacement are refused.
+Removing a namespace used by records is refused without writing. Existing
+diagnostics do not block a repair that introduces none (D-039).
+
+`untracked add/remove` changes an exact declaration while preserving namespaces,
+defaults, other declarations and their comments. Add is idempotent. New
+declarations matching tracked paths at HEAD are refused; narrow globs for binary
+assets may share a directory with tracked source. To remove a false declaration:
+
+```sh
+akr config untracked remove 'human/**'
+akr build
+```
+
+Run `akr build` after a configuration change to refresh the lock and projections.
+This is the supported alternative to hand-editing `.akr/project.akr`.
+
 ## 2. Global flags
 
 | Flag | Default | Meaning |
@@ -437,6 +466,10 @@ Exit 0, or 1 if the reference does not resolve.
 
 ### `akr search`
 
+An empty query lists heads in key order and still applies `--kind` / `--state`:
+`akr search "" --kind work --state active`. Punctuation-only nonempty queries
+still return no hits. `--fts` retains its raw-expression contract.
+
 ```
 akr search <query> [--kind <kind> ...] [--state <state> ...] [--limit <n>]
 ```
@@ -589,6 +622,9 @@ system must always be able to answer. Exit 0, or 1 if the reference does not res
 ---
 
 ### `akr explain`
+
+`akr explain acceptance` prints check syntax and the completion evidence contract.
+Acceptance overlays replace the whole check set; include every check to retain.
 
 ```
 akr explain <code> | <rule>
@@ -1042,12 +1078,22 @@ it names the packet to open instead.
 ```
 akr evidence add <key> --result pass|fail|inconclusive
                        --method manual|command|observation
-                       [--command <text>] [--artifact <path>] [--summary <text>]
+                       [--command <text>] [--artifact <path>] [--capture <path>]
+                       [--summary <text>]
                        [--observed-at <commit>]
 ```
 
 Creates an `evidence` record. `--observed-at` defaults to HEAD; a commit not in the
 repository is `AKR-G011`.
+
+`--capture <file> --summary <observation>` records SHA-256 and the streamed byte
+count in the summary, without copying the raw file or citing it as an artifact.
+The summary describes the observed result; the digest identifies the capture's
+bytes and does not preserve them. Raw captures may live in scratch and be deleted
+after recording. This evidence remains readable in fresh worktrees. In contrast,
+`scratch keep` is local retention metadata and does not accompany a new worktree.
+Artifact files larger than 64 KiB produce an advisory suggesting this capture route
+or a compact durable summary. This note does not reject existing evidence workflows.
 
 `--artifact` may not name a path under an unkept `.agent/scratch` entry (`AKR-T023`,
 V-025). Scratch is

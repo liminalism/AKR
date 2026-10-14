@@ -231,6 +231,7 @@ pub fn run(session: &Session, command: &Command) -> Result<Output, EnvError> {
             method,
             command,
             artifact,
+            capture,
             summary,
             observed_at,
         } => evidence_add(
@@ -243,6 +244,7 @@ pub fn run(session: &Session, command: &Command) -> Result<Output, EnvError> {
                 title: None,
                 command: command.clone(),
                 artifact: artifact.clone(),
+                capture: capture.clone(),
                 summary: summary.clone(),
                 observed_at: observed_at.clone(),
             },
@@ -437,6 +439,8 @@ pub struct EvidenceRequest {
     pub command: Option<String>,
     /// A recorded artefact.
     pub artifact: Option<String>,
+    /// A raw capture to hash into the summary; the file need not persist.
+    pub capture: Option<String>,
     /// What was seen.
     pub summary: Option<String>,
     /// The commit the check was run at; defaults to HEAD.
@@ -464,7 +468,23 @@ pub fn evidence_record(
     let method = request.method.as_deref();
     let command = request.command.as_deref();
     let artifact = request.artifact.as_deref();
-    let summary = request.summary.as_deref();
+    let capture_summary;
+    let summary = if let Some(path) = &request.capture {
+        let summary = request
+            .summary
+            .as_deref()
+            .filter(|text| !text.trim().is_empty())
+            .ok_or_else(|| {
+                EnvError::new(
+                    "AKR-C003",
+                    "--capture requires a summary of what was observed",
+                )
+            })?;
+        capture_summary = format!("{summary}\n{}", capture_digest(&session.root, path)?);
+        Some(capture_summary.as_str())
+    } else {
+        request.summary.as_deref()
+    };
     let observed_at = request.observed_at.as_deref();
     let result = match result {
         Some("pass") => EvidenceResult::Pass,
@@ -519,7 +539,7 @@ pub fn evidence_record(
     let title = request
         .title
         .clone()
-        .or_else(|| summary.map(ToOwned::to_owned))
+        .or_else(|| request.summary.clone())
         .unwrap_or_else(|| key.to_string());
     let mut built =
         akr_core::evidence::AddEvidence::new(key.clone(), &title, result, method, commit.clone());
@@ -538,13 +558,38 @@ pub fn evidence_record(
     Ok((key, built.to_record(), commit))
 }
 
+fn capture_digest(root: &Path, path: &str) -> Result<String, EnvError> {
+    use std::io::Read as _;
+    let full = root.join(path);
+    let error = |error| EnvError::new("AKR-C042", format!("cannot hash capture {path:?}: {error}"));
+    let mut file = std::fs::File::open(&full).map_err(error)?;
+    if !file.metadata().map_err(error)?.is_file() {
+        return Err(EnvError::new("AKR-C004", "capture must be a regular file"));
+    }
+    let mut hasher = akr_core::hash::Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    let mut size = 0_u64;
+    loop {
+        let read = file.read(&mut buffer).map_err(error)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+        size += read as u64;
+    }
+    Ok(format!(
+        "Capture {path:?}: {size} bytes; sha256:{} (identity only; raw capture is not a retained artifact).",
+        hasher.finish().to_hex()
+    ))
+}
+
 /// Every commit a record's slots name, for [`ensure_commits_exist`].
 ///
 /// `akr evidence add` has refused an absent `observed_at` since 0.4; `akr propose` and
 /// `akr revise` did not, so a well-formed 40-hex string that names no commit landed
 /// without a word and surfaced later as an AKR-G011 on the next `akr check` — on a write
 /// the author had already moved on from. Two write paths, one rule; this is the rule.
-fn commits_named_by(record: &akr_core::model::Record) -> Vec<Commit> {
+pub fn commits_named_by(record: &akr_core::model::Record) -> Vec<Commit> {
     record
         .content
         .values()

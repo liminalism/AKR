@@ -30,6 +30,8 @@ Durable project knowledge lives in `.akr/` as typed records, not in Markdown.
    included and are never noise.
 
 **While working**
+- Configuration changes: use `akr config --help` or `knowledge.config_get` /
+  `knowledge.config_edit`, then `akr build`.
 - Look things up with `knowledge.get`; find them with `knowledge.search`.
   Search ranks results; it never grants authority. A record's standing comes from its
   state, its scope, and its relations.
@@ -51,6 +53,8 @@ Durable project knowledge lives in `.akr/` as typed records, not in Markdown.
 - Finishing work: record what you observed with `knowledge.evidence_add`, then
   `knowledge.complete` with evidence for every acceptance check. Evidence records
   state what was observed; they never state what they verify.
+- Raw captures: use evidence add's `--capture <file> --summary <observation>`
+  (MCP: `capture` and `summary`) for SHA-256 and size without retaining the raw file.
 - Unsure what a kind requires? `akr explain <kind>` prints its schema.
 
 **Papercuts**

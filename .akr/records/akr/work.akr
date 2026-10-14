@@ -1937,7 +1937,7 @@ record akr.work.papercut-reconciliation/2 : work {
 
 record akr.work.papercut-triage-polish-bundle/1 : work {
     title "Papercut-triage polish bundle (diagnostic hints)"
-    state proposed
+    state completed
     intent """
         Bundle of small diagnostic-hint fixes from the 2026-10-06 collated triage: (1) akr
         search --kind with zero results should hint at remedies instead of a bare 0
@@ -1946,6 +1946,16 @@ record akr.work.papercut-triage-polish-bundle/1 : work {
         namespaces; (5) check and build scoping output gets the same hint treatment. Each
         is a message-level change; land together.
         """
+    acceptance {
+        check hints {
+            statement """
+                Zero-result searches, source/record confusion, undeclared namespaces and missing seal hashes name concrete recovery steps; scope diagnostics name the configuration repair command.
+                """
+            method command
+            command "cargo test --workspace"
+            verified_by [ @akr.evidence.release-052-workspace/1 ]
+        }
+    }
     derived_from [
         @akr.papercut.collated-16-papercuts-from-kitchen-concept-lege,
         @akr.papercut.collated-18-papercuts-from-kitchen-concept-lege,
@@ -2499,6 +2509,50 @@ record akr.work.reference-supersession-consistency/1 : work {
         }
     }
     derived_from [ @akr.papercut.collated-18-papercuts-from-evidence-intake/1 ]
+}
+
+record akr.work.release-0-5-2/1 : work {
+    title "Release AKR 0.5.2 with configuration editing and papercut fixes"
+    state active
+    scope [
+        path "Cargo.lock",
+        path "Cargo.toml",
+        path "crates/**",
+        path "docs/**",
+        path "scripts/**"
+    ]
+    intent """
+        Release AKR 0.5.2 with a supported, validated project-configuration editor,
+        commit checks before MCP writes, and fixes for reproducible papercuts.
+        Add a summary plus SHA-256 capture route so evidence need not commit raw
+        captures or depend on kept scratch in another worktree. Preserve unchanged
+        configuration declarations and reject invalid replacements without writing.
+        """
+    acceptance {
+        check config {
+            statement """
+                Configuration can be read and changed through CLI and MCP; narrow removal preserves unrelated declarations; invalid changes write nothing.
+                """
+            method command
+            command "cargo test -p akr-cli --test config && cargo test -p akr-mcp --test writes"
+        }
+        check papercuts {
+            statement """
+                MCP commit validation precedes writes, empty filtered search lists heads, and evidence capture records a durable digest without citing scratch.
+                """
+            method command
+            command "cargo test --workspace"
+        }
+        check release {
+            statement """
+                AKR 0.5.2 builds, formatting and lint checks pass, generated projections are current, and the ledger validates.
+                """
+            method command
+            command "cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings && akr check --views-current"
+        }
+    }
+    derived_from [ @akr.papercut.collated-12-papercuts-from-legeos-sys-sys/1 ]
+    author "dk"
 }
 
 record akr.work.relevance-based-context-budget/1 : work {
@@ -3216,13 +3270,23 @@ record akr.work.three-writes-that-could-not-be-told-apart/1 : work {
 
 record akr.work.unify-disposition-carry-prune/1 : work {
     title "Unify disposition carry/prune across CLI and MCP revise"
-    state proposed
+    state completed
     intent """
         Unify disposition carry and prune behavior across CLI and MCP revise. CLI revise
         carries dispositions while MCP revise drops them, and stale pins fail R016: the
         two surfaces disagree on what a revision preserves. Make the same revision
         through either surface yield the same record. From the 2026-10-06 collated triage.
         """
+    acceptance {
+        check parity {
+            statement """
+                CLI and MCP revisions preserve applicable disposition history and prune dispositions belonging to earlier plan revisions.
+                """
+            method command
+            command "cargo test -p akr-cli --test writes revising_a_successor_prunes_dispositions_from_an_older_plan_revision; cargo test -p akr-mcp --test writes mcp_and_cli_revise_prune_the_same_historical_dispositions"
+            verified_by [ @akr.evidence.release-052-workspace/1 ]
+        }
+    }
     derived_from [
         @akr.papercut.collated-15-papercuts-from-evidence-intake,
         @akr.papercut.collated-17-papercuts-from-legeos,
@@ -3232,7 +3296,7 @@ record akr.work.unify-disposition-carry-prune/1 : work {
 
 record akr.work.validate-commits-before-write/1 : work {
     title "Validate commits before writing in evidence_add_many and MCP propose"
-    state proposed
+    state completed
     intent """
         Validate commits before writing in evidence_add_many and MCP propose. Two write
         paths skip the commit-existence gate the CLI enforces: evidence_add_many runs
@@ -3241,6 +3305,16 @@ record akr.work.validate-commits-before-write/1 : work {
         (crates/akr-cli/src/write.rs:81). Both verified 2026-10-06. Check commits before
         any write on both paths. From the 2026-10-06 collated triage.
         """
+    acceptance {
+        check atomicity {
+            statement """
+                MCP proposal and evidence-batch writes reject nonexistent commits before writing any record.
+                """
+            method command
+            command "cargo test -p akr-mcp --test writes absent_commit_is_rejected_before_propose_and_evidence_batch_write"
+            verified_by [ @akr.evidence.release-052-workspace/1 ]
+        }
+    }
     derived_from [ @akr.papercut.collated-35-papercuts-from-kitchen-concept-lege ]
 }
 

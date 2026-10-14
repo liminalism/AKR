@@ -127,6 +127,8 @@ in prose and in these two checks, not in a schema anyone can validate against.
 | `knowledge.source_finalize` | write | `akr source finalize` | by state |
 | `knowledge.impact` | read | `akr impact` | yes |
 | `knowledge.validate` | read | `akr check` (alias `akr validate`) | yes |
+| `knowledge.config_get` | read | `akr config show` | yes |
+| `knowledge.config_edit` | write | `akr config set`, `akr config untracked add/remove` | by configuration |
 | `knowledge.propose` | write | `akr propose` | by key |
 | `knowledge.revise` | write | `akr revise` | no |
 | `knowledge.supersede` | write | `akr supersede` | no |
@@ -149,7 +151,7 @@ in prose and in these two checks, not in a schema anyone can validate against.
 | `knowledge.handoff_coverage` | read | `akr handoff coverage` | yes |
 | `knowledge.handoff_discard` | write | `akr handoff discard` | by state |
 
-Thirty-seven tools. Notably absent:
+The tool catalogue is generated from `schema::TOOLS`. Notably absent:
 
 - **No `knowledge.query`.** No arbitrary query language, and above all no SQL. Agents
   never see the SQLite cache (§6).
@@ -169,6 +171,19 @@ verifies** (D-016) — the link is authored on the check (`verified_by`) or supp
 validates and commits them in one atomic write. Use it when one verification run closes
 several checks; duplicate or existing keys reject the whole batch without a partial
 write.
+
+`knowledge.config_get` returns the project-file text as `configuration`.
+`knowledge.config_edit` takes `action`: `replace` with a complete `configuration`
+string, or `add_untracked` / `remove_untracked` with an exact `path` glob. It uses
+the CLI's configuration pipeline and cannot bypass validation. Run `akr build`
+afterwards.
+
+Evidence payloads accept `capture` with a nonempty `summary`. The file is streamed
+into SHA-256 and a byte count appended to the observation summary; no raw bytes
+are copied, and no `artifact` dependency on the capture is created. Captures may
+live in scratch and disappear after the observation. Their digest identifies
+bytes; it does not preserve them or independently prove the observed result.
+Proposal and evidence-batch commit IDs are verified before the write pipeline.
 
 The fourteen `handoff_*` tools are the agent-to-agent context transport of
 `docs/17-handoff.md` (D-040, D-041): a project capsule, a session capsule, packets in four
@@ -680,6 +695,8 @@ Consult at task and state-transition boundaries, not after every edit.
 
 ### While working
 
+- Configuration changes: use `akr config --help` or `knowledge.config_get` /
+  `knowledge.config_edit`, then `akr build`.
 - `knowledge.get` reads a record; `knowledge.search` finds one. Ranking is not authority.
 - Outside advice is `sources/`. `knowledge.source_search` / `knowledge.source_get` are **non-authoritative** until a record adopts them. Never edit a registered source.
 - Never hand-edit `.akr/` or `docs/generated/`.

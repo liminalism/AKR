@@ -112,6 +112,29 @@ pub fn run(session: &mut Session, command: &Command) -> Result<Output, EnvError>
 
 fn dispatch(session: &mut Session, command: &Command) -> Result<Output, EnvError> {
     match command {
+        Command::ConfigShow => crate::config::show(session),
+        Command::ConfigSet { from } => {
+            let path = if from.is_absolute() {
+                from.clone()
+            } else {
+                session.root.join(from)
+            };
+            let text = std::fs::read_to_string(&path).map_err(|error| {
+                EnvError::new(
+                    "AKR-C042",
+                    format!("cannot read {}: {error}", path.display()),
+                )
+            })?;
+            crate::config::edit(session, &akr_core::ops::ProjectEdit::Replace(text))
+        }
+        Command::ConfigUntracked { add, path } => crate::config::edit(
+            session,
+            &if *add {
+                akr_core::ops::ProjectEdit::AddUntracked(path.clone())
+            } else {
+                akr_core::ops::ProjectEdit::RemoveUntracked(path.clone())
+            },
+        ),
         Command::Check {
             scratch_clean,
             review_clean,
@@ -2914,6 +2937,9 @@ fn search(
         hits.len(),
         if hits.len() == 1 { "" } else { "s" }
     ));
+    if hits.is_empty() {
+        text.push_str("help: use an empty query to list heads with these filters; widen --kind/--state or try fewer search terms\n");
+    }
 
     let results: Vec<Value> = hits
         .iter()
@@ -3556,6 +3582,23 @@ const DECISIONS: &str = include_str!("../../../docs/DECISIONS.md");
 /// The registries are compiled in: `akr explain` needs no workspace, which is the point —
 /// somebody reading a CI log should be able to look a code up without a checkout.
 fn explain(subject: &str) -> Output {
+    if subject.eq_ignore_ascii_case("acceptance") {
+        return Output::plain(
+            "acceptance — checks on milestone/work records\n\nacceptance {\n    check smoke {\n        statement \"The command passes on the implementation.\"\n        method command\n        command \"cargo test -p my-crate smoke\"\n        verified_by [ @project.evidence.smoke/1 ]\n    }\n}\n\nMethods: manual, command, observation. A command check requires command.\nverified_by cites passing evidence; evidence describes observations, not what it verifies.\ncomplete --check smoke=@project.evidence.smoke/1 can attach evidence at completion.\nA revise acceptance overlay replaces the entire check set; include all checks to retain.\nReference: docs/02-data-model.md, docs/07-cli.md.\n",
+            Value::object(vec![
+                ("subject", Value::string("acceptance")),
+                (
+                    "methods",
+                    Value::array(
+                        ["manual", "command", "observation"]
+                            .iter()
+                            .map(|method| Value::string(*method))
+                            .collect(),
+                    ),
+                ),
+            ]),
+        );
+    }
     let wanted = subject.to_uppercase();
     for registry in [CODES_LANG, CODES_RUNTIME] {
         for line in registry.lines() {

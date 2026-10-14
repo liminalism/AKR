@@ -412,6 +412,12 @@ The `untracked` declaration is checked against the tracked tree. If it actually 
 tracked files, the build reports `AKR-G026` instead of silently suppressing scope
 diagnostics.
 
+Literal trees and `tree/**` cover descendants. A narrower pattern such as
+`human/**/*.png` covers matching files and an identical scope pattern; it does
+not suppress unrelated source scopes that share the directory. Configuration
+editing is available through `akr config untracked add/remove` or `akr config
+set --from <file>`; new declarations covering tracked files are refused.
+
 Four, and they are the reason the freshness model can be trusted.
 
 **1. The compiler never declares a record false.** It flags `stale` and `at_risk`, both of
