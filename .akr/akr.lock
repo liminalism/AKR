@@ -5,7 +5,7 @@ build {
     tool "akr 0.6.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:98877caa4bd9b53b98855758d4ccfdcbe024370fe543c426bbf188eb60fb11e2"
+    source_graph "sha256:58964b54286337cddcb86c18ed27dcb5a2229c6f7da58e97af091e1e7cd0e50c"
 }
 
 source ".akr/project.akr" {
@@ -34,8 +34,8 @@ source ".akr/records/akr/milestones.akr" {
 }
 
 source ".akr/records/akr/observations.akr" {
-    hash "sha256:4c4291700be0b23f01ce402e9f44da6181f9686265df9279c2e15e75cfc34278"
-    records 5
+    hash "sha256:f4409a1b64e62b71e02b85a35b915097ef82ddeb40c5f49f125e9c9d8d1ab5bd"
+    records 8
 }
 
 source ".akr/records/akr/papercuts.akr" {
@@ -194,8 +194,8 @@ resolution @akr.work.explain-registry-acceptance-parity/1 {
 
 resolution @akr.work.incremental-build-cache/1 {
     slot supported_by
-    to @akr.observation.sys-build-cost-breakdown/1
-    hash "sha256:6961bd59c397367b88ac95ac7ab0c1bec8321c4c0253fb66b6dda44c61762086"
+    to @akr.observation.sys-build-cost-breakdown/2
+    hash "sha256:1b28ec7aea5e50a06c415036163e5faf960ab69634d931931ebccd0910b34c1c"
 }
 
 resolution @akr.work.mcp-budget-and-instrumentation/1 {
@@ -1139,8 +1139,23 @@ seal @akr.observation.concurrent-writes-are-silently-lost/2 {
 }
 
 seal @akr.observation.sys-build-cost-breakdown/1 {
+    state superseded
+    hash "sha256:a95073d385c9515e610cd9205406fc6ced06e62e962755f713e33d0eaa442580"
+}
+
+seal @akr.observation.sys-build-cost-breakdown/2 {
+    state superseded
+    hash "sha256:1b28ec7aea5e50a06c415036163e5faf960ab69634d931931ebccd0910b34c1c"
+}
+
+seal @akr.observation.sys-build-cost-with-fact-cache/1 {
+    state superseded
+    hash "sha256:57ba323fe752d775481ee80481e0d94c34bea665ce7709d349c4e14fe7eb13af"
+}
+
+seal @akr.observation.sys-build-cost-with-fact-cache/2 {
     state verified
-    hash "sha256:6961bd59c397367b88ac95ac7ab0c1bec8321c4c0253fb66b6dda44c61762086"
+    hash "sha256:29980ffb322fe0c565aef04a51423d749adf24fd34c56c24c80d187e1d74ab7c"
 }
 
 seal @akr.observation.the-normative-layer-is-stuck-at-proposed/1 {
