@@ -24,6 +24,7 @@ akr check — save-your-skin
   build facts (not diagnostics):
     2 records stale, 4 at risk — see `akr review-queue`
     no .agent/scratch — nothing to prune
+    recorded commands were not checked against tracked source (V-105): no commit holds the ledger as loaded — commit the record files to include it
 
 no diagnostics
 
@@ -36,7 +37,7 @@ $ echo $?
 $ akr check --format json
 {
   "akr": "0.1",
-  "tool_version": "0.5.2",
+  "tool_version": "0.6.1",
   "command": "check",
   "commit": null,
   "source_graph_hash": "sha256:5159d2714f688627a85906b161def17b0358155fbfc2a3fc00b681d29a305f55",
@@ -96,6 +97,7 @@ akr check — save-your-skin
   build facts (not diagnostics):
     2 records stale, 4 at risk — see `akr review-queue`
     no .agent/scratch — nothing to prune
+    recorded commands were not checked against tracked source (V-105): no commit holds the ledger as loaded — commit the record files to include it
 
 error[AKR-G041]: review queue holds 2 stale and 4 at-risk records
   --> .akr/records/sim/observations.akr:4:1

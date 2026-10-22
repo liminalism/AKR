@@ -196,6 +196,7 @@ pub fn phantom_command_tokens(
     ledger: &Ledger,
     repository: &Repository,
     head: &Commit,
+    cache: Option<&crate::cache::FactCache>,
 ) -> Result<Vec<Diagnostic>, GitError> {
     let recorded = recorded_commands(ledger);
     let tokenised: Vec<Vec<String>> = recorded
@@ -211,7 +212,7 @@ pub fn phantom_command_tokens(
             parts.extend(token_parts(token));
         }
     }
-    let present = repository.tracked_source_hits(head, parts.iter().copied())?;
+    let present = repository.tracked_source_hits(head, parts.iter().copied(), cache)?;
 
     let mut out = Vec::new();
     for (entry, tokens) in recorded.iter().zip(tokenised.iter()) {

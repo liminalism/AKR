@@ -183,6 +183,8 @@ pub struct Repository {
     memo: Arc<Mutex<Memo>>,
     /// Pre-rewrite commit -> reviewed reachable replacement.
     rewrites: Arc<BTreeMap<String, Commit>>,
+    /// Where answers that outlive this process are kept, when the caller has a workspace.
+    facts: Option<crate::cache::FactCache>,
 }
 
 /// Read the repository-owned history-rewrite declarations. Each non-comment
@@ -271,6 +273,9 @@ struct Memo {
     reachable: BTreeMap<String, BTreeSet<String>>,
     /// Commit -> how many ancestry questions have been asked about it.
     probes: BTreeMap<String, u32>,
+    /// The parent graph of one commit range, once a caller has said it will ask ancestry
+    /// questions inside it. See [`Repository::prime_range`].
+    range: Option<RangeGraph>,
     /// Path -> its touching commits, newest first.
     touching: BTreeMap<String, Vec<Commit>>,
     /// (commit, path) -> the file's content there, or `None` when it did not exist.
@@ -293,6 +298,53 @@ struct Memo {
     revisions: BTreeMap<String, Commit>,
     /// `HEAD` and the newest commit naming project work, for the handoff briefing.
     session: Option<(CommitBrief, Option<CommitBrief>)>,
+}
+
+/// The commits of one range `(from, to]` and their parents, from a single `rev-list`.
+#[derive(Debug, Default)]
+struct RangeGraph {
+    /// The range it describes, as the `rev-list` argument.
+    range: String,
+    /// The excluded lower bound, when there is one.
+    from: Option<String>,
+    /// Commit in the range -> its parents (in or out of the range).
+    parents: BTreeMap<String, Vec<String>>,
+    /// Commit -> its ancestors inside the range, computed on first ask.
+    ancestors: BTreeMap<String, BTreeSet<String>>,
+}
+
+impl RangeGraph {
+    /// Whether `ancestor` is reachable from `descendant`, when both lie in the range.
+    ///
+    /// Exact without leaving the range: every commit on a path from `descendant` down to
+    /// `ancestor` descends from `ancestor`, so none of them is reachable from `from` —
+    /// that would make `ancestor` reachable from it too — and all of them lie in the
+    /// range. `from` itself answers too: everything it reaches is outside the range.
+    /// `None` for any other commit outside it, which this graph cannot answer.
+    fn reaches(&mut self, descendant: &str, ancestor: &str) -> Option<bool> {
+        if !self.parents.contains_key(ancestor) {
+            return None;
+        }
+        if self.from.as_deref() == Some(descendant) {
+            return Some(false);
+        }
+        if !self.parents.contains_key(descendant) {
+            return None;
+        }
+        if !self.ancestors.contains_key(descendant) {
+            let mut seen = BTreeSet::new();
+            let mut stack = vec![descendant.to_owned()];
+            while let Some(commit) = stack.pop() {
+                for parent in self.parents.get(&commit).into_iter().flatten() {
+                    if self.parents.contains_key(parent) && seen.insert(parent.clone()) {
+                        stack.push(parent.clone());
+                    }
+                }
+            }
+            self.ancestors.insert(descendant.to_owned(), seen);
+        }
+        Some(self.ancestors[descendant].contains(ancestor))
+    }
 }
 
 /// How many `merge-base` calls about one commit are worth paying before walking its
@@ -319,6 +371,20 @@ const SOURCE_HIT_EXCLUDES: &[&str] = &[
     ":(exclude,glob)**/*.json",
 ];
 
+/// Pathspecs V-105 excludes in its own search on top of [`SOURCE_HIT_EXCLUDES`].
+///
+/// Captured run output and bulk data are not source either, and they are where a
+/// since-deleted test's name survives: a status file or a log from the day it still
+/// existed. They are also where the bytes are — a tracked 70 MB JSONL made the search run
+/// for half an hour.
+const SOURCE_DUMP_EXCLUDES: &[&str] = &[
+    ":(exclude)*.log",
+    ":(exclude)*.jsonl",
+    ":(exclude)*.csv",
+    ":(exclude)*.txt",
+    ":(exclude)*.json",
+];
+
 impl Clone for Repository {
     /// Clones the handle, not the memo: a new handle sees the repository as it is now.
     fn clone(&self) -> Self {
@@ -326,6 +392,7 @@ impl Clone for Repository {
             root: self.root.clone(),
             memo: Arc::default(),
             rewrites: self.rewrites.clone(),
+            facts: self.facts.clone(),
         }
     }
 }
@@ -383,6 +450,7 @@ impl Repository {
             root: probe.root,
             memo: entry.memo.clone(),
             rewrites: probe.rewrites,
+            facts: None,
         };
         drop(registry);
         // The fingerprint was read from the very status this memo describes, so seeding it
@@ -514,6 +582,7 @@ impl Repository {
                 root: PathBuf::from(root.trim()),
                 memo: Arc::default(),
                 rewrites: Arc::new(load_rewrites(Path::new(root.trim()))?),
+                facts: None,
             },
             head,
         ))
@@ -525,6 +594,17 @@ impl Repository {
             .get(commit.as_str())
             .cloned()
             .unwrap_or_else(|| commit.clone())
+    }
+
+    /// This handle, keeping answers that outlive the process in `cache`.
+    ///
+    /// Only answers that are pure functions of immutable git objects go there: the paths
+    /// each commit touched, and the commits that touched a path as of one `HEAD`. Every
+    /// other question is asked of git as before.
+    #[must_use]
+    pub fn with_fact_cache(mut self, cache: crate::cache::FactCache) -> Self {
+        self.facts = Some(cache);
+        self
     }
 
     /// The repository root.
@@ -653,6 +733,14 @@ impl Repository {
         if let Some(known) = self.memo(|memo| memo.ancestry.get(&key).copied()) {
             return Ok(known);
         }
+        if let Some(verdict) = self.memo(|memo| {
+            memo.range.as_mut().and_then(|graph| {
+                graph.reaches(canonical_descendant.as_str(), canonical_ancestor.as_str())
+            })
+        }) {
+            self.memo(|memo| memo.ancestry.insert(key, verdict));
+            return Ok(verdict);
+        }
         // Once the same commit has been asked about often enough, walk its history once
         // and answer this and every later question about it from the walk.
         let probes = self.memo(|memo| {
@@ -696,6 +784,47 @@ impl Repository {
         };
         self.memo(|memo| memo.ancestry.insert(key, verdict));
         Ok(verdict)
+    }
+
+    /// Reads the parent graph of `(from, to]` in one `rev-list`, so that every ancestry
+    /// question between two commits of that range is answered without a process.
+    ///
+    /// Freshness asks whether each record's `observed_at` already contains each commit
+    /// that touched a watched path — all of them in the range it is about to walk. Asked
+    /// one `merge-base` at a time that was 155 processes on SYS. Best effort, like
+    /// [`Self::prime_reachable`]: if the walk fails, the pairwise form keeps answering.
+    pub fn prime_range(&self, from: Option<&Commit>, to: &Commit) {
+        let to = self.canonical_commit(to);
+        let from = from.map(|commit| self.canonical_commit(commit).as_str().to_owned());
+        let range = match &from {
+            Some(from) => format!("{from}..{}", to.as_str()),
+            None => to.as_str().to_owned(),
+        };
+        if self.memo(|memo| {
+            memo.range
+                .as_ref()
+                .is_some_and(|graph| graph.range == range)
+        }) {
+            return;
+        }
+        let Ok(text) = self.run(&["rev-list", "--parents", &range]) else {
+            return;
+        };
+        let mut parents = BTreeMap::new();
+        for line in text.lines() {
+            let mut hashes = line.split_whitespace().map(ToOwned::to_owned);
+            if let Some(commit) = hashes.next() {
+                parents.insert(commit, hashes.collect());
+            }
+        }
+        self.memo(|memo| {
+            memo.range = Some(RangeGraph {
+                range,
+                from,
+                parents,
+                ancestors: BTreeMap::new(),
+            });
+        });
     }
 
     /// Walks `commit`'s history once, up front, so ancestry questions about it are free.
@@ -778,6 +907,10 @@ impl Repository {
         if let Some(known) = self.memo(|memo| memo.touches.get(&key).cloned()) {
             return Ok(known);
         }
+        if let Some(touches) = self.cached_touches(from, to)? {
+            self.memo(|memo| memo.touches.insert(key, touches.clone()));
+            return Ok(touches);
+        }
         // `-m` so a merge reports the paths it changed rather than nothing at all.
         let text = self.run(&[
             "log",
@@ -813,6 +946,120 @@ impl Repository {
         let touches: Vec<Touch> = out.into_iter().collect();
         self.memo(|memo| memo.touches.insert(key, touches.clone()));
         Ok(touches)
+    }
+
+    /// [`Self::touches_in`] from the fact cache, when this handle has one.
+    ///
+    /// What a commit touched is fixed by the commit, so the cache keeps it per commit and
+    /// asks git only about commits it has not seen: the range's commits come from the same
+    /// single `rev-list` the ancestry graph is read from, and the unseen ones go to one
+    /// `log --no-walk --stdin` with the flags [`Self::touches_in`] uses, which prints each
+    /// commit exactly as the range walk would. On SYS the range walk was a second of every
+    /// command; the cached form is a file read. `None` without a cache, or when the range
+    /// cannot be listed, so the caller walks it as before.
+    fn cached_touches(
+        &self,
+        from: Option<&Commit>,
+        to: &Commit,
+    ) -> Result<Option<Vec<Touch>>, GitError> {
+        const ENTRY: &str = "touches";
+        let Some(cache) = &self.facts else {
+            return Ok(None);
+        };
+        self.prime_range(from, to);
+        let to = self.canonical_commit(to);
+        let from = from.map(|commit| self.canonical_commit(commit).as_str().to_owned());
+        let range = match &from {
+            Some(from) => format!("{from}..{}", to.as_str()),
+            None => to.as_str().to_owned(),
+        };
+        let Some(commits) = self.memo(|memo| {
+            memo.range
+                .as_ref()
+                .filter(|graph| graph.range == range)
+                .map(|graph| graph.parents.keys().cloned().collect::<Vec<_>>())
+        }) else {
+            return Ok(None);
+        };
+        let mut known = cache
+            .read(ENTRY)
+            .map(|text| Self::parse_touches(&text))
+            .unwrap_or_default();
+        let unseen: Vec<&String> = commits.iter().filter(|c| !known.contains_key(*c)).collect();
+        if !unseen.is_empty() {
+            let input: String = unseen.iter().map(|commit| format!("{commit}\n")).collect();
+            let text = self.run_with_stdin(
+                &[
+                    "log",
+                    "--no-walk=unsorted",
+                    "--stdin",
+                    "--name-status",
+                    "-M",
+                    "-m",
+                    "--format=commit %H",
+                ],
+                &input,
+            )?;
+            let mut fetched = Self::parse_touches(&text);
+            // A commit that touched nothing still prints its header; one that somehow did
+            // not is recorded as touching nothing rather than asked about forever.
+            for commit in unseen {
+                fetched.entry(commit.clone()).or_default();
+            }
+            known.extend(fetched);
+            let mut body = String::new();
+            for (commit, paths) in &known {
+                body.push_str(&format!("commit {commit}\n"));
+                for path in paths {
+                    body.push_str(&format!("\t{path}\n"));
+                }
+            }
+            cache.write(ENTRY, &body);
+        }
+        let mut out = BTreeSet::new();
+        for commit in &commits {
+            let Ok(parsed) = Commit::new(commit) else {
+                continue;
+            };
+            for path in known.get(commit).into_iter().flatten() {
+                out.insert(Touch {
+                    commit: parsed.clone(),
+                    path: path.clone(),
+                });
+            }
+        }
+        Ok(Some(out.into_iter().collect()))
+    }
+
+    /// Commit -> touched paths, from `log --name-status --format=commit %H` output or from
+    /// the cache entry (whose path lines are a tab and the path).
+    fn parse_touches(text: &str) -> BTreeMap<String, BTreeSet<String>> {
+        let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        let mut current: Option<String> = None;
+        for line in text.lines() {
+            if let Some(hash) = line.strip_prefix("commit ") {
+                let hash = hash.trim().to_owned();
+                out.entry(hash.clone()).or_default();
+                current = Some(hash);
+                continue;
+            }
+            let Some(commit) = &current else { continue };
+            let mut fields = line.split('\t');
+            let Some(status) = fields.next() else {
+                continue;
+            };
+            // Cache lines start with a tab, so their status field is empty; git's never is
+            // on a path line, and a blank line has no paths at all.
+            let paths: Vec<&str> = fields.filter(|p| !p.trim().is_empty()).collect();
+            if status.trim().is_empty() && !line.starts_with('\t') {
+                continue;
+            }
+            let entry = out.entry(commit.clone()).or_default();
+            for path in paths {
+                entry.insert(path.trim().to_owned());
+            }
+        }
+        out
     }
 
     /// Paths with uncommitted changes in the working tree or the index.
@@ -851,6 +1098,86 @@ impl Repository {
             .collect::<Result<_, _>>()?;
         self.memo(|memo| memo.touching.insert(path.to_owned(), commits.clone()));
         Ok(commits)
+    }
+
+    /// Answers [`Self::commits_touching`] for many paths at once, on parallel processes.
+    ///
+    /// Each answer is one `git log --follow`, which walks the whole history and cannot be
+    /// batched into one invocation; the questions are independent, so they run side by
+    /// side and fill the memo. Best effort: a path whose query fails is simply asked again,
+    /// and reports its error, when [`Self::commits_touching`] is called for it.
+    ///
+    /// With a fact cache the answers are also kept against `HEAD`: `git log --follow --
+    /// <path>` walks from `HEAD`, so at the same `HEAD` it says the same thing, and a
+    /// repeated command asks git nothing at all.
+    pub fn prime_commits_touching<'a>(&self, paths: impl IntoIterator<Item = &'a str>) {
+        const ENTRY: &str = "touching";
+        let requested: Vec<&str> = paths.into_iter().collect();
+        let head = self
+            .facts
+            .as_ref()
+            .and_then(|_| self.head().ok())
+            .map(|head| format!("head {}", head.as_str()));
+        if let (Some(cache), Some(head)) = (&self.facts, &head)
+            && let Some(body) = cache.read(ENTRY)
+            && let Some((first, rest)) = body.split_once('\n')
+            && first == head
+        {
+            let mut current: Option<(String, Vec<Commit>)> = None;
+            let mut cached: Vec<(String, Vec<Commit>)> = Vec::new();
+            for line in rest.lines() {
+                if let Some(path) = line.strip_prefix("path ") {
+                    cached.extend(current.take());
+                    current = Some((path.to_owned(), Vec::new()));
+                } else if let (Some((_, commits)), Ok(commit)) = (&mut current, Commit::new(line)) {
+                    commits.push(commit);
+                }
+            }
+            cached.extend(current);
+            self.memo(|memo| {
+                for (path, commits) in cached {
+                    memo.touching.entry(path).or_insert(commits);
+                }
+            });
+        }
+        let wanted: Vec<&str> = requested
+            .iter()
+            .copied()
+            .filter(|path| self.memo(|memo| !memo.touching.contains_key(*path)))
+            .collect();
+        let workers = std::thread::available_parallelism()
+            .map_or(1, std::num::NonZeroUsize::get)
+            .min(8)
+            .min(wanted.len());
+        if workers >= 2 {
+            let next = std::sync::atomic::AtomicUsize::new(0);
+            std::thread::scope(|scope| {
+                for _ in 0..workers {
+                    scope.spawn(|| {
+                        while let Some(path) =
+                            wanted.get(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+                        {
+                            let _ = self.commits_touching(path);
+                        }
+                    });
+                }
+            });
+        }
+        if let (Some(cache), Some(head)) = (&self.facts, &head)
+            && !wanted.is_empty()
+        {
+            let mut body = format!("{head}\n");
+            self.memo(|memo| {
+                for (path, commits) in &memo.touching {
+                    body.push_str(&format!("path {path}\n"));
+                    for commit in commits {
+                        body.push_str(commit.as_str());
+                        body.push('\n');
+                    }
+                }
+            });
+            cache.write(ENTRY, &body);
+        }
     }
 
     /// The contents of a path at a commit, or `None` when it did not exist there.
@@ -1009,9 +1336,22 @@ impl Repository {
 
     /// Which of `needles` appear anywhere in tracked source at `commit`.
     ///
-    /// One `git grep` process for every needle at once, for the same reason
-    /// [`Repository::prime_ignored`] batches: the per-needle form costs a process each and
-    /// the caller asks once per token in the ledger.
+    /// One `git grep` process in total, for the same reason [`Repository::prime_ignored`]
+    /// batches: the per-needle form costs a process each and the caller asks once per
+    /// token in the ledger.
+    ///
+    /// The needles are not handed to git. `git grep -o -F -e a -e b …` tests every
+    /// pattern separately against every line and restarts after each match, so its cost
+    /// grows with needles × matches. On SYS, 613 needles over 2711 records took one
+    /// `akr validate` from under three minutes to eleven, where 160 of them took 48 s and
+    /// 40 took 4 s. Instead git lists every identifier word once — a single pattern, one
+    /// linear pass, about a second on the same tree — and the needles are looked up in
+    /// that vocabulary here. A needle made only of identifier characters can only occur
+    /// inside one identifier word, so "is a substring of some word" is exactly "occurs in
+    /// the text". It is also more correct than `-o` was: `-o` reports one match per
+    /// position, so a needle that only ever appeared inside a longer needle's match was
+    /// reported absent. A needle containing anything else cannot be answered this way and
+    /// is reported absent, which no caller produces.
     ///
     /// `.akr/`, `docs/generated/` and `.agent/` are excluded. The first two are the ledger
     /// quoting itself — a name found only in a record is exactly the case being looked for.
@@ -1023,11 +1363,17 @@ impl Repository {
     /// Data dumps (`*.jsonl`, `*.log`, `*.csv`, `*.txt`, `*.json`) are excluded for the
     /// same reason, and for cost: `git grep -o` emits every occurrence, and a JSONL
     /// handoff trace quoting a command is not the test that command names. On SaveYourSkin
-    /// those files were 70 MB of the 180 MB tree the gate walked.
+    /// those files were 70 MB of the 180 MB tree the gate walked. Binary files are skipped
+    /// (`-I`); their matches were always discarded, and reading them was pure cost.
     ///
-    /// Needles with no ASCII letter are dropped before the grep. The caller should not
+    /// Needles with no ASCII letter are dropped before the lookup. The caller should not
     /// produce them; this is the backstop that keeps a lone `_` from matching every
     /// underscore in the tree.
+    ///
+    /// With a `cache`, each needle's answer is kept under a fingerprint of the trees the
+    /// search reads (see [`Self::source_fingerprint`]), so the tree is searched again only
+    /// when that source changes or a needle is new. A commit that changes only the ledger
+    /// leaves the fingerprint alone.
     ///
     /// # Errors
     /// [`GitError::CommandFailed`] if git cannot search the tree.
@@ -1035,52 +1381,182 @@ impl Repository {
         &self,
         commit: &Commit,
         needles: impl IntoIterator<Item = &'a str>,
+        cache: Option<&crate::cache::FactCache>,
     ) -> Result<BTreeSet<String>, GitError> {
+        let is_word = |c: char| c.is_ascii_alphanumeric() || c == '_';
         let needles: BTreeSet<&str> = needles
             .into_iter()
             .filter(|needle| needle.chars().any(|c| c.is_ascii_alphabetic()))
+            .filter(|needle| needle.chars().all(is_word))
             .collect();
         if needles.is_empty() {
             return Ok(BTreeSet::new());
         }
         let canonical = self.canonical_commit(commit);
+        const ENTRY: &str = "source-hits";
+        let keyed = cache.and_then(|cache| {
+            self.source_fingerprint(&canonical)
+                .ok()
+                .map(|fingerprint| (cache, format!("tree {fingerprint}")))
+        });
+        // needle -> present, for every needle answered against this fingerprint.
+        let mut known: BTreeMap<String, bool> = BTreeMap::new();
+        if let Some((cache, tree)) = &keyed
+            && let Some(body) = cache.read(ENTRY)
+            && let Some((first, rest)) = body.split_once('\n')
+            && first == tree
+        {
+            for line in rest.lines() {
+                if let Some(needle) = line.strip_prefix("hit ") {
+                    known.insert(needle.to_owned(), true);
+                } else if let Some(needle) = line.strip_prefix("miss ") {
+                    known.insert(needle.to_owned(), false);
+                }
+            }
+        }
+        let unknown: BTreeSet<&str> = needles
+            .iter()
+            .copied()
+            .filter(|needle| !known.contains_key(*needle))
+            .collect();
+        if !unknown.is_empty() {
+            let hits = self.vocabulary_hits(&canonical, &unknown)?;
+            for needle in unknown {
+                known.insert(needle.to_owned(), hits.contains(needle));
+            }
+            if let Some((cache, tree)) = &keyed {
+                let mut body = format!("{tree}\n");
+                for (needle, present) in &known {
+                    body.push_str(if *present { "hit " } else { "miss " });
+                    body.push_str(needle);
+                    body.push('\n');
+                }
+                cache.write(ENTRY, &body);
+            }
+        }
+        Ok(needles
+            .into_iter()
+            .filter(|needle| known.get(*needle) == Some(&true))
+            .map(ToOwned::to_owned)
+            .collect())
+    }
+
+    /// Which identifier-shaped `needles` occur in tracked source at `canonical`, by one
+    /// pass over its vocabulary (see [`Self::tracked_source_hits`]).
+    fn vocabulary_hits(
+        &self,
+        canonical: &Commit,
+        needles: &BTreeSet<&str>,
+    ) -> Result<BTreeSet<String>, GitError> {
         let mut args: Vec<String> = vec![
             "grep".into(),
             "--no-color".into(),
+            "-I".into(),
             "-h".into(),
             "-o".into(),
-            "-F".into(),
+            "-E".into(),
+            "-e".into(),
+            "[A-Za-z0-9_]+".into(),
         ];
-        for needle in &needles {
-            args.push("-e".into());
-            args.push((*needle).to_string());
-        }
         args.push(canonical.as_str().to_owned());
         args.push("--".into());
-        for exclude in SOURCE_HIT_EXCLUDES {
+        for exclude in SOURCE_HIT_EXCLUDES.iter().chain(SOURCE_DUMP_EXCLUDES) {
             args.push((*exclude).into());
         }
-        // Captured run output and bulk data are not source either, and they are
-        // where a since-deleted test's name survives: a status file or a log
-        // from the day it still existed. They are also where the bytes are —
-        // a tracked 70 MB JSONL made this one `git grep` run for half an hour.
-        for exclude in [
-            ":(exclude)*.log",
-            ":(exclude)*.jsonl",
-            ":(exclude)*.csv",
-            ":(exclude)*.txt",
-            ":(exclude)*.json",
-        ] {
-            args.push(exclude.into());
+        // Streamed rather than buffered: the occurrences run to millions of lines (7.6 M on
+        // SYS), the distinct words to a few hundred thousand.
+        let mut vocabulary: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
+        self.for_each_line_allowing_no_match(&args, |line| {
+            if !vocabulary.contains(line) {
+                vocabulary.insert(line.to_vec());
+            }
+        })?;
+        // Most needles are whole identifiers and hit exactly; only the rest pay for a scan.
+        let mut hits = BTreeSet::new();
+        let mut missing = Vec::new();
+        for &needle in needles {
+            if vocabulary.contains(needle.as_bytes()) {
+                hits.insert(needle.to_owned());
+            } else {
+                missing.push(needle);
+            }
         }
-        let out = self.run_bytes_allowing_no_match(&args, "")?;
-        let text = String::from_utf8_lossy(&out);
-        Ok(text
-            .lines()
-            .map(str::trim)
-            .filter(|line| needles.contains(line))
-            .map(ToOwned::to_owned)
-            .collect())
+        if !missing.is_empty() {
+            for word in &vocabulary {
+                missing.retain(|needle| {
+                    let found = word
+                        .windows(needle.len())
+                        .any(|window| window == needle.as_bytes());
+                    if found {
+                        hits.insert((*needle).to_owned());
+                    }
+                    !found
+                });
+                if missing.is_empty() {
+                    break;
+                }
+            }
+        }
+        Ok(hits)
+    }
+
+    /// A fingerprint of everything [`Self::tracked_source_hits`] searches at `canonical`.
+    ///
+    /// The object ids of the tree's top-level entries, except that an excluded path is
+    /// left out and a directory holding one is listed entry by entry instead — so
+    /// `docs/generated` and `.akr`, which change on every ledger commit, never move it.
+    /// Coarse in the safe direction: a change anywhere else under a listed tree changes
+    /// the fingerprint, whether or not the search would have read the changed file.
+    ///
+    /// # Errors
+    /// [`GitError::CommandFailed`] if git cannot list the tree.
+    fn source_fingerprint(&self, canonical: &Commit) -> Result<String, GitError> {
+        let excluded: BTreeSet<&str> = SOURCE_HIT_EXCLUDES
+            .iter()
+            .filter_map(|spec| spec.strip_prefix(":(exclude)"))
+            .filter(|path| !path.contains(['*', '?', '[']))
+            .collect();
+        let expand: BTreeSet<String> = excluded
+            .iter()
+            .flat_map(|path| {
+                let parts: Vec<&str> = path.split('/').collect();
+                (1..parts.len()).map(move |depth| parts[..depth].join("/"))
+            })
+            .collect();
+        // The search's own rules are part of what it answers.
+        let mut lines: Vec<String> = SOURCE_HIT_EXCLUDES
+            .iter()
+            .chain(SOURCE_DUMP_EXCLUDES)
+            .map(|spec| format!("exclude {spec}"))
+            .collect();
+        let mut pending = vec![String::new()];
+        while let Some(directory) = pending.pop() {
+            let listing = if directory.is_empty() {
+                self.run(&["ls-tree", canonical.as_str()])?
+            } else {
+                self.run(&[
+                    "ls-tree",
+                    canonical.as_str(),
+                    "--",
+                    &format!("{directory}/"),
+                ])?
+            };
+            for line in listing.lines() {
+                let Some((_, path)) = line.split_once('\t') else {
+                    continue;
+                };
+                if excluded.contains(path) {
+                    continue;
+                }
+                if expand.contains(path) {
+                    pending.push(path.to_owned());
+                    continue;
+                }
+                lines.push(line.to_owned());
+            }
+        }
+        lines.sort();
+        Ok(crate::hash::sha256_hex(lines.join("\n").as_bytes()))
     }
 
     /// Answers [`Repository::is_ignored`] for many paths in one invocation.
@@ -1585,6 +2061,57 @@ impl Repository {
         }
     }
 
+    /// Like [`Self::run_bytes_allowing_no_match`], but hands stdout to `each` one line at a
+    /// time instead of holding all of it, for output far larger than what is kept of it.
+    ///
+    /// Lines are passed without their terminator. Stderr is drained on its own thread so a
+    /// chatty failure cannot fill its pipe and stall the stdout reader.
+    fn for_each_line_allowing_no_match<S: AsRef<OsStr>>(
+        &self,
+        args: &[S],
+        mut each: impl FnMut(&[u8]),
+    ) -> Result<(), GitError> {
+        use std::io::{BufRead as _, Read as _};
+        use std::process::Stdio;
+        let failed = |e: std::io::Error| GitError::CommandFailed {
+            subcommand: describe(args),
+            stderr: e.to_string(),
+        };
+        let mut child = command()
+            .args(args)
+            .current_dir(&self.root)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(failed)?;
+        let mut stderr = child.stderr.take().expect("stderr is piped");
+        let drain = std::thread::spawn(move || {
+            let mut text = Vec::new();
+            let _ = stderr.read_to_end(&mut text);
+            text
+        });
+        let mut stdout = std::io::BufReader::new(child.stdout.take().expect("stdout is piped"));
+        let mut line = Vec::new();
+        loop {
+            line.clear();
+            if stdout.read_until(b'\n', &mut line).map_err(failed)? == 0 {
+                break;
+            }
+            let content = line.strip_suffix(b"\n").unwrap_or(&line);
+            each(content.strip_suffix(b"\r").unwrap_or(content));
+        }
+        let status = child.wait().map_err(failed)?;
+        let stderr = drain.join().unwrap_or_default();
+        match status.code() {
+            Some(0 | 1) => Ok(()),
+            _ => Err(GitError::CommandFailed {
+                subcommand: describe(args),
+                stderr: String::from_utf8_lossy(&stderr).into_owned(),
+            }),
+        }
+    }
+
     fn status<S: AsRef<OsStr>>(&self, args: &[S]) -> Result<i32, GitError> {
         let output = command()
             .args(args)
@@ -1910,6 +2437,305 @@ pub fn last_changes(
         out.extend(answers);
     }
     Ok(out)
+}
+
+/// [`last_changes`], answered from a per-file timeline memoised in the fact cache.
+///
+/// The walk in [`last_changes`] reads and parses every historical version of every
+/// ledger file on every invocation — 315 MB on SYS, seven seconds of each command, and
+/// growing with file size times history. Its answer is a function of the commits that
+/// touched the file and the bytes the file held at each, both immutable, so this keeps
+/// what the walk needs from them: per logical key, the indices in the file's history at
+/// which that key's revision -> definitional-hash map changes. Usually one or two
+/// entries per key, against one parsed copy per commit.
+///
+/// A file whose history is unchanged is answered without fetching or parsing anything.
+/// One that gained commits on top of the cached history fetches and parses only those.
+/// Any other change — a rebase, a rewritten history — rebuilds that file's timeline in
+/// full. The answers are identical to [`last_changes`] in every case; the cache changes
+/// the cost, never the output.
+///
+/// # Errors
+/// Propagates any git failure that makes the question unanswerable.
+pub fn last_changes_cached(
+    repository: &Repository,
+    ledger: &crate::model::Ledger,
+    cache: &crate::cache::FactCache,
+) -> Result<BTreeMap<crate::model::RevisionId, Commit>, GitError> {
+    let mut by_file: BTreeMap<String, BTreeSet<&crate::model::LogicalKey>> = BTreeMap::new();
+    for record in crate::graph::sorted_records(ledger) {
+        let Some(path) = &record.file else { continue };
+        by_file
+            .entry(path.clone())
+            .or_default()
+            .insert(&record.id.key);
+    }
+    // One `log --follow` per file is unavoidable — it is what says whether the cached
+    // history still holds — but the files are independent, so ask about them together.
+    repository.prime_commits_touching(by_file.keys().map(String::as_str));
+
+    let mut out = BTreeMap::new();
+    for (path, keys) in by_file {
+        let commits = repository.commits_touching(&path)?;
+        if commits.is_empty() {
+            continue;
+        }
+        let name = format!(
+            "history-{}",
+            &crate::hash::sha256_hex(path.as_bytes())[..16]
+        );
+        let cached = cache
+            .read(&name)
+            .and_then(|text| Timeline::parse(&text, &path));
+        let timeline = match cached {
+            Some(timeline) if timeline.commits == commits => timeline,
+            Some(timeline) if timeline.is_suffix_of(&commits) => {
+                let added = &commits[..commits.len() - timeline.commits.len()];
+                let versions = repository.file_versions(added, &path)?;
+                let maps = added
+                    .iter()
+                    .map(|commit| version_maps(versions.get(commit)))
+                    .collect::<Vec<_>>();
+                let timeline = timeline.extended(&path, commits.clone(), &maps);
+                cache.write(&name, &timeline.render());
+                timeline
+            }
+            _ => {
+                let versions = repository.file_versions(&commits, &path)?;
+                let maps = commits
+                    .iter()
+                    .map(|commit| version_maps(versions.get(commit)))
+                    .collect::<Vec<_>>();
+                let timeline = Timeline::build(&path, commits.clone(), &maps);
+                cache.write(&name, &timeline.render());
+                timeline
+            }
+        };
+        out.extend(timeline.answers(&keys));
+    }
+    Ok(out)
+}
+
+/// One logical key's revision -> definitional-hash map in one file version.
+type KeyMap = BTreeMap<u32, crate::model::ContentHash>;
+
+/// Every key's map in one file version; a version that is absent or unreadable is empty.
+fn version_maps(text: Option<&Option<String>>) -> BTreeMap<String, KeyMap> {
+    let Some(Some(text)) = text else {
+        return BTreeMap::new();
+    };
+    let parsed = crate::syntax::parse(text, crate::diagnostics::FileId(0));
+    let Some(file) = parsed.file else {
+        return BTreeMap::new();
+    };
+    let mut out: BTreeMap<String, KeyMap> = BTreeMap::new();
+    for (at, item) in file.items.iter().enumerate() {
+        let crate::syntax::cst::Item::Record(record) = item else {
+            continue;
+        };
+        let Ok(key) = crate::model::LogicalKey::parse(&record.key) else {
+            continue;
+        };
+        if let Some(definitional) =
+            crate::resolve::revision_independent_definitional_text(&file, at)
+        {
+            out.entry(key.to_string())
+                .or_default()
+                .insert(record.revision, crate::hash::content_hash(&definitional));
+        }
+    }
+    out
+}
+
+/// A file's history as [`last_changes_cached`] keeps it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Timeline {
+    /// The file's path, so an entry can never answer for another file.
+    path: String,
+    /// The commits that touched the file, newest first: index 0 is the newest version.
+    commits: Vec<Commit>,
+    /// Logical key -> `(first index, map)` runs in index order. The first run starts at
+    /// 0, and each holds until the next run starts; a key absent from a version has an
+    /// empty map there. A key absent from every version has no entry.
+    keys: BTreeMap<String, Vec<(usize, KeyMap)>>,
+}
+
+impl Timeline {
+    /// The timeline of `commits`, from each version's maps in the same order.
+    fn build(path: &str, commits: Vec<Commit>, maps: &[BTreeMap<String, KeyMap>]) -> Self {
+        let mut keys: BTreeMap<String, Vec<(usize, KeyMap)>> = BTreeMap::new();
+        let present: BTreeSet<&String> = maps.iter().flat_map(BTreeMap::keys).collect();
+        for key in present {
+            let runs = keys.entry(key.clone()).or_default();
+            for (index, version) in maps.iter().enumerate() {
+                push_run(runs, index, version.get(key).cloned().unwrap_or_default());
+            }
+        }
+        Self {
+            path: path.to_owned(),
+            commits,
+            keys,
+        }
+    }
+
+    /// Whether this timeline's history is the older end of `commits`.
+    fn is_suffix_of(&self, commits: &[Commit]) -> bool {
+        commits.len() > self.commits.len()
+            && commits[commits.len() - self.commits.len()..] == self.commits[..]
+    }
+
+    /// This timeline with newer versions in front: `commits` is the full new history and
+    /// `maps` the versions it adds, newest first. Equal to [`Self::build`] over the whole
+    /// history, because the old runs are re-laid with the same merging rule.
+    fn extended(self, path: &str, commits: Vec<Commit>, maps: &[BTreeMap<String, KeyMap>]) -> Self {
+        let shift = maps.len();
+        let present: BTreeSet<String> = self
+            .keys
+            .keys()
+            .cloned()
+            .chain(maps.iter().flat_map(|version| version.keys().cloned()))
+            .collect();
+        let mut keys = BTreeMap::new();
+        for key in present {
+            let mut runs = Vec::new();
+            for (index, version) in maps.iter().enumerate() {
+                push_run(
+                    &mut runs,
+                    index,
+                    version.get(&key).cloned().unwrap_or_default(),
+                );
+            }
+            match self.keys.get(&key) {
+                Some(old) => {
+                    for (start, map) in old {
+                        push_run(&mut runs, start + shift, map.clone());
+                    }
+                }
+                None => push_run(&mut runs, shift, KeyMap::new()),
+            }
+            keys.insert(key, runs);
+        }
+        Self {
+            path: path.to_owned(),
+            commits,
+            keys,
+        }
+    }
+
+    /// The last definitional change of every revision present in the newest version
+    /// under `keys` — exactly the set, and the answers, [`last_changes`] produces.
+    fn answers(
+        &self,
+        keys: &BTreeSet<&crate::model::LogicalKey>,
+    ) -> BTreeMap<crate::model::RevisionId, Commit> {
+        let mut out = BTreeMap::new();
+        for key in keys {
+            let Some(runs) = self.keys.get(&key.to_string()) else {
+                continue;
+            };
+            let Some((0, newest)) = runs.first() else {
+                continue;
+            };
+            for (revision, hash) in newest {
+                let id = crate::model::RevisionId::new((*key).clone(), *revision);
+                // The walk keeps going while each older version still holds this
+                // definition at or below this revision; a run is one stretch of
+                // identical versions, so it either holds throughout or not at all.
+                let mut last = 0;
+                for (position, (_, map)) in runs.iter().enumerate() {
+                    if run_definition_at_or_below(map, *revision) != Some(hash) {
+                        break;
+                    }
+                    last = runs
+                        .get(position + 1)
+                        .map_or(self.commits.len() - 1, |(next, _)| next - 1);
+                }
+                out.insert(id, self.commits[last].clone());
+            }
+        }
+        out
+    }
+
+    /// The cache entry's body.
+    fn render(&self) -> String {
+        let mut out = format!("path {}\n", self.path);
+        for commit in &self.commits {
+            out.push_str(&format!("commit {}\n", commit.as_str()));
+        }
+        for (key, runs) in &self.keys {
+            out.push_str(&format!("key {key}\n"));
+            for (start, map) in runs {
+                out.push_str(&format!("run {start}"));
+                for (revision, hash) in map {
+                    out.push_str(&format!(" {revision} {}", hash.0));
+                }
+                out.push('\n');
+            }
+        }
+        out
+    }
+
+    /// Reads an entry back, or `None` for anything malformed or for another path.
+    fn parse(text: &str, path: &str) -> Option<Self> {
+        let mut lines = text.lines();
+        if lines.next()?.strip_prefix("path ")? != path {
+            return None;
+        }
+        let mut commits = Vec::new();
+        let mut keys: BTreeMap<String, Vec<(usize, KeyMap)>> = BTreeMap::new();
+        let mut current: Option<String> = None;
+        for line in lines {
+            if let Some(hash) = line.strip_prefix("commit ") {
+                if current.is_some() {
+                    return None;
+                }
+                commits.push(Commit::new(hash).ok()?);
+            } else if let Some(key) = line.strip_prefix("key ") {
+                keys.entry(key.to_owned()).or_default();
+                current = Some(key.to_owned());
+            } else {
+                let mut fields = line.strip_prefix("run ")?.split(' ');
+                let start: usize = fields.next()?.parse().ok()?;
+                let mut map = KeyMap::new();
+                while let Some(revision) = fields.next() {
+                    let hash = fields.next()?;
+                    map.insert(
+                        revision.parse().ok()?,
+                        crate::model::ContentHash(hash.to_owned()),
+                    );
+                }
+                let runs = keys.get_mut(current.as_ref()?)?;
+                if runs
+                    .last()
+                    .map_or(start != 0, |(previous, _)| *previous >= start)
+                    || start >= commits.len()
+                {
+                    return None;
+                }
+                runs.push((start, map));
+            }
+        }
+        if commits.is_empty() || keys.values().any(Vec::is_empty) {
+            return None;
+        }
+        Some(Self {
+            path: path.to_owned(),
+            commits,
+            keys,
+        })
+    }
+}
+
+/// Appends a run unless it repeats the one before it.
+fn push_run(runs: &mut Vec<(usize, KeyMap)>, start: usize, map: KeyMap) {
+    if runs.last().is_none_or(|(_, previous)| *previous != map) {
+        runs.push((start, map));
+    }
+}
+
+/// [`definition_at_or_below`] over one key's map.
+fn run_definition_at_or_below(map: &KeyMap, revision: u32) -> Option<&crate::model::ContentHash> {
+    map.range(1..=revision).next_back().map(|(_, hash)| hash)
 }
 
 /// Definitional hashes for every revision of the wanted keys in one historical file

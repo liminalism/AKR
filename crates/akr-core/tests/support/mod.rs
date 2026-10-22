@@ -110,6 +110,12 @@ impl TempRepo {
         self.git(&["checkout", "--quiet", name]);
     }
 
+    /// Moves the current branch to `revision`, discarding everything after it — the
+    /// history rewrite a rebase or a force-push leaves behind.
+    pub fn reset_hard(&self, revision: &str) {
+        self.git(&["reset", "--quiet", "--hard", revision]);
+    }
+
     /// Merges a branch into the current one, always creating a merge commit.
     pub fn merge(&mut self, name: &str) -> String {
         self.clock += 1;

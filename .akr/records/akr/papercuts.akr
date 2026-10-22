@@ -3564,6 +3564,30 @@ record akr.papercut.the-repository-instructions-direct-agents-to/2 : papercut {
     created_at 2026-08-09
 }
 
+record akr.papercut.v-105-akr-g024-is-skipped-silently-whenever-any/1 : papercut {
+    title "V-105 (AKR-G024) is skipped silently whenever any record file has…"
+    state superseded
+    statement """
+        V-105 (AKR-G024) is skipped silently whenever any record file has uncommitted changes: check() gates it on session.inputs.commit, which source_graph_commit leaves None for a dirty ledger. On SYS the same validate exits 1 (G024 on inspect_bowl) with a clean ledger and 0 with an agent's uncommitted record edits, with no line saying the gate did not run. Running it against HEAD's tree regardless, or reporting the skip as a build fact, would fix it.
+        """
+    observed_at git:f426453d491ac203856364426fd1a41ab6f16c09
+    author "claude"
+    created_at 2026-10-22
+}
+
+record akr.papercut.v-105-akr-g024-is-skipped-silently-whenever-any/2 : papercut {
+    title "V-105 (AKR-G024) is skipped silently whenever any record file has…"
+    state verified
+    statement """
+        V-105 (AKR-G024) is skipped silently whenever any record file has uncommitted changes: check() gates it on session.inputs.commit, which source_graph_commit leaves None for a dirty ledger. On SYS the same validate exits 1 (G024 on inspect_bowl) with a clean ledger and 0 with an agent's uncommitted record edits, with no line saying the gate did not run. Running it against HEAD's tree regardless, or reporting the skip as a build fact, would fix it.
+        """
+    observed_at git:f426453d491ac203856364426fd1a41ab6f16c09
+    closed_at 2026-10-22
+    supersedes [ @akr.papercut.v-105-akr-g024-is-skipped-silently-whenever-any/1 ]
+    author "claude"
+    created_at 2026-10-22
+}
+
 record akr.papercut.while-beginning-a-change-transaction-the/1 : papercut {
     title "While beginning a change transaction, the natural kind 'feature' was…"
     state superseded

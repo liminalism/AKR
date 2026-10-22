@@ -281,7 +281,9 @@ impl Session {
         // per tool call — reuses everything git already answered about an unchanged
         // repository instead of re-asking per call.
         let repository = match Repository::shared(&self.root) {
-            Ok(repository) => Some(repository),
+            Ok(repository) => {
+                Some(repository.with_fact_cache(akr_core::cache::FactCache::new(&self.akr_dir)))
+            }
             Err(akr_core::git::GitError::ShallowHistory) => {
                 return Err(EnvError::new(
                     "AKR-G003",
@@ -312,7 +314,10 @@ impl Session {
         };
 
         if let Some(repository) = &repository {
-            if let Ok(last_change) = akr_core::git::last_changes(repository, &self.ledger) {
+            let cache = akr_core::cache::FactCache::new(&self.akr_dir);
+            if let Ok(last_change) =
+                akr_core::git::last_changes_cached(repository, &self.ledger, &cache)
+            {
                 self.ledger.facts.last_change = last_change;
             }
             let commits: Vec<Commit> = self
@@ -370,14 +375,30 @@ impl Session {
         ResolvedModel::build(&self.ledger, &self.inputs)
     }
 
-    /// Derives the review queue, when a repository is available.
+    /// Derives the review queue, when a repository is available: what is stale and what
+    /// is at risk, with the diagnostics about the freshness inputs themselves.
+    ///
+    /// Not the V-102 tree checks — every scope and watch glob against every tracked path.
+    /// Those are for [`Self::checked_review_queue`]; a command that only reports whether a
+    /// record is stale has no use for them, and on SYS they were a second and a half of
+    /// every `akr get`.
     #[must_use]
     pub fn review_queue(&self) -> ReviewQueue {
         let (Some(repository), Some(commit)) = (&self.repository, &self.commit) else {
             return ReviewQueue::default();
         };
-        let mut queue = akr_core::freshness::derive(&self.ledger, repository, commit, self.today)
-            .unwrap_or_default();
+        akr_core::freshness::derive(&self.ledger, repository, commit, self.today)
+            .unwrap_or_default()
+    }
+
+    /// [`Self::review_queue`] plus V-102's checks of every glob against the tree, for the
+    /// commands that report the ledger's diagnostics.
+    #[must_use]
+    pub fn checked_review_queue(&self) -> ReviewQueue {
+        let mut queue = self.review_queue();
+        let (Some(repository), Some(commit)) = (&self.repository, &self.commit) else {
+            return queue;
+        };
         // Not `if let Ok(..)`. One failing git call here used to discard every scope and
         // watch diagnostic in the workspace without a word — which is how a working
         // AKR-G021 could pass its own test and never once reach a user.

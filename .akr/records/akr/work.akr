@@ -1195,6 +1195,51 @@ record akr.work.import-drafts-land-as-live-work/1 : work {
         """
 }
 
+record akr.work.incremental-build-cache/1 : work {
+    title "Memoise history-derived build facts on git object ids"
+    state completed
+    scope [
+        path "crates/akr-cli/src/commands.rs",
+        path "crates/akr-cli/src/session.rs",
+        path "crates/akr-core/src/freshness/**",
+        path "crates/akr-core/src/git/mod.rs",
+        path "crates/akr-core/src/source/mod.rs",
+        path "crates/akr-core/src/store/**"
+    ]
+    intent """
+        Stop re-deriving immutable git facts on every invocation. Memoise pure functions of content-addressed inputs in the disposable cache (.akr/cache, through akr-core's store module only, D-019): last_changes per (path, newest commit touching it, rewrite-map hash, tool version), extended incrementally when the cached commit is a suffix of the new file history; V-105 hits per (tree id, needle set). Fix the uncached costs directly: scope globs by literal-prefix range over the sorted listing, citation checks loading catalog and corpus once, freshness ancestry from one rev-list of the touched range, and command-scoped facts so `akr get` does not build the review queue. A cache keyed only on immutable ids cannot change output, so the byte-reproducibility guarantee holds; it is enforced by cold-versus-warm byte comparison.
+        """
+    note """
+        Projected from the 2026-10-22 SYS profile, not yet measured: warm validate ~2-3 s, akr get under 1 s.
+        """
+    acceptance {
+        check cold-warm-identical {
+            statement """
+                Cold-cache and warm-cache runs produce byte-identical diagnostics, lock and views, including after a commit that touches one record file
+                """
+            method command
+            command "cargo test -p akr-core --test build_cache"
+            verified_by [ @akr.evidence.build-cache-equivalence/1 ]
+        }
+        check get-fast {
+            statement """
+                akr get on SYS takes under 1 s warm
+                """
+            method observation
+            verified_by [ @akr.evidence.sys-warm-cache-timing/1 ]
+        }
+        check warm-validate-fast {
+            statement """
+                A second akr validate on SYS with no commits in between takes under 3 s
+                """
+            method observation
+            verified_by [ @akr.evidence.sys-warm-cache-timing/1 ]
+        }
+    }
+    supported_by [ @akr.observation.sys-build-cost-breakdown ]
+    author "dk"
+}
+
 record akr.work.init-gitignore-is-never-reconciled/1 : work {
     title "akr init's .gitignore block is written once and never reconciled"
     state completed
@@ -3295,6 +3340,36 @@ record akr.work.unify-disposition-carry-prune/1 : work {
         @akr.papercut.collated-17-papercuts-from-legeos,
         @akr.papercut.collated-35-papercuts-from-kitchen-concept-lege
     ]
+}
+
+record akr.work.v105-source-hits-linear/1 : work {
+    title "V-105 source-hit search is superlinear in recorded test names"
+    state completed
+    scope [ path "crates/akr-core/src/git/mod.rs", path "crates/akr-core/tests/git_queries.rs" ]
+    intent """
+        Make the AKR-G024 phantom-command check cost one linear pass over tracked source however many test-name needles the ledger holds. `git grep -o -F -e …` with N needles tests each pattern per line and restarts after every match; on SYS (2711 records, 613 needles) it took one `akr validate` from under three minutes to eleven (40 needles 3.8 s, 80 9.5 s, 160 48 s). Replace it with a single `git grep -I -o -E '[A-Za-z0-9_]+'` vocabulary pass (≈1.1 s on SYS) and look the needles up in that set, exact first then by substring — equivalent because a needle made only of identifier characters can only occur inside one identifier word. Also fixes a false phantom: `-o` reports one match per position, so a needle only ever occurring inside a longer needle's match was reported absent.
+        """
+    note """
+        Not the papercut's guess: V-102 scope matching against HEAD costs milliseconds.
+        """
+    acceptance {
+        check suite-passes {
+            statement """
+                akr-core, akr-cli and akr-mcp test suites pass, including regressions for overlapping needles and needle-count cost
+                """
+            method command
+            command "cargo test -p akr-core -p akr-cli -p akr-mcp"
+            verified_by [ @akr.evidence.v105-source-hits-suite/1 ]
+        }
+        check sys-validate-fast {
+            statement """
+                akr validate on SYS finishes in well under a minute with the same diagnostic set as the old binary
+                """
+            method observation
+            verified_by [ @akr.evidence.v105-sys-validate-timing/1 ]
+        }
+    }
+    author "dk"
 }
 
 record akr.work.validate-commits-before-write/1 : work {

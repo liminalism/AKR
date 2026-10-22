@@ -181,6 +181,9 @@ pub fn derive(
         };
     }
     let touches = repository.touches_in(oldest.as_ref(), head)?;
+    // Step 4 asks, per record, whether its observation already contains each touching
+    // commit. Every one of those commits is in the range just walked.
+    repository.prime_range(oldest.as_ref(), head);
 
     // 4. Per record. Both conditions are tested, and a matched watch is reported in
     //    preference to a passed date: a moved path names the change to look at, where a
@@ -508,6 +511,30 @@ pub fn unverifiable_scopes(
     Ok(out)
 }
 
+/// Whether any path in a sorted tree listing matches `glob`.
+///
+/// A literal pattern segment matches only an identical path segment, so every match
+/// starts with the glob's leading literal segments, and in a sorted listing those paths
+/// are one contiguous run. Testing only that run gives the same answer as testing every
+/// path. It matters at size: SYS asks 3988 scope globs of 4538 paths, and the full scan
+/// was 18 million matches and a second and a half of every check.
+fn listing_matches(listing: &BTreeSet<String>, glob: &Glob) -> bool {
+    let prefix = glob
+        .as_str()
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .take_while(|segment| !segment.contains(['*', '?', '[']))
+        .collect::<Vec<_>>()
+        .join("/");
+    listing
+        .range::<str, _>((
+            std::ops::Bound::Included(prefix.as_str()),
+            std::ops::Bound::Unbounded,
+        ))
+        .take_while(|path| path.starts_with(&prefix))
+        .any(|path| glob_matches(glob, path))
+}
+
 /// Whether a glob's literal prefix lies at or under a submodule path.
 fn inside_submodule(submodules: &std::collections::BTreeSet<String>, glob: &str) -> bool {
     let literal = literal_prefix(glob);
@@ -568,7 +595,7 @@ pub fn unmatched_watches(
             if validate_glob(&glob).is_err() {
                 continue; // AKR-G021 already reported it
             }
-            if !listing.iter().any(|path| glob_matches(&glob, path)) {
+            if !listing_matches(&listing, &glob) {
                 let uncommitted = changed.iter().any(|path| glob_matches(&glob, path));
                 out.push(
                     Diagnostic::warning(
@@ -617,7 +644,7 @@ pub fn unmatched_watches(
             {
                 continue;
             }
-            if !listing.iter().any(|path| glob_matches(glob, path)) {
+            if !listing_matches(&listing, glob) {
                 let uncommitted = changed.iter().any(|path| glob_matches(glob, path));
                 out.push(
                     Diagnostic::warning(
@@ -859,5 +886,69 @@ mod submodule_tests {
         assert!(!inside_submodule(&submodules, "src/**"));
         // A glob whose first segment is already a wildcard names no literal prefix.
         assert!(!inside_submodule(&submodules, "**/lib.rs"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{glob_matches, listing_matches};
+    use crate::model::Glob;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn the_prefix_range_finds_exactly_what_a_full_scan_finds() {
+        let listing: BTreeSet<String> = [
+            "a",
+            "a/b",
+            "a/b.rs",
+            "a/bc/d.rs",
+            "a/b/c/d.rs",
+            "a-b/c.rs",
+            "a.b/c.rs",
+            "docs/plan.md",
+            "src/lib.rs",
+            "src/library.rs",
+            "src/lib/mod.rs",
+            "tools/build.py",
+            "x/y/z/deep.txt",
+        ]
+        .into_iter()
+        .map(ToOwned::to_owned)
+        .collect();
+        let globs = [
+            "a",
+            "a/",
+            "a/b",
+            "a/b/",
+            "a/b/**",
+            "a/b*",
+            "a/*/d.rs",
+            "a//b",
+            "**/d.rs",
+            "*/b.rs",
+            "src/lib",
+            "src/lib.rs",
+            "src/lib*",
+            "src/lib/**",
+            "src/[l]ib.rs",
+            "src/li?.rs",
+            "tools",
+            "tools/",
+            "x/**/deep.txt",
+            "x/y",
+            "missing/**",
+            "docs/*.md",
+            "a-b/**",
+        ];
+        for glob in globs {
+            let glob = Glob::new(glob);
+            let scanned = listing.iter().any(|path| glob_matches(&glob, path));
+            assert_eq!(
+                listing_matches(&listing, &glob),
+                scanned,
+                "{}",
+                glob.as_str()
+            );
+        }
     }
 }

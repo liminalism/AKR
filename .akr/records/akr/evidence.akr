@@ -498,6 +498,19 @@ record akr.evidence.advisor-packet-suite/1 : evidence {
     author "GitHub Uploader"
 }
 
+record akr.evidence.build-cache-equivalence/1 : evidence {
+    title "Cached build facts are identical to uncached ones, cold and warm"
+    state verified
+    result pass
+    method command
+    observed_at git:f426453d491ac203856364426fd1a41ab6f16c09
+    command "cargo test -p akr-core --test build_cache"
+    summary """
+        3 passed. Over a 44-step history with a rename, a merge, an unparseable version, revisions added and removed, and a reset --hard rewrite, the cold and warm caches give answers identical to the uncached last_changes walk and to an uncached touches_in over four ranges, and incrementally extended entries are byte-identical to rebuilt ones. Corrupt and other-version entries are misses. Five planted bugs, including a missing -m, were each caught. The akr-cli build_cache test also passed: check, check --format json, review-queue, build --check and every byte akr build writes are identical cold and warm on both worked examples, before and after a commit the cache extends over.
+        """
+    author "dk"
+}
+
 record akr.evidence.change-delta-green/1 : evidence {
     title "The whole workspace is green, clippy is silent, formatting is clean and the design set is coherent over the delta fix."
     state verified
@@ -1629,6 +1642,18 @@ record akr.evidence.snapshot-suite-after-help-and-version-fixes/1 : evidence {
     author "GitHub Uploader"
 }
 
+record akr.evidence.sys-warm-cache-timing/1 : evidence {
+    title "SYS warm validate 2.3 s and get 0.9 s with the fact cache"
+    state verified
+    result pass
+    method observation
+    observed_at git:f426453d491ac203856364426fd1a41ab6f16c09
+    summary """
+        On SYS at 4f9617e0 (2711 records, ledger dirty from concurrent edits), debug-release build with the fact cache: akr validate 11.3 s cold, then 2.3 s and 2.4 s warm, with byte-identical output cold and warm; akr get 0.91 s and 0.98 s warm (10.7 s before); akr review-queue 1.1 s. Git time in a warm validate is about 0.25 s; the rest is in-process, mostly view comparison. Cache size 1.8 MB.
+        """
+    author "dk"
+}
+
 record akr.evidence.tool-results-typed-for-mcp-clients/1 : evidence {
     title "Every tool result carried resultType 'tool', a value outside MCP's closed set (complete, input_required, task), so rmcp 3.x clients rejected the response itself and Codex 0.149 could call no knowledge tool at all. Now 'complete'. tests/conformance.rs asserts the envelope of all 23 tools plus the handshakes against written-out closed sets; reintroducing the bug fails 2 of its 4 tests. A real rmcp 3.1.2 client now completes knowledge.start on both lifecycles."
     state superseded
@@ -1685,6 +1710,31 @@ record akr.evidence.v025-durable-artifact-suite/1 : evidence {
     summary """
         706 tests passed across 57 binaries with no failures. New coverage: v025_fails_on_an_artifact_under_the_scratch_directory and v025_passes_on_a_durable_artifact_and_ignores_other_kinds in akr-core; the v025-evidence-scratch-artifact err fixture; evidence_refuses_an_artifact_under_the_scratch_directory in akr-cli, now exercising evidence add, evidence add-many --from and propose --kind evidence --from; and an_artifact_under_scratch_is_refused_on_every_evidence_route in akr-mcp, covering knowledge.evidence_add and knowledge.propose. tools/check-design.py passes with only the pre-existing AKR-X013 warning.
         """
+}
+
+record akr.evidence.v105-source-hits-suite/1 : evidence {
+    title "812 passed, 0 failed, including new tracked_source_hits regressions for an overlapping needle and 2000-needle cost; clippy clean on akr-core."
+    state verified
+    result pass
+    method command
+    observed_at git:f426453d491ac203856364426fd1a41ab6f16c09
+    command "cargo test -p akr-core -p akr-cli -p akr-mcp"
+    summary """
+        812 passed, 0 failed, including new tracked_source_hits regressions for an overlapping needle and 2000-needle cost; clippy clean on akr-core.
+        """
+    author "dk"
+}
+
+record akr.evidence.v105-sys-validate-timing/1 : evidence {
+    title "SYS akr validate 565 s → 17 s with identical diagnostics"
+    state verified
+    result pass
+    method observation
+    observed_at git:f426453d491ac203856364426fd1a41ab6f16c09
+    summary """
+        On SYS at 4f9617e0 (2711 records, 613 V-105 needles), installed akr 0.5.2 `akr validate` took 565 s; the fixed debug-release build took 17 s (V-105 grep 1.2 s). Stdout was byte-identical between the two (223 AKR-G023, 1 AKR-G024, exit 1 under default --strict).
+        """
+    author "dk"
 }
 
 record akr.evidence.warm-search-stays-git-free-after-changes/1 : evidence {

@@ -1021,37 +1021,86 @@ fn last_line_of(start_line: u32, slice: &[u8]) -> u32 {
 }
 
 /// Checks one citation against the catalog and its full or retained bytes.
+///
+/// Loads the library for this one call. A caller checking many citations should hold a
+/// [`CitationLibrary`] instead, which reads the catalog and the corpus once.
 #[must_use]
 pub fn check_citation_at(
     workspace_root: &Path,
     source: &crate::model::Source,
 ) -> Vec<CitationProblem> {
-    let Some(document) = &source.document else {
-        return Vec::new();
-    };
-    let catalog = match load_catalog(workspace_root) {
-        Ok(catalog) => catalog,
-        Err(error) => {
-            return vec![CitationProblem::TextUnavailable {
-                document: document.clone(),
-                reason: error.to_string(),
-            }];
+    CitationLibrary::new(workspace_root).check(source)
+}
+
+/// The source library as citation checks read it, loaded at most once per check.
+///
+/// `akr check` verifies every record citation. Loading the catalog per citation, and the
+/// whole corpus per full-text citation, was a second of a 14-second check on SYS for a
+/// library nothing in the check can change. The library is read lazily and kept, failure
+/// included, so a missing catalog is reported against every citation exactly as before.
+pub struct CitationLibrary<'a> {
+    root: &'a Path,
+    catalog: std::cell::OnceCell<Result<Vec<SourceDocument>, String>>,
+    corpus: std::cell::OnceCell<Result<Vec<LoadedSource>, String>>,
+}
+
+impl<'a> CitationLibrary<'a> {
+    /// A library over the workspace at `workspace_root`, not yet read.
+    #[must_use]
+    pub fn new(workspace_root: &'a Path) -> Self {
+        Self {
+            root: workspace_root,
+            catalog: std::cell::OnceCell::new(),
+            corpus: std::cell::OnceCell::new(),
         }
-    };
-    let Some(entry) = catalog.iter().find(|entry| &entry.id == document) else {
-        return vec![CitationProblem::UnknownDocument {
-            document: document.clone(),
-        }];
-    };
-    if entry.availability == SourceAvailability::Full {
-        return match load_corpus(workspace_root) {
-            Ok(corpus) => check_citation(source, &corpus),
-            Err(error) => vec![CitationProblem::TextUnavailable {
-                document: document.clone(),
-                reason: error.to_string(),
-            }],
-        };
     }
+
+    /// Checks one citation against the catalog and its full or retained bytes.
+    #[must_use]
+    pub fn check(&self, source: &crate::model::Source) -> Vec<CitationProblem> {
+        let Some(document) = &source.document else {
+            return Vec::new();
+        };
+        let catalog = match self
+            .catalog
+            .get_or_init(|| load_catalog(self.root).map_err(|error| error.to_string()))
+        {
+            Ok(catalog) => catalog,
+            Err(reason) => {
+                return vec![CitationProblem::TextUnavailable {
+                    document: document.clone(),
+                    reason: reason.clone(),
+                }];
+            }
+        };
+        let Some(entry) = catalog.iter().find(|entry| &entry.id == document) else {
+            return vec![CitationProblem::UnknownDocument {
+                document: document.clone(),
+            }];
+        };
+        if entry.availability == SourceAvailability::Full {
+            return match self
+                .corpus
+                .get_or_init(|| load_corpus(self.root).map_err(|error| error.to_string()))
+            {
+                Ok(corpus) => check_citation(source, corpus),
+                Err(reason) => vec![CitationProblem::TextUnavailable {
+                    document: document.clone(),
+                    reason: reason.clone(),
+                }],
+            };
+        }
+        check_retained_citation(self.root, document, entry, source)
+    }
+}
+
+/// The citation check for a document whose bytes are retained only as fragments.
+fn check_retained_citation(
+    workspace_root: &Path,
+    document: &str,
+    entry: &SourceDocument,
+    source: &crate::model::Source,
+) -> Vec<CitationProblem> {
     let Some(range) = &source.range else {
         return Vec::new();
     };
@@ -1060,7 +1109,7 @@ pub fn check_citation_at(
             && contains_range(&fragment.captured_range, range)
     }) else {
         return vec![CitationProblem::TextUnavailable {
-            document: document.clone(),
+            document: document.to_owned(),
             reason: if entry.availability == SourceAvailability::MetadataOnly {
                 "the document is metadata-only".into()
             } else {
@@ -1072,7 +1121,7 @@ pub fn check_citation_at(
         Ok(bytes) => bytes,
         Err(error) => {
             return vec![CitationProblem::TextUnavailable {
-                document: document.clone(),
+                document: document.to_owned(),
                 reason: error.to_string(),
             }];
         }
@@ -1091,7 +1140,7 @@ pub fn check_citation_at(
     .unwrap_or(usize::MAX);
     let Some(slice) = bytes.get(start..end) else {
         return vec![CitationProblem::TextUnavailable {
-            document: document.clone(),
+            document: document.to_owned(),
             reason: "retained fragment does not contain the requested bytes".into(),
         }];
     };
@@ -1099,7 +1148,7 @@ pub fn check_citation_at(
     if std::str::from_utf8(&bytes[..start]).is_err() || std::str::from_utf8(&bytes[..end]).is_err()
     {
         problems.push(CitationProblem::RangeNotOnBoundary {
-            document: document.clone(),
+            document: document.to_owned(),
             start: range.start_byte,
             end: range.end_byte,
         });
@@ -1109,7 +1158,7 @@ pub fn check_citation_at(
         let found = hash_bytes(slice);
         if &found != expected {
             problems.push(CitationProblem::ExcerptHashMismatch {
-                document: document.clone(),
+                document: document.to_owned(),
                 expected: expected.clone(),
                 found,
             });
@@ -1122,7 +1171,7 @@ pub fn check_citation_at(
     let end_line = last_line_of(start_line, slice);
     if (range.start_line, range.end_line) != (start_line, end_line) {
         problems.push(CitationProblem::LinesDisagree {
-            document: document.clone(),
+            document: document.to_owned(),
             recorded: (range.start_line, range.end_line),
             actual: (start_line, end_line),
         });

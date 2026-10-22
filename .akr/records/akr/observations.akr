@@ -80,6 +80,22 @@ record akr.observation.concurrent-writes-are-silently-lost/2 : observation {
     verified_by [ @akr.evidence.one-writer-at-a-time-holds-20260908/1 ]
 }
 
+record akr.observation.sys-build-cost-breakdown/1 : observation {
+    title "On SYS, most of every akr command's cost is re-deriving git history facts"
+    state verified
+    statement """
+        Measured on SYS at 4f9617e0 (2711 records in 19 files, 4538 tracked paths) with the V-105 fix applied: `akr validate` 13.9 s, `akr get <key>` 10.7 s, `akr search` 0.12 s. Validate splits as last_changes 7.1 s (3.2 s git log/cat-file, 4.0 s parsing 315 MB of historical record-file versions: work.akr 133 versions / 124 MB, evidence.akr 155 / 94 MB), freshness::derive 1.6 s, unmatched_watches 1.4 s (3988 scope globs tested against every tracked path), V-105 1.5 s, view comparison 1.2 s, citation checks 1.1 s (catalog and corpus reloaded per citation), everything else under 0.4 s. Every command except search and config show pays ensure_git_facts, and MCP write tools do too. last_changes walks nearly every version of each file because the oldest records only resolve near the start of history, so its cost is ~file size × commit count and grows quadratically over a project's life.
+        """
+    observed_at git:f426453d491ac203856364426fd1a41ab6f16c09
+    method instrumented
+    watches [
+        "crates/akr-core/src/git/mod.rs",
+        "crates/akr-core/src/freshness/**",
+        "crates/akr-cli/src/session.rs"
+    ]
+    author "dk"
+}
+
 record akr.observation.the-normative-layer-is-stuck-at-proposed/1 : observation {
     title "akr.observation.the-normative-layer-is-stuck-at-proposed"
     state verified

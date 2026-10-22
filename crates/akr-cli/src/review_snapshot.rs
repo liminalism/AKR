@@ -319,7 +319,7 @@ impl ReviewSnapshot {
         progress(ReviewPhase::Resolving);
         let model = session.resolve();
         progress(ReviewPhase::Freshness);
-        let queue = session.review_queue();
+        let queue = session.checked_review_queue();
         progress(ReviewPhase::Projecting);
 
         let stale: BTreeMap<_, _> = queue.stale.iter().map(|item| (&item.id, item)).collect();

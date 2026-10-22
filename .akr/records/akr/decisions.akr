@@ -102,6 +102,29 @@ record akr.decision.a-historical-relation-names-a-revision/1 : decision {
     supported_by [ @akr.evidence.d044-and-the-resolves-exemption-20260908/1 ]
 }
 
+record akr.decision.build-facts-memoised-on-git-ids/1 : decision {
+    title "Build facts that are pure functions of git objects are memoised on their ids"
+    state proposed
+    scope [
+        path "crates/akr-cli/tests/build_cache.rs",
+        path "crates/akr-core/src/cache.rs",
+        path "crates/akr-core/src/git/**",
+        path "crates/akr-core/tests/build_cache.rs"
+    ]
+    topic build-fact-cache
+    decision """
+        A build may keep, in the disposable .akr/cache/facts directory, any fact that is a pure function of immutable git objects, stored under the object ids it was computed from: record files' definitional timelines, each commit's touched paths, log --follow answers keyed on HEAD, and V-105 source hits keyed on a fingerprint of the searched trees. An entry is used only when every id matches and its header names the running tool version; anything else is a miss. The cache may change what a command costs, never what it outputs, and that is enforced by tests that compare every cached answer with the uncached computation and every command's output cold against warm.
+        """
+    context """
+        Every command re-derived these facts from scratch. On SYS that was 315 MB of historical ledger text re-parsed per invocation, 7 s of every command, growing with file size times history. Determinism was achieved by recomputation; content-addressed memoisation achieves it without the cost, the way incremental compilers do.
+        """
+    consequences """
+        Warm akr validate on SYS went from 13.9 s to 2.3 s and akr get from 10.7 s to 0.9 s, with byte-identical output. The first command after a release, or after deleting the cache, pays the old cost once. New cached facts need both an equivalence test against the uncached path and a cold-versus-warm command test.
+        """
+    supported_by [ @akr.evidence.build-cache-equivalence, @akr.evidence.sys-warm-cache-timing ]
+    author "dk"
+}
+
 record akr.decision.change-transaction-not-commit-kind/1 : decision {
     title "AKR leads intent, git seals the snapshot, and the bridge is a change transaction"
     state superseded

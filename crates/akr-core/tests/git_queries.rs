@@ -793,7 +793,7 @@ fn tracked_source_hits_finds_a_needle_in_rust_source() {
     let head = commit(&repo.commit_file("src/lib.rs", "fn a_real_leaf_test() {}\n", "source"));
     let git = Repository::open(repo.root()).expect("opens");
     let hits = git
-        .tracked_source_hits(&head, ["a_real_leaf_test", "a_missing_name"])
+        .tracked_source_hits(&head, ["a_real_leaf_test", "a_missing_name"], None)
         .expect("grep");
     assert!(hits.contains("a_real_leaf_test"));
     assert!(!hits.contains("a_missing_name"));
@@ -807,7 +807,7 @@ fn tracked_source_hits_ignore_jsonl_dumps_and_letterless_needles() {
     let head = commit(&repo.commit("dump plus source"));
     let git = Repository::open(repo.root()).expect("opens");
     let hits = git
-        .tracked_source_hits(&head, ["a_name_only_in_jsonl", "_", "something_else"])
+        .tracked_source_hits(&head, ["a_name_only_in_jsonl", "_", "something_else"], None)
         .expect("grep");
     assert!(
         !hits.contains("a_name_only_in_jsonl"),
@@ -820,5 +820,64 @@ fn tracked_source_hits_ignore_jsonl_dumps_and_letterless_needles() {
     assert!(
         hits.contains("something_else"),
         "rust source is still searched: {hits:?}"
+    );
+}
+
+#[test]
+fn tracked_source_hits_finds_a_needle_inside_a_longer_needles_match() {
+    // `git grep -o` reports one match per position, so `dinner` — present only inside
+    // `continuous_dinner_departure` — used to come back absent when both were asked.
+    let mut repo = TempRepo::new("source-hits-overlap");
+    let head = commit(&repo.commit_file(
+        "src/lib.rs",
+        "fn continuous_dinner_departure() {}\nmod keybindings;\n",
+        "source",
+    ));
+    let git = Repository::open(repo.root()).expect("opens");
+    let hits = git
+        .tracked_source_hits(
+            &head,
+            [
+                "continuous_dinner_departure",
+                "dinner",
+                "bindings",
+                "absent_name",
+            ],
+            None,
+        )
+        .expect("grep");
+    assert!(hits.contains("continuous_dinner_departure"), "{hits:?}");
+    assert!(
+        hits.contains("dinner"),
+        "a substring of a word is present: {hits:?}"
+    );
+    assert!(hits.contains("bindings"), "{hits:?}");
+    assert!(!hits.contains("absent_name"), "{hits:?}");
+}
+
+#[test]
+fn tracked_source_hits_cost_does_not_grow_with_needles() {
+    // 613 needles over a large tree made the multi-pattern `git grep -o -F` take
+    // minutes. The vocabulary pass is one pattern however many needles are asked.
+    let mut repo = TempRepo::new("source-hits-many");
+    let mut text = String::new();
+    for i in 0..4000 {
+        text.push_str(&format!("fn test_case_{i}() {{ a_b(); c_d(); e_f(); }}\n"));
+    }
+    let head = commit(&repo.commit_file("src/lib.rs", &text, "source"));
+    let git = Repository::open(repo.root()).expect("opens");
+    let needles: Vec<String> = (0..2000).map(|i| format!("test_case_{}", i * 3)).collect();
+    let started = std::time::Instant::now();
+    let hits = git
+        .tracked_source_hits(&head, needles.iter().map(String::as_str), None)
+        .expect("grep");
+    let elapsed = started.elapsed();
+    assert_eq!(
+        hits.len(),
+        needles.iter().filter(|n| text.contains(n.as_str())).count()
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(20),
+        "2000 needles took {elapsed:?}"
     );
 }

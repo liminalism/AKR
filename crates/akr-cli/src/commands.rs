@@ -519,6 +519,19 @@ fn unverifiable_scope_fact(scopes: &[akr_core::freshness::UnverifiableScope]) ->
     text
 }
 
+/// The build fact for a V-105 check that did not run, or nothing when it did.
+///
+/// V-105 searches tracked source at the commit that holds the loaded ledger, so a ledger
+/// with uncommitted record edits, or one no commit contains, has nowhere to search from.
+/// Until 0.6 that skip said nothing, and the same ledger exited 1 clean and 0 mid-edit
+/// (akr.decision.a-check-says-what-it-looked-at).
+fn recorded_commands_fact(session: &Session) -> String {
+    if session.repository.is_none() || session.inputs.commit.is_some() {
+        return String::new();
+    }
+    "    recorded commands were not checked against tracked source (V-105): no commit holds the ledger as loaded — commit the record files to include it\n".to_owned()
+}
+
 fn scratch_fact(scratch: &akr_core::scratch::Scratch) -> String {
     use akr_core::scratch::human_bytes;
     if !scratch.present {
@@ -851,7 +864,7 @@ fn check(
     session.attach_lock();
     let model = session.resolve();
     let mut diagnostics = session.diagnostics(&model);
-    let queue = session.review_queue();
+    let queue = session.checked_review_queue();
     let scratch = akr_core::scratch::scan(&session.root, std::time::SystemTime::now());
     diagnostics.extend(queue.diagnostics.clone());
 
@@ -963,6 +976,7 @@ fn check(
             queue.at_risk.len()
         ));
         text.push_str(&scratch_fact(&scratch));
+        text.push_str(&recorded_commands_fact(session));
         text.push_str(&unverifiable_scope_fact(&session.unverifiable_scopes()));
         let missing = crate::init::missing_gitignore_entries(&session.root);
         if !missing.is_empty() {
@@ -981,10 +995,28 @@ fn check(
     // Warning only — see `akr_core::gate` for why this is decay rather than carelessness.
     if let (Some(repository), Some(head)) =
         (session.repository.as_ref(), session.inputs.commit.as_ref())
-        && let Ok(gate_diagnostics) =
-            akr_core::gate::phantom_command_tokens(&session.ledger, repository, head)
     {
-        diagnostics.extend(gate_diagnostics);
+        let cache = akr_core::cache::FactCache::new(&session.akr_dir);
+        match akr_core::gate::phantom_command_tokens(
+            &session.ledger,
+            repository,
+            head,
+            Some(&cache),
+        ) {
+            Ok(gate_diagnostics) => diagnostics.extend(gate_diagnostics),
+            // A check may not silently skip (akr.decision.a-check-says-what-it-looked-at).
+            Err(error) => diagnostics.push(
+                Diagnostic::warning(
+                    akr_core::git::codes::G001,
+                    akr_core::diagnostics::RuleId(105),
+                    akr_core::diagnostics::Subject::Ledger,
+                    format!(
+                        "recorded commands could not be checked against tracked source: {error}"
+                    ),
+                )
+                .help("V-105 did not run; the rest of this check is unaffected"),
+            ),
+        }
     }
 
     // Scratch is a fact about the working tree, never a ledger contradiction, so it is
@@ -1568,9 +1600,10 @@ fn index_build(
 /// A workspace with no catalog produces nothing, which is most workspaces.
 fn citation_diagnostics(session: &Session) -> Vec<Diagnostic> {
     let mut out = Vec::new();
+    let library = akr_core::source::CitationLibrary::new(&session.root);
     for record in session.ledger.records() {
         for source in &record.sources {
-            for problem in akr_core::source::check_citation_at(&session.root, source) {
+            for problem in library.check(source) {
                 out.push(Diagnostic {
                     code: akr_core::diagnostics::Code::new("AKR-S022"),
                     severity: akr_core::diagnostics::Severity::Error,

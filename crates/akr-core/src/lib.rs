@@ -30,6 +30,7 @@
 //! checked against it by `tests/vocabulary.rs`. `docs/02-data-model.md` is authoritative
 //! for meaning, and `spec/diagnostics/codes-lang.md` for diagnostic codes.
 
+pub mod cache;
 pub mod change;
 pub mod context;
 pub mod diagnostics;
