@@ -88,6 +88,8 @@ Measured on SYS at 4f9617e0 (2711 records in 19 files, 4538 tracked paths) with 
 
 **supersedes** `@akr.observation.sys-build-cost-with-fact-cache/1`
 
+> **Stale** — `watches "crates/akr-core/src/git/mod.rs"` was matched by `4063ea9d`, which touched `crates/akr-core/src/git/mod.rs`. See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#with-the-fact-cache-sys-commands-spend-almost-no-time-in-git).
+
 ### akr.observation.the-normative-layer-is-stuck-at-proposed
 
 `verified` · `@akr.observation.the-normative-layer-is-stuck-at-proposed/1`

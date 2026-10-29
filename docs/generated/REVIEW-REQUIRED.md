@@ -7,9 +7,13 @@
 
 What should not be trusted without re-checking: records the build flagged `stale` or `at_risk`. Neither flag means a record is wrong (D-003); both mean look at it. This view is generated on every successful build, including one that exits 0 with a long queue (D-024). An empty file on an active project is more often a sign the `watches` globs are wrong than a sign the knowledge is perfect.
 
-## Stale (0)
+## Stale (1)
 
-_(none)_
+### With the fact cache, SYS commands spend almost no time in git
+
+`verified` · `@akr.observation.sys-build-cost-with-fact-cache/2` · observation · **stale** · [With the fact cache, SYS commands spend almost no time in git](CURRENT-STATE.md#with-the-fact-cache-sys-commands-spend-almost-no-time-in-git)
+
+**Cause** — `watches "crates/akr-core/src/git/mod.rs"` was matched by `4063ea9d`, which touched `crates/akr-core/src/git/mod.rs`.
 
 ## At risk (0)
 
