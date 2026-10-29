@@ -1198,3 +1198,102 @@ fn a_recorded_command_using_a_plain_and_chain_is_silent() {
         check.output()
     );
 }
+
+/// Field report on 0.5.2: a valid `jq -e` gate drew both G024 and G025, because the
+/// scanner read the quoted jq program as shell — its `|`s as pipes and its object keys
+/// as `cargo test` filters. A quoted multi-word argument is some other tool's program.
+#[test]
+fn a_quoted_jq_program_draws_neither_gate_warning() {
+    // Written as it must appear inside an `.akr` string literal, so `"` is `\"`.
+    let example = gate_fixture(
+        "g025-quoted-jq",
+        r#"jq -e '{course2_completed: any(.trace[]; contains(\"step: Course(2)\") and contains(\"state: Done\")), clearing_completed: any(.trace[]; contains(\"step: Clearing\") and contains(\"state: Done\")), finalized_course2_rows: ([.courses[] | select(contains(\"course: 2,\"))] | length)} | ., (.course2_completed and .clearing_completed)' SYSEngine/review-evidence/x/dinner-1735-attends.json"#,
+        "nothing relevant here",
+    );
+    // The record must parse, or the silence below would prove nothing.
+    let build = example.run(&["build"]);
+    assert_eq!(build.code, 0, "{}", build.output());
+    let check = example.run(&["check"]);
+    assert!(
+        !check.output().contains("AKR-G025"),
+        "a `|` inside a quoted jq program is not a pipe:\n{}",
+        check.output()
+    );
+    assert!(
+        !check.output().contains("AKR-G024"),
+        "jq object keys inside quotes are not test filters:\n{}",
+        check.output()
+    );
+}
+
+/// Quote awareness must not become a way to hide a pipe: a script handed to `bash -c`
+/// is scanned as shell in its own right.
+#[test]
+fn a_pipe_inside_a_bash_c_script_is_still_reported() {
+    let example = gate_fixture(
+        "g025-bash-c",
+        "bash -c 'cargo test -p sys_present a_real_leaf_test | tail'",
+        "fn a_real_leaf_test",
+    );
+    let check = example.run(&["check"]);
+    assert!(
+        check.output().contains("AKR-G025"),
+        "a pipe inside `bash -c '...'` must still be reported:\n{}",
+        check.output()
+    );
+}
+
+/// A quoted filter that is a single word is still a filter, so it is still checked.
+#[test]
+fn a_quoted_single_word_phantom_filter_is_reported() {
+    let example = gate_fixture(
+        "g024-quoted-word",
+        "cargo test -p sys_present 'a_test_name_that_exists_nowhere'",
+        "nothing relevant here",
+    );
+    let check = example.run(&["check"]);
+    assert!(
+        check.output().contains("AKR-G024"),
+        "a quoted single-word filter must still be checked:\n{}",
+        check.output()
+    );
+}
+
+#[test]
+fn start_takes_the_task_as_a_flag_or_a_positional_but_not_both() {
+    // knowledge.start calls the field `task`, so an agent translating reaches for --task.
+    let example = Example::materialise("start-task-flag");
+    let flagged = example.run(&["start", "--task", "renderer boundary", "--paths", "src/**"]);
+    assert_eq!(flagged.code, 0, "{}", flagged.output());
+    // A flag's value is never taken for the task.
+    let positional = example.run(&["start", "--paths", "src/**", "renderer boundary"]);
+    assert_eq!(positional.code, 0, "{}", positional.output());
+    assert_eq!(flagged.stdout, positional.stdout);
+    let both = example.run(&["start", "--task", "a", "b"]);
+    assert_eq!(both.code, 2, "{}", both.output());
+    assert!(both.output().contains("AKR-C005"), "{}", both.output());
+}
+
+#[test]
+fn a_short_name_is_refused_with_the_key_it_ends() {
+    let example = Example::materialise("get-did-you-mean");
+    let unique = example.run(&["get", "term.renderer-boundary"]);
+    assert_eq!(unique.code, 3, "{}", unique.output());
+    assert!(unique.output().contains("AKR-L001"), "{}", unique.output());
+    assert!(
+        unique
+            .output()
+            .contains("did you mean @lege.term.renderer-boundary?"),
+        "{}",
+        unique.output()
+    );
+    // Ambiguous: still refused, never guessed, and every candidate named.
+    let ambiguous = example.run(&["get", "renderer-boundary"]);
+    assert_eq!(ambiguous.code, 3, "{}", ambiguous.output());
+    for key in [
+        "@lege.decision.renderer-boundary",
+        "@lege.term.renderer-boundary",
+    ] {
+        assert!(ambiguous.output().contains(key), "{}", ambiguous.output());
+    }
+}

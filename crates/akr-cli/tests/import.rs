@@ -447,6 +447,13 @@ fn active_work_hides_an_undispositioned_import_draft() {
         !view.contains("Wall times") && !view.contains("Peak RSS"),
         "undispositioned drafts must not appear in ACTIVE-WORK:\n{view}"
     );
+    let backlog =
+        std::fs::read_to_string(example.root().join("docs/generated/OUTSTANDING-WORK.md")).unwrap();
+    assert!(
+        !backlog.contains("Wall times") && !backlog.contains("Peak RSS"),
+        "{backlog}"
+    );
+    assert!(backlog.contains("audit-import"), "{backlog}");
     // The tracking record IS real work — "disposition every claim" — and stays visible.
     assert!(
         view.contains("audit-import"),
@@ -506,6 +513,9 @@ fn active_work_shows_a_draft_once_its_tracking_check_is_dispositioned() {
     assert_eq!(example.run(&["build"]).code, 0);
     let view = std::fs::read_to_string(example.root().join("docs/generated/ACTIVE-WORK.md"))
         .expect("ACTIVE-WORK.md");
+    let backlog =
+        std::fs::read_to_string(example.root().join("docs/generated/OUTSTANDING-WORK.md")).unwrap();
+    assert!(backlog.contains("Wall times"), "{backlog}");
     assert!(
         view.contains("Wall times"),
         "a dispositioned draft is the project's plan and must be visible again:\n{view}"

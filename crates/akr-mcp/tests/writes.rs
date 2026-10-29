@@ -34,6 +34,159 @@ fn absent_commit_is_rejected_before_propose_and_evidence_batch_write() {
     }
 }
 
+/// `knowledge.revise` runs the commit-presence gate `knowledge.propose` runs, before
+/// writing, and `akr revise --from` refuses the same input the same way. Before, the
+/// revision landed and only the next `akr check` reported AKR-G011.
+#[test]
+fn absent_commit_is_rejected_before_revise_writes_on_both_surfaces() {
+    let example = Example::materialise("mcp-revise-invalid-commit");
+    let absent = "1111111111111111111111111111111111111111";
+    let before = example.sources();
+
+    let (payload, is_error) = call(
+        &example,
+        "knowledge.revise",
+        &format!(
+            r#"{{"key":"sim.obs.projection-gaps","base_rev":1,"slots":{{"observed_at":"git:{absent}"}}}}"#
+        ),
+    );
+    assert!(is_error, "{payload:?}");
+    assert!(error_text(&payload).contains("AKR-G011"), "{payload:?}");
+    assert_eq!(before, example.sources(), "knowledge.revise wrote first");
+
+    example.write_file("revision.akr", &format!("observed_at git:{absent}\n"));
+    let before = example.sources();
+    let run = example.run(&[
+        "revise",
+        "sim.obs.projection-gaps",
+        "--from",
+        "revision.akr",
+    ]);
+    assert_eq!(run.code, 3, "{}", run.output());
+    assert!(run.output().contains("AKR-G011"), "{}", run.output());
+    assert_eq!(before, example.sources(), "akr revise wrote first");
+
+    // A revise that leaves an inherited commit alone is not refused for it (D-039), and a
+    // real commit is accepted on both surfaces.
+    let (payload, is_error) = call(
+        &example,
+        "knowledge.revise",
+        r#"{"key":"sim.obs.projection-gaps","base_rev":1,"title":"Projection coverage gaps, retitled"}"#,
+    );
+    assert!(!is_error, "{}", error_text(&payload));
+    example.write_file(
+        "revision.akr",
+        &format!("observed_at git:{}\n", example.commit(5)),
+    );
+    let run = example.run(&[
+        "revise",
+        "sim.obs.projection-gaps",
+        "--from",
+        "revision.akr",
+    ]);
+    assert_eq!(run.code, 0, "{}", run.output());
+}
+
+/// Runs `git` in the example and asserts it succeeded.
+fn git(example: &Example, args: &[&str]) {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(example.root())
+        .output()
+        .expect("git runs");
+    assert!(
+        output.status.success(),
+        "git {}: {}",
+        args.join(" "),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// The field report, on the surface it was hit on: `knowledge.revise` rewriting an
+/// acceptance block to re-cite evidence observed before the check's last redefinition.
+/// The uncommitted revision had no `last_change`, which read as "no git facts", so the
+/// evidence was taken at its word and the check showed as satisfied until the revision
+/// was committed. It now reads as not satisfied before the commit, as it does after.
+#[test]
+fn knowledge_revise_does_not_launder_evidence_older_than_the_definition() {
+    let example = Example::materialise("mcp-revise-uncommitted-recitation");
+    let key = "sys.work.recitation-probe";
+    let seal_and_commit = |message: &str| {
+        assert_eq!(example.run(&["build"]).code, 0);
+        git(&example, &["add", "-A"]);
+        git(&example, &["commit", "--quiet", "-m", message]);
+    };
+    let acceptance = |statement: &str, cites: &str| {
+        format!(
+            r#"[{{"id":"fixture","statement":"{statement}","method":"command","command":"cargo test"{cites}}}]"#
+        )
+    };
+    // Read through the MCP surface itself, so the verdict is the server's.
+    let verdict = || {
+        let (payload, is_error) = call(&example, "knowledge.get", &format!(r#"{{"ref":"{key}"}}"#));
+        assert!(!is_error, "{}", error_text(&payload));
+        let text = payload.to_pretty();
+        text.lines()
+            .find(|line| line.contains("\"verdict\""))
+            .unwrap_or_else(|| panic!("no verdict in {text}"))
+            .to_owned()
+    };
+
+    let (payload, is_error) = call(
+        &example,
+        "knowledge.propose",
+        &format!(
+            r#"{{"key":"{key}","kind":"work","title":"Probe","state":"active","slots":{{"intent":"Hold the fixture green."}},"acceptance":{}}}"#,
+            acceptance("The fixture passes.", "")
+        ),
+    );
+    assert!(!is_error, "{}", error_text(&payload));
+    seal_and_commit("probe work");
+    let (payload, is_error) = call(
+        &example,
+        "knowledge.evidence_add",
+        r#"{"key":"sys.evidence.e5","result":"pass","method":"command","command":"cargo test","summary":"The fixture passed."}"#,
+    );
+    assert!(!is_error, "{}", error_text(&payload));
+    seal_and_commit("e5");
+
+    let (payload, is_error) = call(
+        &example,
+        "knowledge.revise",
+        &format!(
+            r#"{{"key":"{key}","base_rev":1,"acceptance":{}}}"#,
+            acceptance("The fixture passes under the new harness.", "")
+        ),
+    );
+    assert!(!is_error, "{}", error_text(&payload));
+    seal_and_commit("redefine the check");
+
+    // Re-cite E5 and redefine again, uncommitted: the rev-8 shape of the report.
+    let (payload, is_error) = call(
+        &example,
+        "knowledge.revise",
+        &format!(
+            r#"{{"key":"{key}","base_rev":2,"acceptance":{}}}"#,
+            acceptance(
+                "The fixture passes on every platform.",
+                r#","verified_by":["@sys.evidence.e5/1"]"#
+            )
+        ),
+    );
+    assert!(!is_error, "{}", error_text(&payload));
+    let pending = verdict();
+    assert!(
+        pending.contains("predates the uncommitted change"),
+        "{pending}"
+    );
+    seal_and_commit("re-cite e5");
+    let committed = verdict();
+    assert!(
+        committed.contains("predates the last change"),
+        "{committed}"
+    );
+}
+
 #[test]
 fn configuration_edit_uses_the_cli_pipeline_and_is_available_over_mcp() {
     let example = Example::materialise("mcp-config");
@@ -819,6 +972,79 @@ fn supersede_accepts_an_already_proposed_different_key() {
 }
 
 #[test]
+fn supersede_creates_a_same_topic_decision_in_one_call() {
+    // The same papercut as the CLI's: knowledge.propose of the replacement is AKR-R002
+    // while both decisions are live on one topic, and knowledge.supersede used to refuse
+    // content outright.
+    let example = Example::materialise("mcp-supersede-create-decision");
+    let (detour, is_error) = call(
+        &example,
+        "knowledge.propose",
+        r#"{"key":"lege.decision.snapshot-interface","kind":"decision","title":"Snapshot interface","scope":["lege/**"],"topic":"renderer-boundary","slots":{"decision":"The viewer reads a snapshot interface."},"relations":{"resolves":["@lege.question.text-rendering-owner"]}}"#,
+    );
+    assert!(is_error, "{}", error_text(&detour));
+    assert!(
+        error_text(&detour).contains("AKR-R002"),
+        "{}",
+        error_text(&detour)
+    );
+
+    let before = example.sources();
+    let (payload, is_error) = call(
+        &example,
+        "knowledge.supersede",
+        r#"{"old_key":"lege.decision.renderer-boundary","new_key":"lege.decision.snapshot-interface","title":"Snapshot interface","scope":["lege/**"],"topic":"renderer-boundary","slots":{"decision":"The viewer reads a snapshot interface."},"relations":{"resolves":["@lege.question.text-rendering-owner"]}}"#,
+    );
+    assert!(!is_error, "{}", error_text(&payload));
+    assert_ne!(before, example.sources());
+    assert_eq!(
+        payload.get("key").and_then(Value::as_str),
+        Some("lege.decision.snapshot-interface")
+    );
+    assert_eq!(payload.get("rev").and_then(Value::as_integer), Some(1));
+    let source = example.read_file(".akr/records/lege/decisions.akr");
+    assert!(source.contains("record lege.decision.snapshot-interface/1 : decision"));
+    assert!(source.contains("supersedes [ @lege.decision.renderer-boundary/2 ]"));
+    assert!(
+        example
+            .read_file(".akr/records/lege/work.akr")
+            .contains("depends_on [ @lege.decision.snapshot-interface ]")
+    );
+
+    // Content against an existing key is refused, not silently ignored.
+    let (refused, is_error) = call(
+        &example,
+        "knowledge.supersede",
+        r#"{"old_key":"lege.decision.snapshot-interface","new_key":"lege.decision.renderer-boundary","title":"Back again"}"#,
+    );
+    assert!(is_error);
+    assert!(
+        error_text(&refused).contains("AKR-L041"),
+        "{}",
+        error_text(&refused)
+    );
+}
+
+#[test]
+fn supersede_replaces_verified_evidence_with_a_new_record_in_one_call() {
+    let example = Example::materialise("mcp-supersede-create-evidence");
+    let arguments = format!(
+        r#"{{"old_key":"lege.evidence.boundary-lint-pass","new_key":"lege.evidence.boundary-lint-rerun","title":"Boundary lint rerun","slots":{{"result":"pass","method":"command","observed_at":"git:{}","command":"cargo run -p tools -- boundary-lint --crate lege","summary":"Zero engine types, re-run against the corrected lint."}}}}"#,
+        example.commit(4)
+    );
+    let (payload, is_error) = call(&example, "knowledge.supersede", &arguments);
+    assert!(!is_error, "{}", error_text(&payload));
+    let source = example.read_file(".akr/records/lege/evidence.akr");
+    assert!(source.contains("record lege.evidence.boundary-lint-rerun/1 : evidence"));
+    assert!(source.contains("supersedes [ @lege.evidence.boundary-lint-pass/1 ]"));
+    assert!(source.contains("state superseded"), "{source}");
+    let rerun = &source[source
+        .find("record lege.evidence.boundary-lint-rerun/1")
+        .expect("successor")..];
+    assert!(rerun.contains("state verified"), "{rerun}");
+}
+
+#[test]
 fn complete_names_the_unsatisfied_checks_in_the_error_payload() {
     let example = Example::materialise("mcp-complete");
     let before = example.sources();
@@ -1241,5 +1467,36 @@ fn revise_keeps_the_normative_topic_it_was_not_asked_to_change() {
             .contains("topic cadence"),
         "revise dropped the topic: {}",
         example.read_file(".akr/records/sys/policies.akr")
+    );
+}
+
+#[test]
+fn a_claim_named_like_a_required_slot_says_where_the_text_goes() {
+    // Field report: a work record proposed with a claim anchored `intent` was refused for
+    // missing slots.intent, which read as the claim having been ignored.
+    let example = Example::materialise("mcp-claim-named-intent");
+    let before = example.sources();
+    let (payload, is_error) = call(
+        &example,
+        "knowledge.propose",
+        r#"{"key":"sys.work.claim-intent","kind":"work","title":"Claim named intent","claims":[{"anchor":"intent","text":"Do the thing."}]}"#,
+    );
+    assert!(is_error, "{payload:?}");
+    let text = error_text(&payload);
+    assert!(text.contains("slots.intent"), "{text}");
+    assert!(text.contains("not a slot"), "{text}");
+    assert_eq!(before, example.sources());
+}
+
+#[test]
+fn relation_schemas_name_their_target_kinds() {
+    // A decision proposer learned from two refusals that supported_by cannot point at a
+    // constraint; the schema now says which kinds it can.
+    let schema = akr_mcp::schema::input_schema("knowledge.propose")
+        .expect("propose has a schema")
+        .to_pretty();
+    assert!(
+        schema.contains("References to: observation, evidence, assessment (V-005)."),
+        "{schema}"
     );
 }

@@ -240,7 +240,7 @@ AT RISK (4)
   terminal                4
   out of scope           12
 
-23 records, 11 sections, ~1665 tokens. No prose truncated.
+23 records, 11 sections, ~5150 tokens. No prose truncated.
 
 $ echo $?
 0

@@ -5,6 +5,7 @@
 //! 3. **No context bundle changes when the ranker is disabled** — the direct executable
 //!    form of "search ranks, never authorises".
 //! 4. FTS5 absent degrades to `AKR-I022` on `akr search` and affects nothing else.
+//!    In a binary that has FTS5, a cache written without it is stale and is rebuilt.
 //!
 //! The third is the important one. The other three are about a cache behaving like a
 //! cache; that one is about the boundary the whole design rests on, and it is the only
@@ -242,23 +243,49 @@ fn a_high_scoring_record_outside_the_goals_reach_stays_out_of_the_bundle() {
 // Exit criterion 4 — FTS5 absent
 // -------------------------------------------------------------------------------------
 
+fn drop_full_text(example: &Example) {
+    let connection = rusqlite::Connection::open(cache(example)).expect("the cache opens");
+    connection
+        .execute("DROP TABLE records_fts", [])
+        .expect("the table goes");
+}
+
+fn has_full_text(example: &Example) -> bool {
+    let connection = rusqlite::Connection::open(cache(example)).expect("the cache opens");
+    connection
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE name = 'records_fts'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("query")
+        > 0
+}
+
+/// A cache written without FTS5 is stale to a binary that has it.
+///
+/// The cache is shared by every binary that opens the workspace — a
+/// `--no-default-features` build, a host linking `akr-core` without the feature — and its
+/// source-graph stamp is still current after such a build. A full-text binary that
+/// trusted the stamp answered `akr start` with `AKR-I022`, which means *this binary
+/// cannot search*, and the mandated planning read could not complete (field papercut,
+/// 2026-10). Dropping `records_fts` from a current cache leaves exactly the cache such a
+/// binary writes.
 #[test]
-fn a_cache_without_fts5_fails_search_and_affects_nothing_else() {
+fn a_cache_without_fts5_is_rebuilt_by_a_binary_with_it_and_affects_nothing_else() {
     let example = Example::materialise("search-no-fts5");
     assert_eq!(example.run(&["build"]).code, 0);
-    {
-        let connection = rusqlite::Connection::open(cache(&example)).expect("the cache opens");
-        connection
-            .execute("DROP TABLE records_fts", [])
-            .expect("the table goes");
-    }
+    drop_full_text(&example);
 
     let run = example.run(&["search", "projection"]);
-    assert_ne!(run.code, 0, "{}", run.output());
-    assert!(run.output().contains("AKR-I022"), "{}", run.output());
+    assert_eq!(run.code, 0, "{}", run.output());
+    assert!(!run.output().contains("AKR-I022"), "{}", run.output());
+    assert!(run.stdout.contains("result"), "{}", run.stdout);
+    assert!(has_full_text(&example), "the rebuild restored the table");
 
     // "Affects nothing else" is the half of the criterion that is easy to skip and is the
     // reason the criterion exists: a degraded ranker must not degrade the ledger.
+    drop_full_text(&example);
     for args in [
         vec!["check"],
         vec!["get", "@sys.milestone.m3-playable-day"],
@@ -269,6 +296,43 @@ fn a_cache_without_fts5_fails_search_and_affects_nothing_else() {
     ] {
         let other = example.run(&args);
         assert_eq!(other.code, 0, "akr {}: {}", args.join(" "), other.output());
+    }
+}
+
+/// The papercut's own command: `akr start` over a cache built without FTS5.
+#[test]
+fn start_over_a_cache_without_fts5_rebuilds_rather_than_failing_with_i022() {
+    let example = Example::materialise("start-no-fts5");
+    assert_eq!(example.run(&["build"]).code, 0);
+    drop_full_text(&example);
+
+    let run = example.run(&["start", "outstanding planning view"]);
+    assert_eq!(run.code, 0, "{}", run.output());
+    assert!(!run.output().contains("AKR-I022"), "{}", run.output());
+    assert!(has_full_text(&example), "the rebuild restored the table");
+}
+
+/// `--no-rebuild` forbids the write that would fix it, so the read fails — with the
+/// staleness code and the remedy, not with `AKR-I022`'s claim that the binary is the
+/// problem.
+#[test]
+fn no_rebuild_over_a_cache_without_fts5_names_the_fix() {
+    let example = Example::materialise("search-no-fts5-no-rebuild");
+    assert_eq!(example.run(&["build"]).code, 0);
+    drop_full_text(&example);
+
+    for args in [
+        vec!["--no-rebuild", "search", "projection"],
+        vec!["--no-rebuild", "start", "outstanding planning view"],
+    ] {
+        let run = example.run(&args);
+        assert_eq!(run.code, 3, "akr {}: {}", args.join(" "), run.output());
+        let output = run.output();
+        assert!(output.contains("AKR-I031"), "{output}");
+        assert!(!output.contains("AKR-I022"), "{output}");
+        assert!(output.contains("without FTS5"), "{output}");
+        assert!(output.contains("akr build"), "{output}");
+        assert!(!has_full_text(&example), "--no-rebuild wrote the cache");
     }
 }
 

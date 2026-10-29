@@ -586,7 +586,7 @@ fn verdict_name(verdict: &Verdict) -> &'static str {
         Verdict::NoEvidence => "no evidence",
         Verdict::Unresolved => "unresolved evidence",
         Verdict::Failing { .. } => "failing evidence",
-        Verdict::TooOld { .. } => "evidence too old",
+        Verdict::TooOld { .. } | Verdict::TooOldUncommitted { .. } => "evidence too old",
     }
 }
 

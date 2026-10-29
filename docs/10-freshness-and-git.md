@@ -72,6 +72,18 @@ history of the revision it was revised from) — unless the verified record carr
 `legacy` source, in which case D-028 waives the comparison entirely. The evidence's `observed_at` commit still has
 to exist in the repository; only the descendancy comparison is skipped.
 
+The definition compared is the one the **working tree** holds, because writes land there
+first and the gate is read before anything is committed. When some commit holds that same
+definition (at or below the revision, as above), the last change is found by the same walk.
+When none does — a new record, or a revision or in-place edit that changed the definition
+and has not been committed — the last change is the commit that will land it, which does not
+exist yet and from which no existing commit descends. Evidence observed at an existing commit
+therefore does not satisfy the check; evidence that is itself uncommitted does, because the
+two will share a commit (the prepared-change shape of
+[`16-change-protocol.md`](16-change-protocol.md) §8). The verdict before the commit is the
+verdict after it. An absent `last_change` keeps its older meaning — no git facts were
+supplied — and only then is passing evidence taken at its word.
+
 ### `watches`
 
 An array of repo-root-relative globs, on `observation`. It answers the question no

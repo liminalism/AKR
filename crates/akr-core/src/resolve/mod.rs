@@ -226,7 +226,7 @@ pub fn reference_sites(record: &Record) -> Vec<(RefSite, &Reference)> {
 
 /// Why an acceptance check is or is not satisfied (D-016).
 ///
-/// The four negative cases are distinguished because "not satisfied" without a reason is
+/// The negative cases are distinguished because "not satisfied" without a reason is
 /// a fact an agent cannot act on: `docs/09-context-assembly.md` §4 step 7 renders each of
 /// them differently, and `ROADMAP.md` renders them into its acceptance table.
 ///
@@ -263,6 +263,20 @@ pub enum Verdict {
         observed_at: Commit,
         /// The last content change it fails to descend from.
         last_change: Commit,
+    },
+    /// Passing evidence, observed at an existing commit, while the verified record's
+    /// definition has changed in the working tree since — so its last content change is
+    /// a commit that does not exist yet, and no existing commit descends from it.
+    ///
+    /// The case `TooOld` cannot name a commit for. Before it existed, the missing commit
+    /// read as missing git facts and the evidence was taken at its word: re-citing old
+    /// evidence in a fresh revision showed as satisfied until the revision was committed,
+    /// and as too old from then on.
+    TooOldUncommitted {
+        /// The evidence.
+        by: RevisionId,
+        /// Where it was observed.
+        observed_at: Commit,
     },
 }
 
@@ -342,6 +356,12 @@ pub fn acceptance_verdicts(ledger: &Ledger) -> Vec<CheckVerdict> {
                             last_change,
                         };
                     }
+                    (false, Some(observed_at), None) if facts.uncommitted => {
+                        verdict = Verdict::TooOldUncommitted {
+                            by: evidence.id.clone(),
+                            observed_at,
+                        };
+                    }
                     _ => {
                         verdict = Verdict::Unresolved;
                     }
@@ -373,10 +393,15 @@ pub struct CitationFacts {
     /// Whether `observed_at` descends from `last_change`.
     ///
     /// True when either is unknown, which is what V-020 does: absent git facts, evidence
-    /// is taken at its word rather than accused of being stale.
+    /// is taken at its word rather than accused of being stale. A record redefined in the
+    /// working tree is not unknown: its last change is newer than every commit.
     pub descends: bool,
-    /// Whether evidence and verified content have the same last-change commit.
+    /// Whether evidence and verified content have the same last-change commit, or are
+    /// both uncommitted and so will.
     pub co_committed: bool,
+    /// Whether the verified record's definition has changed in the working tree since the
+    /// last commit ([`LedgerFacts::uncommitted`](crate::model::LedgerFacts::uncommitted)).
+    pub uncommitted: bool,
 }
 
 /// Evaluates one citation of one check (D-016, D-028).
@@ -398,9 +423,17 @@ pub fn citation_facts(ledger: &Ledger, owner: &RevisionId, evidence: &Record) ->
     let is_legacy = ledger
         .get(owner)
         .is_some_and(|record| record.sources.iter().any(|s| s.kind == SourceKind::Legacy));
-    let co_committed = last_change.as_ref().is_some_and(|owner_change| {
-        ledger.facts.last_change.get(&evidence.id) == Some(owner_change)
-    });
+    // An owner redefined in the working tree has no last-change commit yet. That is not
+    // the absence of git facts, which takes evidence at its word: the change is newer than
+    // every commit, so only evidence that will land in the same commit can descend from it.
+    let uncommitted = ledger.facts.uncommitted.contains(owner);
+    let co_committed = if uncommitted {
+        ledger.facts.uncommitted.contains(&evidence.id)
+    } else {
+        last_change.as_ref().is_some_and(|owner_change| {
+            ledger.facts.last_change.get(&evidence.id) == Some(owner_change)
+        })
+    };
     let descends = if co_committed {
         // The record and its evidence landing together is the change-transaction shape:
         // the evidence necessarily names the prepared parent because this commit did not
@@ -413,6 +446,8 @@ pub fn citation_facts(ledger: &Ledger, owner: &RevisionId, evidence: &Record) ->
             }
             _ => true,
         }
+    } else if uncommitted {
+        observed_at.is_none()
     } else {
         match (&observed_at, &last_change) {
             (Some(observed), Some(changed)) => ledger
@@ -429,6 +464,7 @@ pub fn citation_facts(ledger: &Ledger, owner: &RevisionId, evidence: &Record) ->
         last_change,
         descends,
         co_committed,
+        uncommitted,
     }
 }
 

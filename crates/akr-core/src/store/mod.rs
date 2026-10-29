@@ -233,6 +233,31 @@ pub fn is_stale_against(path: &Path, expected: &str) -> bool {
     stored.is_some_and(|found| found != expected)
 }
 
+/// Whether the cache at `path` lacks the full-text table this binary would build.
+///
+/// A cache is shared by every binary that opens the workspace, and they need not agree on
+/// the `fts5` feature: a `--no-default-features` build, or a host that links `akr-core`
+/// without it, writes a cache with no `records_fts`. Its source-graph stamp is still
+/// current, so [`is_stale_against`] calls it fresh, and a full-text binary that trusted
+/// that verdict went on to answer `akr start` with `AKR-I022` — a code meaning *this
+/// binary* cannot search — when one rebuild would have answered it. [`build`] already
+/// treats the mismatch as not current; this is the same question asked by a reader that
+/// must decide whether to rebuild before it searches.
+///
+/// `false` in a binary without FTS5 (it has nothing better to build), for a missing cache
+/// (another check's business), and for an unreadable one (`AKR-I001` is raised by the
+/// read that follows).
+#[must_use]
+pub fn lacks_full_text(path: &Path) -> bool {
+    if !has_fts5() || !path.exists() {
+        return false;
+    }
+    let Ok(connection) = open_configured(path) else {
+        return false;
+    };
+    has_meta(&connection) && !stored_full_text(&connection)
+}
+
 /// The `source_graph_hash` that the on-disk cache is currently stamped with, if any.
 #[must_use]
 pub fn cached_source_graph_hash(path: &Path) -> Option<String> {

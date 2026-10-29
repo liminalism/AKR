@@ -12,6 +12,7 @@ pub enum TreeMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Panel {
     Dashboard,
+    Outstanding,
     Tree,
     Inspector,
     Relations,
@@ -28,16 +29,7 @@ pub struct Filter {
 
 impl Filter {
     pub fn matches(&self, record: &crate::model::Record) -> bool {
-        let query = self.query.trim().to_ascii_lowercase();
-        let text_match = query.is_empty()
-            || [
-                record.key.as_str(),
-                record.title.as_str(),
-                record.body.as_str(),
-            ]
-            .iter()
-            .any(|value| value.to_ascii_lowercase().contains(&query));
-        text_match
+        self.matches_query(record)
             && self.kind.as_ref().is_none_or(|kind| kind == &record.kind)
             && self
                 .state
@@ -47,6 +39,31 @@ impl Filter {
                 .freshness
                 .as_ref()
                 .is_none_or(|freshness| freshness == &record.freshness)
+    }
+
+    /// The Outstanding view: the record must be `proposed` no matter what
+    /// state preset is set; the text query and the kind/freshness facets
+    /// still apply.
+    pub fn matches_outstanding(&self, record: &crate::model::Record) -> bool {
+        record.state == "proposed"
+            && self.matches_query(record)
+            && self.kind.as_ref().is_none_or(|kind| kind == &record.kind)
+            && self
+                .freshness
+                .as_ref()
+                .is_none_or(|freshness| freshness == &record.freshness)
+    }
+
+    fn matches_query(&self, record: &crate::model::Record) -> bool {
+        let query = self.query.trim().to_ascii_lowercase();
+        query.is_empty()
+            || [
+                record.key.as_str(),
+                record.title.as_str(),
+                record.body.as_str(),
+            ]
+            .iter()
+            .any(|value| value.to_ascii_lowercase().contains(&query))
     }
 }
 
@@ -119,6 +136,13 @@ impl AppModel {
             self.panel = Panel::Inspector;
         }
     }
+    /// Changes the selection without leaving the current panel, for arrow-key
+    /// movement through a list.
+    pub fn select_quiet(&mut self, key: impl Into<String>) {
+        if let Some(tab) = self.active_tab.and_then(|index| self.tabs.get_mut(index)) {
+            tab.selected_key = Some(key.into());
+        }
+    }
     pub fn filtered_keys(&self) -> Vec<String> {
         self.snapshot()
             .map(|snapshot| {
@@ -130,6 +154,25 @@ impl AppModel {
                     .collect()
             })
             .unwrap_or_default()
+    }
+    /// Keys for the Outstanding panel: proposed records matching the text
+    /// query, sorted by key.
+    pub fn outstanding_keys(&self) -> Vec<String> {
+        self.snapshot()
+            .map(|snapshot| {
+                snapshot
+                    .sorted_records()
+                    .into_iter()
+                    .filter(|record| self.filter.matches_outstanding(record))
+                    .map(|record| record.key.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+    pub fn outstanding_count(&self) -> usize {
+        self.snapshot()
+            .map(|snapshot| snapshot.outstanding_count())
+            .unwrap_or(0)
     }
     pub fn cycle_tab(&mut self) {
         if self.tabs.is_empty() {
@@ -162,6 +205,20 @@ mod tests {
         assert_eq!(app.filtered_keys(), ["akr.work.review-snapshot"]);
         app.select("akr.work.review-snapshot");
         assert_eq!(app.selected().unwrap().title, "Review snapshot API");
+    }
+    #[test]
+    fn outstanding_keys_ignore_state_presets_but_keep_the_query() {
+        let mut app = AppModel::default();
+        let tab = app.add_tab("/demo".into());
+        app.set_snapshot(tab, demo_snapshot("/demo"));
+        assert_eq!(app.outstanding_count(), 3);
+        // A state preset for something else must not empty the Outstanding view.
+        app.filter.state = Some("active".into());
+        assert_eq!(app.outstanding_keys().len(), 3);
+        assert!(app.filtered_keys().is_empty());
+        // The text query still narrows it.
+        app.filter.query = "snapshot".into();
+        assert_eq!(app.outstanding_keys(), ["akr.work.review-snapshot"]);
     }
     #[test]
     fn tabs_keep_independent_snapshots() {

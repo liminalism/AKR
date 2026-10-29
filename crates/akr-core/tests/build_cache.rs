@@ -9,7 +9,9 @@
 mod support;
 
 use akr_core::cache::FactCache;
-use akr_core::git::{Repository, last_changes, last_changes_cached};
+use akr_core::git::{
+    Repository, definition_facts, definition_facts_cached, last_changes, last_changes_cached,
+};
 use akr_core::model::{Ledger, Project};
 use akr_core::syntax::{lower::lower_all, parse};
 use std::collections::BTreeMap;
@@ -41,6 +43,7 @@ fn entries(akr_dir: &Path) -> BTreeMap<String, String> {
 }
 
 /// A deterministic generator, so a failure names a reproducible step.
+#[derive(Clone)]
 struct Steps(u64);
 
 impl Steps {
@@ -214,6 +217,36 @@ fn assert_agree(repo: &TempRepo, files: &[String], warm: &Path, step: usize) {
     .expect("warm hit");
     assert_eq!(again, reference, "warm hit disagrees at step {step}");
 
+    // Read against a working tree that matches `HEAD`, the working-tree facts are the
+    // committed ones and nothing is uncommitted.
+    let working = working_texts(repo.root(), files);
+    let facts = definition_facts(
+        &Repository::open(repo.root()).expect("opens"),
+        &ledger,
+        &working,
+    )
+    .expect("reference working facts");
+    assert!(
+        facts.uncommitted.is_empty(),
+        "step {step}: {:?}",
+        facts.uncommitted
+    );
+    assert_eq!(
+        facts.last_change, reference,
+        "clean working facts at step {step}"
+    );
+    let cached_facts = definition_facts_cached(
+        &Repository::open(repo.root()).expect("opens"),
+        &ledger,
+        &working,
+        &FactCache::new(warm),
+    )
+    .expect("cached working facts");
+    assert_eq!(
+        cached_facts, facts,
+        "cached clean working facts at step {step}"
+    );
+
     let cold_entries = entries(&cold_dir);
     let warm_entries = entries(warm);
     for (name, text) in &cold_entries {
@@ -257,6 +290,95 @@ fn assert_agree(repo: &TempRepo, files: &[String], warm: &Path, step: usize) {
     }
 }
 
+/// Every ledger file's working-tree text, by path.
+fn working_texts(root: &Path, files: &[String]) -> BTreeMap<String, String> {
+    files
+        .iter()
+        .filter_map(|path| {
+            let text = std::fs::read_to_string(root.join(path)).ok()?;
+            Some((path.clone(), text))
+        })
+        .collect()
+}
+
+/// With uncommitted edits on top of `HEAD`, the cached working-tree facts equal the
+/// reference walk's, and a revision is uncommitted exactly when its definition is one no
+/// commit holds at or below it. The committed tree is restored afterwards.
+fn assert_working_agree(
+    repo: &TempRepo,
+    model: &Model,
+    warm: &Path,
+    steps: &mut Steps,
+    step: usize,
+) -> (usize, usize) {
+    let mut seen = (0, 0);
+    let mut edited = Model {
+        files: model.files.clone(),
+        records: model.records.clone(),
+        counter: model.counter,
+    };
+    for _ in 0..3 {
+        edited.mutate(steps);
+    }
+    edited.write(repo);
+    if let Some(ledger) = load(repo.root(), &edited.files) {
+        let working = working_texts(repo.root(), &edited.files);
+        let reference = definition_facts(
+            &Repository::open(repo.root()).expect("opens"),
+            &ledger,
+            &working,
+        )
+        .expect("reference working facts");
+        let cached = definition_facts_cached(
+            &Repository::open(repo.root()).expect("opens"),
+            &ledger,
+            &working,
+            &FactCache::new(warm),
+        )
+        .expect("cached working facts");
+        assert_eq!(cached, reference, "working facts disagree at step {step}");
+        seen = (reference.last_change.len(), reference.uncommitted.len());
+        let answered: usize = reference.last_change.len() + reference.uncommitted.len();
+        assert_eq!(answered, ledger.records().len(), "step {step}");
+        // A record the edits did not touch keeps its committed answer.
+        let committed = last_changes(&Repository::open(repo.root()).expect("opens"), &ledger)
+            .expect("committed walk");
+        for record in &model.records {
+            if edited.records.iter().any(|r| {
+                r.name == record.name
+                    && r.revision == record.revision
+                    && r.intent == record.intent
+                    && r.file == record.file
+            }) && edited
+                .records
+                .iter()
+                .filter(|r| r.name == record.name)
+                .count()
+                == model
+                    .records
+                    .iter()
+                    .filter(|r| r.name == record.name)
+                    .count()
+            {
+                let id = akr_core::model::RevisionId::new(
+                    akr_core::model::LogicalKey::parse(&format!("fx.work.{}", record.name))
+                        .expect("key"),
+                    record.revision,
+                );
+                if let Some(commit) = committed.get(&id) {
+                    assert_eq!(
+                        reference.last_change.get(&id),
+                        Some(commit),
+                        "untouched {id} moved at step {step}"
+                    );
+                }
+            }
+        }
+    }
+    model.write(repo);
+    seen
+}
+
 #[test]
 fn cached_last_changes_match_the_reference_walk_across_a_rough_history() {
     let mut repo = TempRepo::new("build-cache-history");
@@ -271,6 +393,7 @@ fn cached_last_changes_match_the_reference_walk_across_a_rough_history() {
     };
     let mut steps = Steps(0x00ac_e5eed);
     let mut rewind_to = String::new();
+    let mut working_seen = (0, 0);
 
     for step in 0..44 {
         match step {
@@ -331,9 +454,14 @@ fn cached_last_changes_match_the_reference_walk_across_a_rough_history() {
         // commits at once.
         if step % 3 != 1 {
             assert_agree(&repo, &model.files, &warm, step);
+            let seen = assert_working_agree(&repo, &model, &warm, &mut steps.clone(), step);
+            working_seen.0 += seen.0;
+            working_seen.1 += seen.1;
         }
     }
     assert_agree(&repo, &model.files, &warm, 99);
+    // Both answers occurred, so the working-tree comparison was not vacuous.
+    assert!(working_seen.0 > 0 && working_seen.1 > 0, "{working_seen:?}");
     let _ = std::fs::remove_dir_all(&warm);
 }
 

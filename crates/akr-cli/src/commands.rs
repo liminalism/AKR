@@ -1695,6 +1695,60 @@ fn view(session: &Session, name: &str) -> Result<Output, EnvError> {
     ])))
 }
 
+/// Resolves a reference the way `get`, `why-current` and `impact` take one.
+///
+/// A short name -- `foot-ray-geometry`, `constraint.foot-ray-geometry` -- is what a
+/// briefing or a person naturally writes, and it fails because a key is exact. It stays
+/// a failure: guessing would make a reference mean different records as the ledger
+/// grows. But the keys it is a whole-segment suffix of are the answer to the retry, so
+/// the error names them.
+fn resolve_reference<'a>(
+    ledger: &'a akr_core::model::Ledger,
+    reference: &str,
+) -> Result<&'a akr_core::model::Record, EnvError> {
+    let resolved = Reference::parse(reference)
+        .map_err(|e| format!("{reference}: {e}"))
+        .and_then(|parsed| {
+            ledger
+                .resolve(&parsed)
+                .ok()
+                .flatten()
+                .ok_or_else(|| format!("{reference} does not resolve to a record"))
+        });
+    resolved.map_err(|message| {
+        let error = EnvError::new("AKR-L001", message);
+        let short = reference.trim_start_matches('@');
+        let short = short.split('/').next().unwrap_or(short);
+        let suffix = format!(".{short}");
+        let mut keys: Vec<String> = ledger
+            .records()
+            .iter()
+            .map(|record| record.id.key.to_string())
+            .filter(|key| key.ends_with(&suffix))
+            .collect();
+        keys.sort();
+        keys.dedup();
+        match keys.as_slice() {
+            [] => error,
+            [only] => error.help(format!("did you mean @{only}?")),
+            many => {
+                let shown: Vec<String> = many.iter().take(8).map(|key| format!("@{key}")).collect();
+                let more = many.len().saturating_sub(shown.len());
+                error.help(format!(
+                    "it is the end of {} keys: {}{}",
+                    many.len(),
+                    shown.join(", "),
+                    if more > 0 {
+                        format!(", and {more} more")
+                    } else {
+                        String::new()
+                    }
+                ))
+            }
+        }
+    })
+}
+
 fn get(
     session: &Session,
     reference: &str,
@@ -1705,14 +1759,7 @@ fn get(
     use crate::args::Detail;
     let model = session.resolve();
     let ledger = &session.ledger;
-    let parsed = Reference::parse(reference)
-        .map_err(|e| EnvError::new("AKR-L001", format!("{reference}: {e}")))?;
-    let Some(record) = ledger.resolve(&parsed).ok().flatten() else {
-        return Err(EnvError::new(
-            "AKR-L001",
-            format!("{reference} does not resolve to a record"),
-        ));
-    };
+    let record = resolve_reference(ledger, reference)?;
 
     let queue = session.review_queue();
     let freshness = session.freshness(&queue);
@@ -2074,6 +2121,9 @@ fn verdict_line(verdict: &akr_core::resolve::Verdict) -> String {
             result.map_or("no result", akr_core::model::EvidenceResult::name)
         ),
         Verdict::TooOld { by, .. } => format!("not satisfied — @{by} predates the last change"),
+        Verdict::TooOldUncommitted { by, .. } => {
+            format!("not satisfied — @{by} predates the uncommitted change to this record")
+        }
     }
 }
 
@@ -2217,14 +2267,7 @@ fn freshness_json(freshness: &akr_core::render::Freshness, id: &RevisionId) -> V
 fn why_current(session: &Session, reference: &str) -> Result<Output, EnvError> {
     let model = session.resolve();
     let ledger = &session.ledger;
-    let parsed = Reference::parse(reference)
-        .map_err(|e| EnvError::new("AKR-L001", format!("{reference}: {e}")))?;
-    let Some(record) = ledger.resolve(&parsed).ok().flatten() else {
-        return Err(EnvError::new(
-            "AKR-L001",
-            format!("{reference} does not resolve to a record"),
-        ));
-    };
+    let record = resolve_reference(ledger, reference)?;
     let key = &record.id.key;
 
     let mut text = format!("{key} — head is revision {}\n", record.id.revision);
@@ -2288,14 +2331,7 @@ fn impact(
     }
 
     let reference = reference.expect("argument parsing requires one of the two");
-    let parsed = Reference::parse(reference)
-        .map_err(|e| EnvError::new("AKR-L001", format!("{reference}: {e}")))?;
-    let Some(record) = ledger.resolve(&parsed).ok().flatten() else {
-        return Err(EnvError::new(
-            "AKR-L001",
-            format!("{reference} does not resolve to a record"),
-        ));
-    };
+    let record = resolve_reference(ledger, reference)?;
     let queue = session.review_queue();
     let stale: BTreeSet<RevisionId> = [record.id.clone()].into();
     let dependents = akr_core::graph::propagate_staleness(ledger, &stale);
@@ -2903,10 +2939,26 @@ fn lock(session: &mut Session, check_only: bool) -> Result<Output, EnvError> {
 /// Exit 0 even with zero results. An empty result set is an answer.
 #[cfg(feature = "fts5")]
 fn ensure_search_index(session: &mut Session, path: &Path) -> Result<(), EnvError> {
-    let needs_rebuild =
-        !path.exists() || akr_core::store::is_stale_against(path, &session.source_graph());
+    // A cache written by a binary without FTS5 is stale to one with it, whatever its
+    // source-graph stamp says: searching it can only fail with `AKR-I022`, and that code
+    // belongs to a binary that cannot search, not to a cache that one rebuild would fix.
+    let without_full_text = akr_core::store::lacks_full_text(path);
+    let needs_rebuild = !path.exists()
+        || without_full_text
+        || akr_core::store::is_stale_against(path, &session.source_graph());
     if !needs_rebuild {
         return Ok(());
+    }
+    if session.global.no_rebuild && without_full_text {
+        return Err(EnvError::new(
+            "AKR-I031",
+            "index is stale and rebuilding is disabled: the cache was built without FTS5",
+        )
+        .help(
+            "the cache at .akr/cache/index.sqlite was written by a binary built without the \
+             `fts5` feature; run `akr build` (or drop `--no-rebuild`) with this binary to \
+             rebuild it with full-text search",
+        ));
     }
     if session.global.no_rebuild {
         return Err(EnvError::new(
@@ -3462,7 +3514,7 @@ fn context(
     request.paths = paths.to_vec();
     request.budget = budget;
 
-    let bundle = assemble_within_budget(&model, &freshness, &request).map_err(|error| {
+    let bundle = assemble(&model, &freshness, &request).map_err(|error| {
         let code = match &error {
             akr_core::context::ContextError::GoalUnresolved(_) => "AKR-X001",
             akr_core::context::ContextError::GoalTerminal { id, .. } => {
@@ -3495,89 +3547,36 @@ fn context(
     let result = render_json(&bundle, &model);
     let delivered = delivered_tokens(&text, &result);
     let result = match budget {
-        Some(requested) if requested > 0 => with_budget_accounting(result, requested, delivered),
+        Some(requested) if requested > 0 => {
+            with_budget_accounting(result, requested, delivered, &bundle)
+        }
         _ => result,
     };
     Ok(Output::text(text).with_result(result))
 }
 
-/// Assembles until the *rendered* bundle honours the budget, not just the records in it.
-///
-/// `--budget` and `budget_tokens` are stated in tokens of result, and the assembler counts
-/// tokens of selected content: titles and prose, not the rendered lines that carry them
-/// and not the JSON half MCP sends alongside. The two are far apart. A bundle assembled to
-/// 4,500 was delivered at close to three times that, and the agent that asked for it got a
-/// transport-truncated answer to a budget it had set deliberately small
-/// (`saveyourskin.papercut.knowledge-context-for-the-focused-mealtime-work`).
-///
-/// So render, measure both halves, and when the result overshoots, ask the assembler for
-/// proportionally less and look again. Three passes: the ratio between selected content and
-/// rendered bytes is stable enough that the second lands, and a bundle marginally over is a
-/// better answer than a loop with no end. The extra passes are pure assembly over a model
-/// that is already resolved — no git query is repeated.
-///
-/// This lives here rather than in the MCP adapter because both surfaces make the same
-/// promise and `docs/08-mcp.md` §1 requires them to keep it identically.
-fn assemble_within_budget(
-    model: &akr_core::resolve::ResolvedModel<'_>,
-    freshness: &akr_core::render::Freshness,
-    request: &Request,
-) -> Result<akr_core::context::Bundle, akr_core::context::ContextError> {
-    const PASSES: usize = 3;
-    let bundle = assemble(model, freshness, request)?;
-    let Some(requested) = request.budget.filter(|budget| *budget > 0) else {
-        return Ok(bundle);
-    };
-
-    let mut bundle = bundle;
-    let mut assembly = requested;
-    for _ in 0..PASSES {
-        let delivered = delivered_tokens(
-            &render_text(&bundle, model, freshness),
-            &render_json(&bundle, model),
-        );
-        if delivered <= requested {
-            break;
-        }
-        // Proportional, then floored at a tenth of the request: the mandatory sections put
-        // a hard bottom under every bundle, and driving the assembly budget to nothing
-        // trades an oversized bundle for an `AKR-X021` that answers a budget nobody asked
-        // for.
-        let next = (assembly.saturating_mul(requested) / delivered).max(requested / 10);
-        if next >= assembly {
-            break;
-        }
-        assembly = next;
-        let mut narrowed = request.clone();
-        narrowed.budget = Some(assembly);
-        match assemble(model, freshness, &narrowed) {
-            Ok(next_bundle) => bundle = next_bundle,
-            Err(_) => break,
-        }
-    }
-    Ok(bundle)
-}
-
 /// What a bundle costs to deliver: the rendered text and the JSON half, which MCP sends
-/// together and which the budget is stated in.
+/// together and which the budget is stated in. The estimator is the one assembly budgets
+/// with, so the figure reported is the figure that was enforced.
 fn delivered_tokens(text: &str, result: &Value) -> usize {
-    fn estimate(text: &str) -> usize {
-        text.split_whitespace()
-            .map(|word| 1 + word.chars().filter(char::is_ascii_punctuation).count() / 3)
-            .sum()
-    }
-    estimate(text) + estimate(&result.to_pretty())
+    akr_core::context::estimate_tokens(text)
+        + akr_core::context::estimate_tokens(&result.to_pretty())
 }
 
 /// States what the budget asked for and what it got, on every budgeted bundle.
 ///
-/// A bundle can be irreducible above the request: V-123 never truncates a relation, a
-/// state, a key or an acceptance verdict, so a goal with eighty-four normative records in
-/// scope costs what its structure costs however small the budget. Refusing to shrink
-/// further is right; doing it silently is how a caller ends up trusting a number the
-/// result never honoured. Both figures leave them the one action that works, which is
-/// narrowing `paths` rather than lowering the budget again.
-fn with_budget_accounting(result: Value, requested: usize, delivered: usize) -> Value {
+/// Assembly measures the rendered bundle and reduces it to fit (`docs/09-context-assembly.md`
+/// §6): prose first, then whole records withheld by name, the goal never. What it reduced
+/// is stated here with the way back to it, and a bundle that stays irreducible above the
+/// request — the goal, plan, acceptance, contradictions and staleness alone exceed it —
+/// says so too. Doing either silently is how a caller ends up trusting a number the result
+/// never honoured.
+fn with_budget_accounting(
+    result: Value,
+    requested: usize,
+    delivered: usize,
+    bundle: &akr_core::context::Bundle,
+) -> Value {
     let mut accounting = vec![
         (
             "requested_tokens",
@@ -3588,14 +3587,35 @@ fn with_budget_accounting(result: Value, requested: usize, delivered: usize) -> 
             Value::integer(i64::try_from(delivered).unwrap_or(i64::MAX)),
         ),
     ];
+    let withheld = bundle.withheld_count();
+    if withheld > 0 || !bundle.truncated.is_empty() {
+        accounting.push((
+            "withheld_records",
+            Value::integer(i64::try_from(withheld).unwrap_or(i64::MAX)),
+        ));
+        accounting.push((
+            "truncated_records",
+            Value::integer(i64::try_from(bundle.truncated.len()).unwrap_or(i64::MAX)),
+        ));
+        accounting.push((
+            "continue",
+            Value::string(
+                "records under `withheld` were left out whole and records under \
+                 `truncated_prose` lost their prose, to fit the budget; read any of them \
+                 with `knowledge.get` / `akr get <key>`, or narrow `paths` to keep them in \
+                 the bundle. The goal is never reduced.",
+            ),
+        ));
+    }
     if delivered > requested {
         accounting.push((
             "note",
             Value::string(
-                "the bundle's mandatory content — keys, states, relations, acceptance \
-                 verdicts, contradictions and staleness — is never truncated (V-123), so it \
-                 does not fit the requested budget. Narrow `paths` to the files this work \
-                 touches; lowering the budget cannot reduce it further.",
+                "the bundle's mandatory content — the goal, the plan of record, acceptance \
+                 verdicts, contradictions, staleness and the key of every selected record — \
+                 is never reduced (V-123), so it does not fit the requested budget. Narrow \
+                 `paths` to the files this work touches; lowering the budget cannot reduce \
+                 it further.",
             ),
         ));
     }

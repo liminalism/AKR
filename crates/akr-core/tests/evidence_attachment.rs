@@ -460,6 +460,56 @@ fn evidence_older_than_the_last_content_change_does_not_satisfy() {
 }
 
 #[test]
+fn committed_evidence_does_not_satisfy_an_uncommitted_redefinition() {
+    // A revision written but not committed has no last-change commit. That used to read
+    // as "no git facts" and take the evidence at its word, so re-citing evidence from
+    // before a redefinition read as satisfied until the commit, and too old after it.
+    let mut ledger = ledger_with_milestone();
+    ledger.facts.ancestry =
+        Ancestry::from_pairs(vec![(commit(C2), commit(C1)), (commit(C3), commit(C2))]);
+    ledger.facts.uncommitted.insert(id("sys.milestone.m1", 1));
+
+    let mut old = request("sys.evidence.squelch-audit");
+    old.observed_at = commit(C3);
+    let mut written =
+        add_and_attach(&ledger, &old, &key("sys.milestone.m1"), "squelch-audit").expect("attaches");
+    // The evidence itself is committed: it has a last change of its own.
+    written
+        .ledger
+        .facts
+        .last_change
+        .insert(id("sys.evidence.squelch-audit", 1), commit(C3));
+
+    let model = ResolvedModel::build(&written.ledger, &BuildInputs::default());
+    assert_eq!(
+        model.checks_of(&id("sys.milestone.m1", 1))[0].verdict,
+        Verdict::TooOldUncommitted {
+            by: id("sys.evidence.squelch-audit", 1),
+            observed_at: commit(C3),
+        }
+    );
+
+    // Uncommitted alongside the redefinition, the same evidence is the prepared-change
+    // shape: the two will land in one commit, and it satisfies the check.
+    written
+        .ledger
+        .facts
+        .last_change
+        .remove(&id("sys.evidence.squelch-audit", 1));
+    written
+        .ledger
+        .facts
+        .uncommitted
+        .insert(id("sys.evidence.squelch-audit", 1));
+    let model = ResolvedModel::build(&written.ledger, &BuildInputs::default());
+    assert!(
+        model.checks_of(&id("sys.milestone.m1", 1))[0]
+            .verdict
+            .is_satisfied()
+    );
+}
+
+#[test]
 fn co_committed_evidence_satisfies_the_prepared_change() {
     let mut ledger = ledger_with_milestone();
     ledger.facts.ancestry =

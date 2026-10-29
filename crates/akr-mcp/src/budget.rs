@@ -69,10 +69,14 @@ pub fn budget_for(tool: &str) -> Budget {
     }
 }
 
-/// The crude token estimate the context budget uses: words plus punctuation.
+/// The crude token estimate the per-tool ceilings use: words plus punctuation.
 ///
-/// The same estimator on both sides on purpose. Two estimators would disagree, and the
-/// one that mattered would be whichever was wrong.
+/// The context budget no longer uses it. A caller's `budget_tokens` is enforced by
+/// assembly with [`akr_core::context::estimate_tokens`] (four characters a token), because
+/// this count reads a dotted key or a JSON field as one token and undercounted a bundle
+/// about two and a half times; a budgeted call bypasses the ceilings here entirely, so the
+/// two never judge the same result. Moving these ceilings to the character estimate would
+/// make every one of them roughly that much stricter, and is its own decision.
 #[must_use]
 pub fn estimate_tokens(text: &str) -> usize {
     text.split_whitespace()
@@ -114,8 +118,17 @@ pub fn enforce(
     let hard_tokens = internally_budgeted.map_or(budget.hard_tokens, |_| usize::MAX);
     let rendered = structured.to_pretty();
     // Both halves, because both reach the model: a client that shows `content` and a
-    // client that parses `structuredContent` are each paying for their own half.
-    let estimated = estimate_tokens(text.unwrap_or_default()) + estimate_tokens(&rendered);
+    // client that parses `structuredContent` are each paying for their own half. The one
+    // exception is a structured `briefing` that IS the text (`knowledge.handoff_open`):
+    // it is there so a structured-only host can read the packet at all, and counting it
+    // twice would withhold exactly the packets long enough to need it.
+    let text_tokens = estimate_tokens(text.unwrap_or_default());
+    let duplicated = text.is_some() && structured.get("briefing").and_then(Value::as_str) == text;
+    let estimated = if duplicated {
+        text_tokens.max(estimate_tokens(&rendered))
+    } else {
+        text_tokens + estimate_tokens(&rendered)
+    };
 
     if estimated <= hard_tokens {
         return Enforced {

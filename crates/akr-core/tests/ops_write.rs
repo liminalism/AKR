@@ -549,6 +549,307 @@ fn supersede_with_links_an_already_proposed_replacement_key_atomically() {
     );
 }
 
+/// The replacement for the live `lege.decision.renderer-boundary/2`, on its topic.
+fn snapshot_decision() -> Record {
+    RecordBuilder::new("lege.decision.snapshot-interface", 1, Kind::Decision)
+        .title("The viewer reads a snapshot interface")
+        .path_scope("lege/**")
+        .topic("renderer-boundary")
+        .prose(
+            ContentSlot::Decision,
+            "The viewer reads a frame snapshot through a narrow read-only interface.",
+        )
+        .rel(Relation::Resolves, "@lege.question.text-rendering-owner")
+        .build()
+}
+
+#[test]
+fn supersede_into_creates_a_same_topic_decision_in_one_write() {
+    // The papercut: proposing the replacement first is AKR-R002 while both decisions are
+    // live, so the replacement had to be proposed without its topic, dependants repointed
+    // by hand, the old one superseded, and the topic added back with a revise.
+    let sandbox = Sandbox::save_your_skin();
+    let context = WriteContext::new(sandbox.akr_dir()).with_author("tester");
+    let old_key = key("lege.decision.renderer-boundary");
+    let new_key = key("lege.decision.snapshot-interface");
+
+    let detour = ops::propose(
+        &context,
+        &new_key,
+        Kind::Decision,
+        "",
+        Some(snapshot_decision()),
+    )
+    .expect_err("two live decisions on one topic");
+    assert!(
+        detour
+            .diagnostics
+            .iter()
+            .any(|d| d.code.as_str() == "AKR-R002"),
+        "{:?}",
+        detour.diagnostics
+    );
+
+    let before = sandbox.snapshot();
+    let applied = ops::supersede_into(
+        &context,
+        &old_key,
+        &new_key,
+        Some(ops::NewSuccessor {
+            title: String::new(),
+            template: Some(snapshot_decision()),
+        }),
+        &[],
+    )
+    .expect("one write creates the successor and retires the old head");
+    assert_ne!(before, sandbox.snapshot());
+
+    let ledger = sandbox.ledger();
+    let old = ledger.head(&old_key).expect("old head");
+    assert_eq!(old.id.revision, 2);
+    assert_eq!(old.state, State::Superseded);
+    let successor = ledger.head(&new_key).expect("successor");
+    assert_eq!(successor.id.revision, 1);
+    assert_eq!(successor.state, State::Proposed);
+    assert_eq!(successor.title, "The viewer reads a snapshot interface");
+    assert_eq!(
+        successor.topic.as_ref().map(Segment::as_str),
+        Some("renderer-boundary")
+    );
+    assert_eq!(successor.author.as_deref(), Some("tester"));
+    assert_eq!(
+        successor.targets(Relation::Supersedes),
+        &[Reference::pinned(old_key.clone(), 2)]
+    );
+
+    // The live work item that depended on the old decision follows it: it could not
+    // have been repointed first, because the successor did not exist.
+    let work = ledger
+        .head(&key("lege.work.extract-render-graph"))
+        .expect("dependant");
+    assert_eq!(
+        work.targets(Relation::DependsOn),
+        &[Reference::head(new_key.clone())]
+    );
+    assert!(
+        applied.notes.iter().any(|n| n.contains("repointed")),
+        "{:?}",
+        applied.notes
+    );
+    sandbox.assert_canonical();
+}
+
+/// A corrected observation for `lege.obs.frame-budget-headroom/1`.
+fn corrected_observation() -> Record {
+    RecordBuilder::new(
+        "lege.obs.frame-budget-headroom-corrected",
+        1,
+        Kind::Observation,
+    )
+    .title("Day-loop frames exceed the budget on the barn transition")
+    .path_scope("lege/src/render/**")
+    .prose(
+        ContentSlot::Statement,
+        "Re-measured: the barn interior transition reaches 17.2 ms, over the 16 ms budget.",
+    )
+    .enum_value(ContentSlot::Method, "instrumented")
+    .filled()
+    .build()
+}
+
+#[test]
+fn supersede_into_replaces_a_verified_observation_with_a_new_verified_one() {
+    // The papercut: an observation is `verified` from the moment it exists, so a
+    // proposed-first replacement was already sealed and `supersede --with` refused it
+    // (AKR-C032), recommending a sealed revise the project's workflow forbids.
+    let sandbox = Sandbox::save_your_skin();
+    let context = WriteContext::new(sandbox.akr_dir());
+    let old_key = key("lege.obs.frame-budget-headroom");
+    let new_key = key("lege.obs.frame-budget-headroom-corrected");
+
+    ops::supersede_into(
+        &context,
+        &old_key,
+        &new_key,
+        Some(ops::NewSuccessor {
+            title: String::new(),
+            template: Some(corrected_observation()),
+        }),
+        &[],
+    )
+    .expect("the correction lands in one write");
+
+    let ledger = sandbox.ledger();
+    assert_eq!(ledger.head(&old_key).expect("old").state, State::Superseded);
+    let successor = ledger.head(&new_key).expect("successor");
+    assert_eq!(
+        successor.state,
+        State::Verified,
+        "an empirical record starts verified"
+    );
+    assert_eq!(
+        successor.targets(Relation::Supersedes),
+        &[Reference::pinned(old_key, 1)]
+    );
+    sandbox.assert_canonical();
+}
+
+#[test]
+fn supersede_into_replaces_verified_evidence_and_its_citations_follow() {
+    let sandbox = Sandbox::save_your_skin();
+    let context = WriteContext::new(sandbox.akr_dir());
+    let old_key = key("lege.evidence.boundary-lint-pass");
+    let new_key = key("lege.evidence.boundary-lint-rerun");
+    let template = RecordBuilder::new("lege.evidence.boundary-lint-rerun", 1, Kind::Evidence)
+        .title("Boundary lint rerun reports no engine imports")
+        .prose(
+            ContentSlot::Summary,
+            "Zero engine types in public viewer signatures, re-run against the corrected lint.",
+        )
+        .filled()
+        .build();
+
+    let applied = ops::supersede_into(
+        &context,
+        &old_key,
+        &new_key,
+        Some(ops::NewSuccessor {
+            title: String::new(),
+            template: Some(template),
+        }),
+        &[],
+    )
+    .expect("the corrected evidence lands in one write");
+
+    let ledger = sandbox.ledger();
+    assert_eq!(ledger.head(&old_key).expect("old").state, State::Superseded);
+    assert_eq!(
+        ledger.head(&new_key).expect("successor").state,
+        State::Verified
+    );
+    // Live citations follow; `verified_by` on the live requirement is one.
+    let requirement = ledger
+        .head(&key("lege.req.no-engine-types-in-viewer"))
+        .expect("requirement");
+    assert_eq!(
+        requirement.targets(Relation::VerifiedBy),
+        &[Reference::head(new_key.clone())]
+    );
+    assert!(
+        applied.changes.iter().all(|c| c.id.key != old_key
+            || c.kind
+                == ops::ChangeKind::StateChanged {
+                    from: State::Verified,
+                    to: State::Superseded
+                }),
+        "the old record's body is untouched: {:?}",
+        applied.changes
+    );
+    sandbox.assert_canonical();
+}
+
+#[test]
+fn supersede_with_a_sealed_replacement_gives_it_a_revision_carrying_the_edge() {
+    // akr.work.supersede-onto-sealed-successor: the replacement already exists and is
+    // sealed. It used to be AKR-C032 with a two-command workaround; now revision 2 of the
+    // replacement carries the sealed body unchanged plus the edge, in one write.
+    let sandbox = Sandbox::save_your_skin();
+    let context = WriteContext::new(sandbox.akr_dir());
+    let old_key = key("lege.obs.frame-budget-headroom");
+    let new_key = key("lege.obs.frame-budget-headroom-corrected");
+    ops::propose(
+        &context,
+        &new_key,
+        Kind::Observation,
+        "",
+        Some(corrected_observation()),
+    )
+    .expect("the corrected observation is proposed, and is verified at once");
+    let sealed = sandbox.ledger().head(&new_key).expect("sealed").clone();
+    assert!(sealed.is_sealed());
+
+    let applied = ops::supersede_with(&context, &old_key, &new_key, &[])
+        .expect("supersession onto a sealed successor");
+    assert!(
+        applied.notes.iter().any(|n| n.contains("is sealed")),
+        "{:?}",
+        applied.notes
+    );
+
+    let ledger = sandbox.ledger();
+    assert_eq!(ledger.head(&old_key).expect("old").state, State::Superseded);
+    let successor = ledger.head(&new_key).expect("successor");
+    assert_eq!(successor.id.revision, 2);
+    assert_eq!(successor.state, State::Verified);
+    assert_eq!(
+        successor.content, sealed.content,
+        "the sealed prose is not edited"
+    );
+    assert_eq!(
+        successor.targets(Relation::Supersedes),
+        &[
+            Reference::pinned(old_key, 1),
+            Reference::pinned(new_key.clone(), 1)
+        ]
+    );
+    let first = ledger
+        .get(&akr_core::model::RevisionId::new(new_key, 1))
+        .expect("revision 1");
+    assert_eq!(first.state, State::Superseded);
+    assert_eq!(first.content, sealed.content);
+    sandbox.assert_canonical();
+}
+
+#[test]
+fn supersede_into_refuses_what_it_cannot_create_and_writes_nothing() {
+    let sandbox = Sandbox::save_your_skin();
+    let context = WriteContext::new(sandbox.akr_dir());
+    let before = sandbox.snapshot();
+    let old_key = key("lege.obs.frame-budget-headroom");
+    let successor = || {
+        Some(ops::NewSuccessor {
+            title: "Corrected".to_owned(),
+            template: None,
+        })
+    };
+
+    // A successor under a key that exists: creating it would be a second revision 1.
+    let refused = ops::supersede_into(
+        &context,
+        &old_key,
+        &key("lege.obs.viewer-imports-engine"),
+        successor(),
+        &[],
+    )
+    .expect_err("existing key");
+    assert_eq!(refused.code.as_str(), "AKR-L041");
+    // The same key: that is a revise.
+    let refused =
+        ops::supersede_into(&context, &old_key, &old_key, successor(), &[]).expect_err("same key");
+    assert_eq!(refused.code.as_str(), "AKR-L041");
+    assert!(refused.help.is_some_and(|h| h.contains("akr revise")));
+    // An absent replacement with nothing to create it from names the flags that would.
+    let refused =
+        ops::supersede_with(&context, &old_key, &key("lege.obs.absent"), &[]).expect_err("absent");
+    assert_eq!(refused.code.as_str(), "AKR-L001");
+    assert!(refused.help.is_some_and(|h| h.contains("--from")));
+    // Like with like.
+    let refused = ops::supersede_into(
+        &context,
+        &old_key,
+        &key("lege.decision.snapshot-interface"),
+        Some(ops::NewSuccessor {
+            title: String::new(),
+            template: Some(snapshot_decision()),
+        }),
+        &[],
+    )
+    .expect_err("kind mismatch");
+    assert_eq!(refused.code.as_str(), "AKR-L031");
+
+    assert_eq!(before, sandbox.snapshot());
+}
+
 // -------------------------------------------------------------------------------------
 // complete
 // -------------------------------------------------------------------------------------

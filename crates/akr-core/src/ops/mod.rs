@@ -685,67 +685,181 @@ pub fn supersede(
     )
 }
 
-/// Retires one key in favour of an already-proposed head under another key.
+/// A successor that `supersede` creates under a new key, in the same write that retires
+/// the old head.
 ///
-/// The replacement is proposed separately so its complete body, title and scope can be
-/// reviewed before this atomic graph transition. This operation adds the pinned
-/// `supersedes` edge, retires the old head, and applies planning dispositions together.
+/// The fields are [`propose`]'s: a title and an optional template body. The kind is the
+/// old record's — `supersedes` replaces like with like — so a template declaring another
+/// kind is refused (`AKR-L031`).
+#[derive(Debug, Clone, Default)]
+pub struct NewSuccessor {
+    /// The one-line title. Empty keeps the template's, or falls back to the key.
+    pub title: String,
+    /// The body, exactly as [`propose`] would take it.
+    pub template: Option<Record>,
+}
+
+/// Retires one key in favour of an existing head under another key.
+///
+/// The form of [`supersede_into`] that creates nothing: the replacement must already
+/// exist. See there for what happens to a proposed and to a sealed replacement.
 ///
 /// # Errors
-/// Refuses unless both keys resolve, the replacement is a distinct proposed head of the
-/// same kind, every unfinished planning child is dispositioned, and the result validates.
+/// As [`supersede_into`].
 pub fn supersede_with(
     context: &WriteContext,
     old_key: &LogicalKey,
     new_key: &LogicalKey,
     dispositions: &[DispositionRequest],
 ) -> WriteResult {
-    if old_key == new_key {
+    supersede_into(context, old_key, new_key, None, dispositions)
+}
+
+/// Retires one key in favour of a head under another key, in one validated write.
+///
+/// What happens to the replacement depends on what it is:
+///
+/// - **Absent, with a [`NewSuccessor`]**: revision 1 is created exactly as [`propose`]
+///   would create it, carrying the pinned `supersedes` edge. This is the form that makes
+///   a same-topic replacement and an empirical correction possible at all: proposing
+///   the replacement first is `AKR-R002` while both normative records are live, and an
+///   observation or evidence record is `verified` — sealed — from the moment it exists.
+///   Neither intermediate state is ever written here.
+/// - **Proposed**: edited in place to carry the edge (D-015 allows it).
+/// - **Sealed**: revision n+1 of the replacement is created with its body unchanged and
+///   the edge added, and n is retired — the same transition `akr revise` performs on a
+///   sealed head, so the sealed prose is never edited.
+///
+/// The old head moves to `superseded`. Live references to it that would otherwise fail
+/// V-006 or V-019 the moment it is retired — a pin of the retired revision, or a floating
+/// reference outside the historical relations — follow onto the successor in the same
+/// write, for the reason `akr revise` follows pins: they cannot be repointed first,
+/// because before this write the successor is not there to point at.
+///
+/// # Errors
+/// Refuses unless the old key resolves, the replacement is absent with a successor
+/// supplied or present without one, both are the same kind, every unfinished planning
+/// child is dispositioned, and the result validates.
+pub fn supersede_into(
+    context: &WriteContext,
+    old_key: &LogicalKey,
+    new_key: &LogicalKey,
+    successor: Option<NewSuccessor>,
+    dispositions: &[DispositionRequest],
+) -> WriteResult {
+    let operation = Operation::Supersede;
+    if old_key == new_key && successor.is_none() {
         return supersede(context, old_key, dispositions);
     }
 
-    let (mut staged, _write_lock) = load_locked(context, Operation::Supersede)?;
-    let old = head_of(&staged, old_key, Operation::Supersede)?.clone();
-    let mut replacement = head_of(&staged, new_key, Operation::Supersede)?.clone();
-
-    if old.kind != replacement.kind {
-        return Err(Refused::new(
-            Operation::Supersede,
+    let (mut staged, _write_lock) = load_locked(context, operation)?;
+    let old = head_of(&staged, old_key, operation)?.clone();
+    let exists = !staged.ledger.revisions_of(new_key).is_empty();
+    let like_with_like = |other: &RevisionId, kind: Kind| {
+        Refused::new(
+            operation,
             codes::L031,
             format!(
-                "{} is a {}, but replacement {} is a {}; `supersedes` replaces like with like",
-                old.id, old.kind, replacement.id, replacement.kind
-            ),
-        ));
-    }
-    if replacement.state != State::Proposed {
-        // The proposed-replacement requirement is deliberate: this operation is an atomic
-        // graph transition, and the replacement's body, title and scope are meant to be
-        // reviewable before it happens. What was missing is that the sealed case is the
-        // COMMON case — every observation starts `verified` — and the obvious workaround,
-        // `akr revise <old> --state superseded`, retires the old head while recording no
-        // edge to the successor at all. Following it loses the relationship silently. So
-        // the refusal now names the sequence that works.
-        return Err(Refused::new(
-            Operation::Supersede,
-            cli::C032,
-            format!(
-                "replacement {} is sealed ({}); this operation edits the replacement in place, which D-015 allows only while it is `proposed`",
-                replacement.id, replacement.state
+                "{} is a {}, but replacement {other} is a {kind}; `supersedes` replaces like with like",
+                old.id, old.kind
             ),
         )
-        .with_help(format!(
-            "revise the replacement to carry the edge, then retire the old head:\n  akr revise {new_key} --from <body with `supersedes [ @{old_key} ]`>\n  akr revise {old_key} --state superseded\nthe second command on its own retires {old_key} and records no edge to the successor"
-        )));
-    }
+    };
 
+    let mut edits: Vec<(PathBuf, Record, ChangeKind)> = Vec::new();
+    let mut notes = Vec::new();
+    // The revision of the replacement this write retires, when it is sealed.
+    let mut retired_replacement: Option<Record> = None;
+    let mut created_file: Option<PathBuf> = None;
+    let mut record = match (successor, exists) {
+        (Some(_), true) => {
+            let help = if old_key == new_key {
+                format!("to change {old_key} itself, run `akr revise {old_key} --from <body>`")
+            } else {
+                format!(
+                    "drop --from/--title (MCP: `title` and content) to supersede onto the existing {new_key}, or change it first with `akr revise {new_key}`"
+                )
+            };
+            return Err(Refused::new(
+                operation,
+                codes::L041,
+                format!(
+                    "{new_key} already exists; a successor created by supersede needs a new key"
+                ),
+            )
+            .with_help(help));
+        }
+        (None, false) => {
+            return Err(Refused::new(
+                operation,
+                codes::L001,
+                format!("replacement {new_key} does not exist"),
+            )
+            .with_help(format!(
+                "create it in this write: `akr supersede {old_key} --with {new_key} --from <body>` or `--title <text>` (MCP: `title` and content fields)"
+            )));
+        }
+        (Some(successor), false) => {
+            let id = RevisionId::new(new_key.clone(), 1);
+            let mut record = successor.template.unwrap_or_else(|| blank(&id, old.kind));
+            if record.kind != old.kind {
+                return Err(like_with_like(&id, record.kind));
+            }
+            record.id = id;
+            if !successor.title.is_empty() {
+                record.title = successor.title;
+            }
+            if record.title.is_empty() {
+                record.title = new_key.to_string();
+            }
+            if !old.kind.class().states().contains(&record.state) {
+                record.state = old.kind.class().initial()[0];
+            }
+            record.dispositions.clear();
+            created_file = Some(conventional_file(new_key, old.kind));
+            record
+        }
+        (None, true) => {
+            let replacement = head_of(&staged, new_key, operation)?.clone();
+            if replacement.kind != old.kind {
+                return Err(like_with_like(&replacement.id, replacement.kind));
+            }
+            if replacement.state == State::Proposed {
+                replacement
+            } else {
+                // A sealed replacement cannot be edited to carry the edge (D-015), and the
+                // refusal this used to be named a two-command sequence whose second half,
+                // on its own, retires the old head with no edge at all. Give it a new
+                // revision instead: the body is the sealed one, unchanged, and n is
+                // retired exactly as `akr revise` on a sealed head retires it.
+                let mut record = replacement.clone();
+                record.id = RevisionId::new(new_key.clone(), replacement.id.revision + 1);
+                record.relations.insert(
+                    Relation::Supersedes,
+                    supersedes_targets(&staged, new_key, replacement.id.revision),
+                );
+                notes.push(format!(
+                    "{} is sealed ({}); {} carries its body unchanged with the new edge",
+                    replacement.id, replacement.state, record.id
+                ));
+                retired_replacement = Some(replacement);
+                record
+            }
+        }
+    };
+
+    // D-017: every unfinished child of every revision this write retires.
+    let mut retiring = vec![old.id.clone()];
+    retiring.extend(retired_replacement.iter().map(|r| r.id.clone()));
     if old.kind.class() == Class::Planning {
-        let children = unfinished_children(&staged, &old.id);
         let supplied: BTreeSet<&LogicalKey> = dispositions.iter().map(|d| &d.child).collect();
-        let missing: Vec<UnfinishedChild> = children
-            .into_iter()
+        let mut missing: Vec<UnfinishedChild> = retiring
+            .iter()
+            .flat_map(|id| unfinished_children(&staged, id))
             .filter(|child| !supplied.contains(&child.key))
             .collect();
+        missing.sort_by(|a, b| a.key.cmp(&b.key));
+        missing.dedup_by(|a, b| a.key == b.key);
         if !missing.is_empty() {
             let help = missing
                 .iter()
@@ -753,9 +867,22 @@ pub fn supersede_with(
                 .collect::<Vec<_>>()
                 .join("\n");
             let mut refusal = Refused::new(
-                Operation::Supersede,
+                operation,
                 codes::R014,
-                format!("{} unfinished children of {}", missing.len(), old.id),
+                format!(
+                    "{} unfinished {} of {}",
+                    missing.len(),
+                    if missing.len() == 1 {
+                        "child"
+                    } else {
+                        "children"
+                    },
+                    retiring
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(" and ")
+                ),
             )
             .with_help(format!("rerun with, for example,\n{help}"));
             refusal.unfinished_children = missing;
@@ -763,35 +890,144 @@ pub fn supersede_with(
         }
     }
 
-    replacement.relations.insert(
-        Relation::Supersedes,
-        vec![Reference::pinned(old_key.clone(), old.id.revision)],
-    );
-    replacement.dispositions = dispositions.iter().map(build_disposition).collect();
-    replacement
-        .dispositions
-        .sort_by(|a, b| a.target.cmp(&b.target));
+    let mut supersedes = record.targets(Relation::Supersedes).to_vec();
+    supersedes.push(Reference::pinned(old_key.clone(), old.id.revision));
+    supersedes.sort();
+    supersedes.dedup();
+    record.relations.insert(Relation::Supersedes, supersedes);
+    if !dispositions.is_empty() || retired_replacement.is_none() {
+        record.dispositions = dispositions.iter().map(build_disposition).collect();
+        record.dispositions.sort_by(|a, b| a.target.cmp(&b.target));
+    } else {
+        // As in `retire_and_replace`: carry only the entries that still describe a
+        // child of one of this successor's predecessors.
+        let children: BTreeSet<LogicalKey> = retiring
+            .iter()
+            .flat_map(|id| unfinished_children(&staged, id))
+            .map(|child| child.key)
+            .collect();
+        record
+            .dispositions
+            .retain(|entry| children.contains(&entry.target.key));
+    }
+    if record.author.is_none() {
+        record.author.clone_from(&context.author);
+    }
+
+    let successor_rev = record.id.revision;
+    if let Some(file) = created_file {
+        edits.push((file, record.clone(), ChangeKind::Created));
+    } else if let Some(previous) = &retired_replacement {
+        let file = file_of(&staged, &previous.id, operation)?;
+        let mut retired = previous.clone();
+        retired.state = State::Superseded;
+        edits.push((
+            file.clone(),
+            retired,
+            ChangeKind::StateChanged {
+                from: previous.state,
+                to: State::Superseded,
+            },
+        ));
+        edits.push((file, record.clone(), ChangeKind::Created));
+    } else {
+        let file = file_of(&staged, &record.id, operation)?;
+        edits.push((file, record.clone(), ChangeKind::Edited));
+    }
 
     let mut retired = old.clone();
     retired.state = State::Superseded;
-    let old_file = file_of(&staged, &old.id, Operation::Supersede)?;
-    let new_file = file_of(&staged, &replacement.id, Operation::Supersede)?;
-    apply_many(
-        context,
-        &mut staged,
-        Operation::Supersede,
-        &[
-            (
-                old_file,
-                retired,
-                ChangeKind::StateChanged {
-                    from: old.state,
-                    to: State::Superseded,
-                },
-            ),
-            (new_file, replacement, ChangeKind::Edited),
-        ],
-    )
+    edits.push((
+        file_of(&staged, &old.id, operation)?,
+        retired,
+        ChangeKind::StateChanged {
+            from: old.state,
+            to: State::Superseded,
+        },
+    ));
+
+    // Live references that the retirement would otherwise break follow onto the
+    // successor. Historical relations and pinned `part_of` stay where they are: the first
+    // cite a revision for good, and V-017 dispositions name the children of that revision.
+    let previous_rev = retired_replacement.as_ref().map(|r| r.id.revision);
+    let mut followed = Vec::new();
+    for candidate in staged.ledger.records() {
+        if candidate.id.key == *old_key || candidate.id.key == *new_key || !candidate.is_live() {
+            continue;
+        }
+        let mut updated = candidate.clone();
+        let mut changed = updated.rewrite_non_historical_pins(|reference| {
+            follow_successor(reference, &old.id, new_key, previous_rev, successor_rev)
+        });
+        if let Some(parents) = updated.relations.get_mut(&Relation::PartOf) {
+            for parent in parents.iter_mut() {
+                if parent.key == *old_key && parent.revision.is_none() {
+                    parent.key = new_key.clone();
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            for targets in updated.relations.values_mut() {
+                let mut seen = BTreeSet::new();
+                targets.retain(|target| seen.insert(target.clone()));
+            }
+            let referrer_file = file_of(&staged, &updated.id, operation)?;
+            followed.push(updated.id.clone());
+            edits.push((referrer_file, updated, ChangeKind::Edited));
+        }
+    }
+    followed.sort();
+    edits.sort_by(|left, right| left.1.id.cmp(&right.1.id));
+
+    let mut applied = apply_many(context, &mut staged, operation, &edits)?;
+    if !followed.is_empty() {
+        notes.push(format!(
+            "repointed live references of {} onto {} in {}",
+            old.id,
+            record.id,
+            followed
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    for (index, note) in notes.into_iter().enumerate() {
+        applied.notes.insert(index, note);
+    }
+    Ok(applied)
+}
+
+/// Whether `reference` names a revision a cross-key supersede retires, and so follows
+/// onto the successor: the old head, pinned or floating, or — when the replacement was
+/// sealed — a pin of the replacement revision the successor retires.
+fn follow_successor(
+    reference: &mut Reference,
+    old: &RevisionId,
+    new_key: &LogicalKey,
+    previous_rev: Option<u32>,
+    successor_rev: u32,
+) -> bool {
+    if reference.key == old.key
+        && reference
+            .revision
+            .is_none_or(|revision| revision == old.revision)
+    {
+        reference.key = new_key.clone();
+        if reference.revision.is_some() {
+            reference.revision = Some(successor_rev);
+        }
+        true
+    } else if reference.key == *new_key
+        && previous_rev.is_some()
+        && reference.revision == previous_rev
+    {
+        reference.revision = Some(successor_rev);
+        true
+    } else {
+        false
+    }
 }
 
 /// Moves a `milestone` or `work` record to `completed`.

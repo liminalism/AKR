@@ -325,6 +325,10 @@ fn render_verdict(verdict: &Verdict) -> String {
             short(observed_at.as_str()),
             short(last_change.as_str())
         ),
+        Verdict::TooOldUncommitted { by, observed_at } => format!(
+            "not satisfied — `@{by}` observed at `{}`, which does not descend from the uncommitted change",
+            short(observed_at.as_str())
+        ),
     }
 }
 

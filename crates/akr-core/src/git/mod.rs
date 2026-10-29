@@ -2462,6 +2462,260 @@ pub fn last_changes_cached(
     ledger: &crate::model::Ledger,
     cache: &crate::cache::FactCache,
 ) -> Result<BTreeMap<crate::model::RevisionId, Commit>, GitError> {
+    let by_file = keys_by_file(ledger);
+    // One `log --follow` per file is unavoidable — it is what says whether the cached
+    // history still holds — but the files are independent, so ask about them together.
+    repository.prime_commits_touching(by_file.keys().map(String::as_str));
+
+    let mut out = BTreeMap::new();
+    for (path, keys) in by_file {
+        if let Some(timeline) = timeline_of(repository, &path, cache)? {
+            out.extend(timeline.answers(&keys));
+        }
+    }
+    Ok(out)
+}
+
+/// One ledger file's [`Timeline`], from the fact cache when its history still holds, or
+/// `None` when no commit has touched the file.
+fn timeline_of(
+    repository: &Repository,
+    path: &str,
+    cache: &crate::cache::FactCache,
+) -> Result<Option<Timeline>, GitError> {
+    let commits = repository.commits_touching(path)?;
+    if commits.is_empty() {
+        return Ok(None);
+    }
+    let name = format!(
+        "history-{}",
+        &crate::hash::sha256_hex(path.as_bytes())[..16]
+    );
+    let cached = cache
+        .read(&name)
+        .and_then(|text| Timeline::parse(&text, path));
+    let timeline = match cached {
+        Some(timeline) if timeline.commits == commits => timeline,
+        Some(timeline) if timeline.is_suffix_of(&commits) => {
+            let added = &commits[..commits.len() - timeline.commits.len()];
+            let versions = repository.file_versions(added, path)?;
+            let maps = added
+                .iter()
+                .map(|commit| version_maps(versions.get(commit)))
+                .collect::<Vec<_>>();
+            let timeline = timeline.extended(path, commits.clone(), &maps);
+            cache.write(&name, &timeline.render());
+            timeline
+        }
+        _ => {
+            let versions = repository.file_versions(&commits, path)?;
+            let maps = commits
+                .iter()
+                .map(|commit| version_maps(versions.get(commit)))
+                .collect::<Vec<_>>();
+            let timeline = Timeline::build(path, commits.clone(), &maps);
+            cache.write(&name, &timeline.render());
+            timeline
+        }
+    };
+    Ok(Some(timeline))
+}
+
+/// `last_change` as the working tree defines each record, rather than as `HEAD` does
+/// (D-016, D-029, D-038).
+///
+/// [`last_changes`] answers for the revisions committed at `HEAD`, hashed as `HEAD` holds
+/// them. A write lands in the working tree first, and the descendant gate is consulted
+/// before anything is committed — by the next `akr get`, the context bundle, the roadmap
+/// and `akr check`. A revision `HEAD` does not hold yet had no answer at all, and an
+/// absent `last_change` is how the gate spells "no git facts, take the evidence at its
+/// word"; so `knowledge.revise` re-citing evidence that predates the record's last
+/// redefinition read as satisfied until the revision was committed, and as too old after.
+/// An in-place edit was the mirror image: answered with the definition `HEAD` holds, not
+/// the one the working tree does.
+///
+/// Here each working-tree revision is compared with the definitions the file's history
+/// holds, exactly as the committed walk compares them, starting at `HEAD`:
+///
+/// - When `HEAD` holds the same definition at or below the revision, the walk continues
+///   into history and the answer is the commit where that definition was introduced — so
+///   a revision that only re-cites evidence or moves state keeps its predecessor's
+///   `last_change`, which is D-038's promise, before the commit as well as after it.
+/// - Otherwise the record's last definitional change is the working tree itself: it is in
+///   [`DefinitionFacts::uncommitted`], and no evidence observed at an existing commit can
+///   descend from it. That is the verdict the same ledger receives once it is committed.
+///
+/// `working` maps each ledger file's repo-relative path to the text the working tree
+/// holds. A record whose file is absent from it is answered as `HEAD` defines it.
+///
+/// # Errors
+/// Propagates any git failure that makes the question unanswerable.
+pub fn definition_facts_cached(
+    repository: &Repository,
+    ledger: &crate::model::Ledger,
+    working: &BTreeMap<String, String>,
+    cache: &crate::cache::FactCache,
+) -> Result<DefinitionFacts, GitError> {
+    let by_file = keys_by_file(ledger);
+    repository.prime_commits_touching(by_file.keys().map(String::as_str));
+    let mut out = DefinitionFacts::default();
+    for (path, keys) in by_file {
+        let timeline = timeline_of(repository, &path, cache)?;
+        let Some(text) = working.get(&path) else {
+            if let Some(timeline) = &timeline {
+                out.last_change.extend(timeline.answers(&keys));
+            }
+            continue;
+        };
+        let mut at_head = None;
+        for (key, map) in working_maps(text, &keys) {
+            for (revision, hash) in map {
+                let id = crate::model::RevisionId::new(key.clone(), revision);
+                match timeline
+                    .as_ref()
+                    .and_then(|timeline| timeline.introduced(&key, revision, &hash))
+                {
+                    Some(commit) => {
+                        out.last_change.insert(id, commit);
+                    }
+                    None => {
+                        if at_head.is_none() {
+                            at_head = Some(head_maps(repository, &path, &keys)?);
+                        }
+                        let maps = at_head.as_ref().expect("filled just above");
+                        if !held_at(maps, &key, revision, &hash) {
+                            out.uncommitted.insert(id);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// The working-tree definitions `HEAD` already holds, for the case the file timeline
+/// cannot place.
+///
+/// The timeline is built from `log --follow`, which omits merge commits, so a definition
+/// a merge introduced — a conflict resolved in the merge itself — is held at `HEAD` by no
+/// commit the timeline knows. That is committed history the walk cannot date, and it
+/// keeps the old answer, no `last_change`. Only a definition `HEAD` does not hold is the
+/// working tree's own. Read lazily: the common case never asks.
+fn head_maps(
+    repository: &Repository,
+    path: &str,
+    keys: &BTreeSet<&crate::model::LogicalKey>,
+) -> Result<BTreeMap<crate::model::LogicalKey, KeyMap>, GitError> {
+    let Ok(head) = repository.head() else {
+        return Ok(BTreeMap::new());
+    };
+    Ok(repository
+        .file_at(&head, path)?
+        .map(|text| working_maps(&text, keys))
+        .unwrap_or_default())
+}
+
+/// Whether `maps` holds `hash` as the definition at or below `revision` of `key`.
+fn held_at(
+    maps: &BTreeMap<crate::model::LogicalKey, KeyMap>,
+    key: &crate::model::LogicalKey,
+    revision: u32,
+    hash: &crate::model::ContentHash,
+) -> bool {
+    maps.get(key)
+        .and_then(|map| map.range(..=revision).next_back())
+        .is_some_and(|(_, held)| held == hash)
+}
+
+/// [`definition_facts_cached`] by the uncached walk, the reference it is held to.
+///
+/// # Errors
+/// Propagates any git failure that makes the question unanswerable.
+pub fn definition_facts(
+    repository: &Repository,
+    ledger: &crate::model::Ledger,
+    working: &BTreeMap<String, String>,
+) -> Result<DefinitionFacts, GitError> {
+    let mut out = DefinitionFacts::default();
+    for (path, keys) in keys_by_file(ledger) {
+        let Some(text) = working.get(&path) else {
+            let committed = last_changes(repository, ledger)?;
+            out.last_change.extend(
+                committed
+                    .into_iter()
+                    .filter(|(id, _)| keys.contains(&id.key)),
+            );
+            continue;
+        };
+        let commits = repository.commits_touching(&path)?;
+        let versions = repository.file_versions(&commits, &path)?;
+        let wanted: BTreeSet<crate::model::RevisionId> = working_maps(text, &keys)
+            .into_iter()
+            .flat_map(|(key, map)| {
+                map.into_keys()
+                    .map(move |revision| crate::model::RevisionId::new(key.clone(), revision))
+            })
+            .collect();
+        let current = definitional_hashes(text, &wanted);
+        let older: Vec<BTreeMap<crate::model::RevisionId, crate::model::ContentHash>> = commits
+            .iter()
+            .map(|commit| {
+                versions
+                    .get(commit)
+                    .and_then(Option::as_deref)
+                    .map_or_else(BTreeMap::new, |text| definitional_hashes(text, &wanted))
+            })
+            .collect();
+        let at_head = match repository.head() {
+            Ok(head) => repository
+                .file_at(&head, &path)?
+                .map(|text| definitional_hashes(&text, &wanted))
+                .unwrap_or_default(),
+            Err(_) => BTreeMap::new(),
+        };
+        for id in wanted {
+            let hash = current.get(&id);
+            let mut answer = None;
+            for (commit, version) in commits.iter().zip(&older) {
+                if hash.is_some() && definition_at_or_below(version, &id).as_ref() == hash {
+                    answer = Some(commit.clone());
+                } else {
+                    break;
+                }
+            }
+            match answer {
+                Some(commit) => {
+                    out.last_change.insert(id, commit);
+                }
+                // Held at `HEAD` but not by any commit `log --follow` lists: a merge
+                // introduced it. See [`head_maps`].
+                None if hash.is_some()
+                    && definition_at_or_below(&at_head, &id).as_ref() == hash => {}
+                None => {
+                    out.uncommitted.insert(id);
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// What [`definition_facts`] and [`definition_facts_cached`] say about each working-tree
+/// revision: the commit its definition was introduced at, or that it has none yet.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DefinitionFacts {
+    /// The last definitional change of every revision whose definition some commit holds.
+    pub last_change: BTreeMap<crate::model::RevisionId, Commit>,
+    /// The revisions whose definition no commit holds: their last definitional change is
+    /// the working tree itself.
+    pub uncommitted: BTreeSet<crate::model::RevisionId>,
+}
+
+/// The ledger's logical keys, grouped by the file that holds them.
+fn keys_by_file(
+    ledger: &crate::model::Ledger,
+) -> BTreeMap<String, BTreeSet<&crate::model::LogicalKey>> {
     let mut by_file: BTreeMap<String, BTreeSet<&crate::model::LogicalKey>> = BTreeMap::new();
     for record in crate::graph::sorted_records(ledger) {
         let Some(path) = &record.file else { continue };
@@ -2470,50 +2724,21 @@ pub fn last_changes_cached(
             .or_default()
             .insert(&record.id.key);
     }
-    // One `log --follow` per file is unavoidable — it is what says whether the cached
-    // history still holds — but the files are independent, so ask about them together.
-    repository.prime_commits_touching(by_file.keys().map(String::as_str));
+    by_file
+}
 
-    let mut out = BTreeMap::new();
-    for (path, keys) in by_file {
-        let commits = repository.commits_touching(&path)?;
-        if commits.is_empty() {
-            continue;
-        }
-        let name = format!(
-            "history-{}",
-            &crate::hash::sha256_hex(path.as_bytes())[..16]
-        );
-        let cached = cache
-            .read(&name)
-            .and_then(|text| Timeline::parse(&text, &path));
-        let timeline = match cached {
-            Some(timeline) if timeline.commits == commits => timeline,
-            Some(timeline) if timeline.is_suffix_of(&commits) => {
-                let added = &commits[..commits.len() - timeline.commits.len()];
-                let versions = repository.file_versions(added, &path)?;
-                let maps = added
-                    .iter()
-                    .map(|commit| version_maps(versions.get(commit)))
-                    .collect::<Vec<_>>();
-                let timeline = timeline.extended(&path, commits.clone(), &maps);
-                cache.write(&name, &timeline.render());
-                timeline
-            }
-            _ => {
-                let versions = repository.file_versions(&commits, &path)?;
-                let maps = commits
-                    .iter()
-                    .map(|commit| version_maps(versions.get(commit)))
-                    .collect::<Vec<_>>();
-                let timeline = Timeline::build(&path, commits.clone(), &maps);
-                cache.write(&name, &timeline.render());
-                timeline
-            }
-        };
-        out.extend(timeline.answers(&keys));
-    }
-    Ok(out)
+/// The working tree's revision -> definitional-hash map for each wanted key.
+fn working_maps(
+    text: &str,
+    keys: &BTreeSet<&crate::model::LogicalKey>,
+) -> BTreeMap<crate::model::LogicalKey, KeyMap> {
+    version_maps(Some(&Some(text.to_owned())))
+        .into_iter()
+        .filter_map(|(key, map)| {
+            let key = crate::model::LogicalKey::parse(&key).ok()?;
+            keys.contains(&key).then_some((key, map))
+        })
+        .collect()
 }
 
 /// One logical key's revision -> definitional-hash map in one file version.
@@ -2638,22 +2863,54 @@ impl Timeline {
             };
             for (revision, hash) in newest {
                 let id = crate::model::RevisionId::new((*key).clone(), *revision);
-                // The walk keeps going while each older version still holds this
-                // definition at or below this revision; a run is one stretch of
-                // identical versions, so it either holds throughout or not at all.
-                let mut last = 0;
-                for (position, (_, map)) in runs.iter().enumerate() {
-                    if run_definition_at_or_below(map, *revision) != Some(hash) {
-                        break;
-                    }
-                    last = runs
-                        .get(position + 1)
-                        .map_or(self.commits.len() - 1, |(next, _)| next - 1);
-                }
+                // The newest version holds its own definition, so the walk always
+                // reaches at least index 0.
+                let last = self.walk(runs, *revision, hash).unwrap_or(0);
                 out.insert(id, self.commits[last].clone());
             }
         }
         out
+    }
+
+    /// The oldest commit from which `key` has held `hash` at or below `revision` without
+    /// a break, walking back from the newest version; `None` when the newest version does
+    /// not hold it at all, so the definition is newer than every commit.
+    fn introduced(
+        &self,
+        key: &crate::model::LogicalKey,
+        revision: u32,
+        hash: &crate::model::ContentHash,
+    ) -> Option<Commit> {
+        let runs = self.keys.get(&key.to_string())?;
+        if runs.first().is_none_or(|(start, _)| *start != 0) {
+            return None;
+        }
+        self.walk(runs, revision, hash)
+            .map(|last| self.commits[last].clone())
+    }
+
+    /// The index of the oldest version in the unbroken stretch, from the newest, that
+    /// holds `hash` at or below `revision`.
+    fn walk(
+        &self,
+        runs: &[(usize, KeyMap)],
+        revision: u32,
+        hash: &crate::model::ContentHash,
+    ) -> Option<usize> {
+        // The walk keeps going while each older version still holds this definition at or
+        // below this revision; a run is one stretch of identical versions, so it either
+        // holds throughout or not at all.
+        let mut last = None;
+        for (position, (_, map)) in runs.iter().enumerate() {
+            if run_definition_at_or_below(map, revision) != Some(hash) {
+                break;
+            }
+            last = Some(
+                runs.get(position + 1)
+                    .map_or(self.commits.len() - 1, |(next, _)| next - 1),
+            );
+        }
+        last
     }
 
     /// The cache entry's body.

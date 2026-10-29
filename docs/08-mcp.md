@@ -291,7 +291,7 @@ the ledger's own syntax reads that, not a file.
   "format": "json" }                         // "json" | "text"
 // output
 {
-  "goal": { "key": "…", "rev": 1, "title": "…" },
+  "goal": { "key": "…", "rev": 1, "title": "…", "body": "…" },
   "commit": "e806b3f54a2d7091c5e13b8a26f490dc7b135e64",
   "sections": [
     { "id": "goal",            "records": [ … ] },
@@ -308,7 +308,9 @@ the ledger's own syntax reads that, not a file.
   ],
   "excluded": { "superseded": 2, "archived": 1, "terminal": 4,
                 "out_of_scope": 12 },
-  "truncated_prose": [], "estimated_tokens": 5120
+  "truncated_prose": [],
+  "withheld": [],          // [{ "section": "normative", "records": ["key/rev", …] }]
+  "estimated_tokens": 5150
 }
 ```
 
@@ -321,24 +323,28 @@ instead of withholding all content.
 
 The budget is a promise about the **delivered** result — both halves, the readable text
 and the structured metadata that repeats it — and not about the records the assembler
-selected, which is a much smaller number. Assembly measures what it rendered and, when the
-result overshoots, re-assembles to proportionally less, up to three passes. It used to
-measure only the content it had chosen, and a caller who asked for 4,500 tokens received
-close to three times that and a transport-truncated bundle. Because the promise belongs to
-the bundle rather than to this transport, `akr context --budget` keeps it identically
-(§1).
+selected, which is a much smaller number. Tokens are estimated at four characters each,
+the rule hosts apply when they decide a result is too large to keep. Assembly measures
+what it rendered and, when the result overshoots, truncates prose and then withholds whole
+records — named by key in the section they came from — in the fixed order of
+`09-context-assembly.md` §6, never the goal. A words-plus-punctuation estimate used before
+counted a dotted key as one token; a caller who asked for 12,000 tokens received a
+210,000-character bundle that the host refused, with the goal reduced to its title in the
+structured half. Because the promise belongs to the bundle rather than to this transport,
+`akr context --budget` keeps it identically (§1).
 
 Every budgeted bundle reports what happened, as `budget`:
 
 ```json
-"budget": { "requested_tokens": 4500, "delivered_tokens": 4887,
-            "note": "the bundle's mandatory content … is never truncated (V-123) …" }
+"budget": { "requested_tokens": 12000, "delivered_tokens": 11894,
+            "withheld_records": 180, "truncated_records": 16,
+            "continue": "records under `withheld` were left out whole … read any of them with `knowledge.get` …" }
 ```
 
-The `note` appears only when the request could not be met. Mandatory content — keys,
-states, relations, acceptance verdicts, contradictions, staleness — is never truncated, so
-a goal with a large normative scope costs what its structure costs however small the
-budget. Narrowing `paths` reduces it; lowering `budget_tokens` again does not.
+`withheld_records`, `truncated_records` and `continue` appear when anything was reduced.
+A `note` appears when the request could not be met even so: the goal, plan, acceptance
+verdicts, contradictions, staleness warnings and the key of every selected record are
+never reduced, and narrowing `paths` is what shrinks them.
 
 Sections appear in the fixed order above, always, whether or not they are empty. The
 membership of each is computed by the algorithm of `09-context-assembly.md` §4 — a pure
@@ -508,18 +514,35 @@ value outright.
 ### `knowledge.supersede`
 
 ```jsonc
-// First propose the complete replacement under its accurate key, then:
+// Replace a plan with an existing proposed one:
 { "old_key": "sys.work.m3-plan", "new_key": "sys.work.day-loop-plan",
   "dispositions": [
     { "child": "@sys.work.m3-lighting-pass", "outcome": "carried_forward",
       "into": "@sys.track.lighting", "note": "Lighting is standing work." },
     { "child": "@sys.work.m3-audio-pass", "outcome": "intentionally_dropped" }
   ] }
+
+// Replace a live decision with a new one on the same topic, created in this call:
+{ "old_key": "lege.decision.renderer-boundary",
+  "new_key": "lege.decision.snapshot-interface",
+  "title": "The viewer reads a snapshot interface",
+  "scope": ["lege/**"], "topic": "renderer-boundary",
+  "slots": { "decision": "The viewer reads a frame snapshot through a narrow interface." },
+  "relations": { "resolves": ["@lege.question.text-rendering-owner"] } }
 ```
 
-For different keys, `new_key` must resolve to a proposed record of the same kind and
-`slots` is omitted: its content belongs in the preceding `knowledge.propose`. The
-supersession call atomically adds the pinned edge and retires the old head.
+This is `akr supersede` (`docs/07-cli.md` §6), and the rows of its table apply as
+written. A `new_key` that does not exist is **created in the same write** from the
+`knowledge.propose` content fields — `title`, `state`, `scope`, `topic`, `slots`,
+`claims`, `relations`, `acceptance`, `sources`, `acknowledged`, and `kind`, which defaults
+to and must equal the old record's. That is the only way to replace a decision on the
+same topic (proposing it first is `AKR-R002`) or a verified observation or evidence
+record (proposing it first makes it sealed, and the old call refused it with
+`AKR-C032`). An existing proposed `new_key` gains the edge in place; an existing sealed one
+gains revision *n+1* with its body unchanged. Content against an existing key is
+`AKR-L041`, and an absent key with no content is `AKR-L001`. Live references to the old
+head follow onto the successor in the same write and are named in `notes`, as is a
+`watches` glob that matches nothing at the resolved commit (`AKR-G022`).
 
 If any unfinished `part_of` child lacks a disposition, the tool fails with `AKR-R014` and
 **lists the children in the error payload**, so the agent's next message can name them.
@@ -716,7 +739,7 @@ Consult at task and state-transition boundaries, not after every edit.
 
 Because inherited facts are cheap and inherited conclusions are not.
 
-Open a session first (`akr handoff session begin --request "<the user's words, verbatim>"`); each packet inherits it, so no child re-derives the project. `akr handoff --help` has the rest.
+Open a session first (`akr handoff session begin --request-file <file>`, the file holding the user's words verbatim); each packet inherits it, so no child re-derives the project. Your shell runs backticks and `$(...)` inside double quotes before akr starts, so text that names a command goes in a file: `--task-file`, or every field as JSON via `--spec <file>`. `akr handoff --help` has the rest.
 
 ### Scratch
 

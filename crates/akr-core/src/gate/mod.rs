@@ -25,6 +25,174 @@ use std::collections::BTreeSet;
 /// V-105 belongs to the freshness/git rule range (`docs/10-freshness-and-git.md` §9).
 const V105: RuleId = RuleId(105);
 
+/// A recorded command split the way a POSIX shell quotes it.
+///
+/// Both checks used to read the raw string, which made every quoted argument look like
+/// shell: `jq -e '{a: any(.x[]; ...)} | .a'` was reported as a pipeline (the `|` is jq's)
+/// and its object keys were lifted out as `cargo test` filters. A field report on 0.5.2
+/// raised both warnings on one valid jq gate. So the command is lexed once, and each
+/// check reads only the view that can actually carry what it looks for.
+#[derive(Debug, Default)]
+struct ShellText {
+    /// Text outside any quotes, with each quoted segment replaced by a space and each
+    /// backslash-escaped character neutralised. Only this can hold a real `|`, `||` or
+    /// `;`, so the exit-status checks read only this.
+    unquoted: String,
+    /// What the test-filter scanner reads: the unquoted text verbatim (backslashes kept,
+    /// so a Windows path still splits where it always did), plus every quoted segment
+    /// that is a single word. `cargo test 'a_leaf'` still names `a_leaf`; a quoted
+    /// program containing whitespace — a jq filter, an inline Python one-liner — is an
+    /// argument to some other tool, not a filter, and contributes nothing.
+    filterable: String,
+    /// Quoted scripts handed to a POSIX shell with `-c`, lexed in their own right.
+    /// `bash -c 'cargo test a_leaf | tail'` must not hide its pipe or its filter just by
+    /// being wrapped.
+    scripts: Vec<ShellText>,
+}
+
+/// How deeply `sh -c "bash -c '...'"` nesting is followed. Deeper than this is not a
+/// recorded gate anyone wrote by hand, and the bound keeps the lexer's work bounded.
+const MAX_SCRIPT_DEPTH: usize = 4;
+
+/// The shells whose `-c` argument is a script with POSIX pipeline semantics.
+const POSIX_SHELLS: &[&str] = &["sh", "bash", "zsh", "dash", "ksh", "mksh", "ash"];
+
+fn lex_shell(command: &str) -> ShellText {
+    lex_shell_at(command, 0)
+}
+
+fn lex_shell_at(command: &str, depth: usize) -> ShellText {
+    let chars: Vec<char> = command.chars().collect();
+    let mut out = ShellText::default();
+    // The words of the current simple command, so a quoted argument can be recognised
+    // as the script of `bash -c`. Reset at every unquoted control operator.
+    let mut words: Vec<String> = Vec::new();
+    let mut word = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        match c {
+            '\\' => {
+                out.filterable.push('\\');
+                i += 1;
+                if let Some(&next) = chars.get(i) {
+                    out.filterable.push(next);
+                    // Backslash-newline is a line continuation and contributes nothing.
+                    if next != '\n' {
+                        out.unquoted
+                            .push(if next.is_alphanumeric() { next } else { '_' });
+                        word.push(next);
+                    }
+                    i += 1;
+                }
+            }
+            '\'' | '"' => match quoted_segment(&chars, i) {
+                Some((content, end)) => {
+                    if depth < MAX_SCRIPT_DEPTH && word.is_empty() && hands_script_to_shell(&words)
+                    {
+                        out.scripts.push(lex_shell_at(&content, depth + 1));
+                        out.filterable.push(' ');
+                    } else if content.chars().any(char::is_whitespace) {
+                        out.filterable.push(' ');
+                    } else {
+                        out.filterable.push_str(&content);
+                    }
+                    out.unquoted.push(' ');
+                    // Even `''` is a word, so the word buffer must not stay empty.
+                    word.push(c);
+                    word.push_str(&content);
+                    i = end;
+                }
+                // An unterminated quote makes the shell refuse the command. Reading the
+                // quote as a literal keeps every later operator visible, so a stray
+                // apostrophe can never hide a pipe.
+                None => {
+                    out.unquoted.push('_');
+                    out.filterable.push(c);
+                    word.push(c);
+                    i += 1;
+                }
+            },
+            _ => {
+                out.unquoted.push(c);
+                out.filterable.push(c);
+                if c.is_whitespace() || matches!(c, '|' | ';' | '&' | '(' | ')') {
+                    if !word.is_empty() {
+                        words.push(std::mem::take(&mut word));
+                    }
+                    if !c.is_whitespace() || c == '\n' {
+                        words.clear();
+                    }
+                } else {
+                    word.push(c);
+                }
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+/// The content of the quoted segment opening at `chars[open]`, and the index just past
+/// its closing quote; `None` if it never closes.
+///
+/// Single quotes are literal to the next `'`. Double quotes honour the four POSIX
+/// escapes (`\"`, `\\`, `\$`, `` \` ``) and line continuation; any other backslash is
+/// kept as written.
+fn quoted_segment(chars: &[char], open: usize) -> Option<(String, usize)> {
+    let quote = chars[open];
+    let mut content = String::new();
+    let mut i = open + 1;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == quote {
+            return Some((content, i + 1));
+        }
+        if quote == '"' && c == '\\' {
+            match chars.get(i + 1) {
+                Some(&next @ ('"' | '\\' | '$' | '`')) => {
+                    content.push(next);
+                    i += 2;
+                    continue;
+                }
+                Some('\n') => {
+                    i += 2;
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        content.push(c);
+        i += 1;
+    }
+    None
+}
+
+/// Whether the next word is the script argument of a POSIX shell: the previous word is
+/// a short-flag cluster carrying `c` (`-c`, `-lc`, `-ec`) and the simple command it
+/// belongs to runs one of [`POSIX_SHELLS`] (`bash`, `/bin/sh`, `env FOO=1 bash -o
+/// pipefail`).
+///
+/// Restricted to shells on purpose. `python -c '...'` and `node -e '...'` take a program
+/// in another language, where `|` is not a pipe; treating those as shell would recreate
+/// the false positive this lexer exists to remove.
+fn hands_script_to_shell(words: &[String]) -> bool {
+    let Some((flag, before)) = words.split_last() else {
+        return false;
+    };
+    let is_c_flag = flag.strip_prefix('-').is_some_and(|cluster| {
+        !cluster.is_empty()
+            && cluster.chars().all(|c| c.is_ascii_alphabetic())
+            && cluster.contains('c')
+    });
+    is_c_flag
+        && before.iter().any(|w| {
+            let base = w.rsplit(['/', '\\']).next().unwrap_or(w);
+            let base = base.strip_suffix(".exe").unwrap_or(base);
+            POSIX_SHELLS.contains(&base)
+        })
+}
+
 /// Identifier-shaped tokens in a command, keeping only those that could name a test.
 ///
 /// A token is `[a-z0-9_]+` optionally joined by `::`. Only tokens carrying a `_` or a
@@ -32,9 +200,25 @@ const V105: RuleId = RuleId(105);
 /// `cargo`, `test` and `workspace`. A command with no such token — `just check`,
 /// `cargo check --workspace` — yields nothing and is never reported, so a gate that runs
 /// a whole suite stays silent instead of becoming noise on every ledger.
+///
+/// Tokens come from [`ShellText::filterable`], so a multi-word quoted argument (a jq
+/// program, say) is never mined for filters, while a `bash -c` script is.
 fn command_tokens(command: &str) -> Vec<String> {
-    let chars: Vec<char> = command.chars().collect();
+    fn collect(shell: &ShellText, out: &mut Vec<String>) {
+        scan_tokens(&shell.filterable, out);
+        for script in &shell.scripts {
+            collect(script, out);
+        }
+    }
     let mut out = Vec::new();
+    collect(&lex_shell(command), &mut out);
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn scan_tokens(text: &str, out: &mut Vec<String>) {
+    let chars: Vec<char> = text.chars().collect();
     let mut i = 0;
     while i < chars.len() {
         if is_token_char(chars[i]) {
@@ -57,9 +241,6 @@ fn command_tokens(command: &str) -> Vec<String> {
             i += 1;
         }
     }
-    out.sort();
-    out.dedup();
-    out
 }
 
 fn is_token_char(c: char) -> bool {
@@ -118,24 +299,38 @@ fn token_parts(token: &str) -> Vec<&str> {
 /// The HTML-escaped operators come from records authored through a web or MCP surface
 /// that escaped the text: pasted verbatim, `&amp;&amp;` is not `&&` and the command fails
 /// rather than lying, but either way the slot does not hold what it claims to.
+///
+/// Every operator check reads [`ShellText::unquoted`], recursing into `bash -c` scripts:
+/// a `|` inside a quoted jq program or `awk` script is that tool's syntax, not a pipe.
+/// `pipefail` / `PIPESTATUS` anywhere in the raw command still exempts a pipeline, since
+/// `bash -c 'set -o pipefail; ...'` spells it inside the quotes.
 fn untrustworthy_status(command: &str) -> Option<&'static str> {
-    if command.contains("&amp;&amp;") || command.contains("&amp;") {
+    let pipe_aware = command.contains("pipefail") || command.contains("PIPESTATUS");
+    status_defect(&lex_shell(command), pipe_aware)
+}
+
+fn status_defect(shell: &ShellText, pipe_aware: bool) -> Option<&'static str> {
+    let text = &shell.unquoted;
+    if text.contains("&amp;") {
         return Some(
             "it contains an HTML-escaped `&amp;`, so it is not the command it appears to be",
         );
     }
     // `||` is an alternation, not a pipe; check it first so it is not miscounted.
-    let piped = command.replace("||", "").contains('|');
-    if piped && !command.contains("pipefail") && !command.contains("PIPESTATUS") {
+    let piped = text.replace("||", "").contains('|');
+    if piped && !pipe_aware {
         return Some(
             "a shell pipeline reports only its LAST stage's status, so this exits 0 \
              whenever the final command succeeds regardless of what the real one did",
         );
     }
-    if command.contains("|| true") || command.trim_end().ends_with("; true") {
+    if text.contains("|| true") || text.trim_end().ends_with("; true") {
         return Some("it forces success, so its exit status cannot fail");
     }
-    None
+    shell
+        .scripts
+        .iter()
+        .find_map(|script| status_defect(script, pipe_aware))
 }
 
 /// One recorded command, and enough to point a reader at it.
@@ -278,7 +473,88 @@ pub fn phantom_command_tokens(
 
 #[cfg(test)]
 mod tests {
-    use super::{command_tokens, is_test_filter_token, token_parts};
+    use super::{command_tokens, is_test_filter_token, token_parts, untrustworthy_status};
+
+    /// The field report verbatim: an evidence `command` slot from a sister project, on
+    /// AKR 0.5.2. Its `|`s are jq's and its snake_case words are jq object keys; it drew
+    /// both G024 and G025.
+    const FIELD_JQ: &str = "jq -e '{course2_completed: any(.trace[]; contains(\"step: Course(2)\") and contains(\"state: Done\")), clearing_completed: any(.trace[]; contains(\"step: Clearing\") and contains(\"state: Done\")), finalized_course2_rows: ([.courses[] | select(contains(\"course: 2,\"))] | length)} | ., (.course2_completed and .clearing_completed)' SYSEngine/review-evidence/x/dinner-1735-attends.json";
+
+    #[test]
+    fn a_quoted_jq_program_is_neither_a_pipeline_nor_a_test_filter() {
+        assert_eq!(untrustworthy_status(FIELD_JQ), None);
+        assert!(
+            command_tokens(FIELD_JQ).is_empty(),
+            "{:?}",
+            command_tokens(FIELD_JQ)
+        );
+        // Double quotes protect the program the same way.
+        assert_eq!(
+            untrustworthy_status("jq -e \".items | length > 0\" out.json"),
+            None
+        );
+        // An escaped quote inside double quotes does not end the segment early.
+        assert_eq!(
+            untrustworthy_status(r#"jq -e "select(.a == \"x | y\") | .b" out.json"#),
+            None
+        );
+    }
+
+    #[test]
+    fn an_unquoted_pipe_is_still_reported() {
+        assert!(untrustworthy_status("cargo test foo | tail -5").is_some());
+        assert!(untrustworthy_status("cargo test 'foo_bar' | tail -5").is_some());
+        assert!(untrustworthy_status("jq -e '.a | .b' x.json | head").is_some());
+        assert!(untrustworthy_status("cargo test a_leaf || true").is_some());
+        assert!(untrustworthy_status("cargo test a_leaf; true").is_some());
+        assert!(untrustworthy_status("cargo fmt --check && cargo test a_leaf").is_none());
+        // An escaped pipe is a literal character, not an operator.
+        assert!(untrustworthy_status(r"grep -c a\|b log.txt").is_none());
+        // An unterminated quote is read literally, so it cannot hide what follows.
+        assert!(untrustworthy_status("cargo test it's_gone | tail").is_some());
+    }
+
+    #[test]
+    fn a_script_handed_to_a_shell_is_scanned_as_shell() {
+        assert!(untrustworthy_status("bash -c 'cargo test -p x some_test | tail'").is_some());
+        assert!(untrustworthy_status("sh -c \"cargo test some_test || true\"").is_some());
+        assert!(untrustworthy_status("/bin/bash -lc 'cargo test some_test | tail'").is_some());
+        assert!(
+            untrustworthy_status("bash -c 'set -o pipefail; cargo test some_test | tail'")
+                .is_none()
+        );
+        assert_eq!(
+            command_tokens("bash -c 'cargo test -p x some_test | tail'"),
+            vec!["some_test".to_owned()]
+        );
+        // Another language's `-c` program is not shell: its `|` is not a pipe.
+        assert!(untrustworthy_status("python -c 'print(1 | 2)'").is_none());
+        assert!(command_tokens("python -c 'import a_mod; a_mod.run()'").is_empty());
+        // A `-c` with no shell in front is just a flag.
+        assert!(untrustworthy_status("grep -c 'a | b' log.txt").is_none());
+    }
+
+    #[test]
+    fn a_quoted_single_word_filter_is_still_a_token() {
+        assert_eq!(
+            command_tokens("cargo test -p sys_present 'a_quoted_leaf'"),
+            vec!["a_quoted_leaf".to_owned(), "sys_present".to_owned()]
+        );
+        assert_eq!(
+            command_tokens("cargo test \"inventory_model::tests\""),
+            vec!["inventory_model::tests".to_owned()]
+        );
+        // A quoted argument with whitespace is some other tool's input, not a filter.
+        assert!(command_tokens("cargo test -- --skip 'slow_one other_one'").is_empty());
+    }
+
+    #[test]
+    fn windows_paths_tokenise_as_before() {
+        assert_eq!(
+            command_tokens(r"pwsh .\scripts\run_gate_tests.ps1"),
+            vec!["run_gate_tests".to_owned()]
+        );
+    }
 
     #[test]
     fn env_var_underscores_are_not_test_tokens() {

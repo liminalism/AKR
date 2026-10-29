@@ -40,6 +40,29 @@ impl ReviewSnapshot {
         records
     }
 
+    /// Every record whose state is `proposed`, sorted by key.
+    ///
+    /// This is the outstanding list the review workbench shows: entries that
+    /// have been recorded but not yet accepted, completed, or withdrawn. It
+    /// is derived from record state alone, so what it shows never depends on
+    /// anyone's summary of what is left.
+    pub fn outstanding_records(&self) -> Vec<&Record> {
+        let mut records = self
+            .records
+            .iter()
+            .filter(|record| record.state == "proposed")
+            .collect::<Vec<_>>();
+        records.sort_by(|left, right| left.key.cmp(&right.key));
+        records
+    }
+
+    pub fn outstanding_count(&self) -> usize {
+        self.records
+            .iter()
+            .filter(|record| record.state == "proposed")
+            .count()
+    }
+
     /// The parent relation forms the planning hierarchy. Unparented records
     /// remain visible under `Unparented`, rather than being silently dropped.
     pub fn planning_roots(&self) -> Vec<TreeNode> {
@@ -389,5 +412,28 @@ mod tests {
         let edges = snapshot.neighborhood("akr.work.desktop-review-gui", 2, 8);
         assert_eq!(edges.len(), 3);
         assert!(edges.windows(2).all(|pair| pair[0] <= pair[1]));
+    }
+    #[test]
+    fn outstanding_lists_only_proposed_records_sorted_by_key() {
+        let mut snapshot = demo_snapshot("/demo");
+        snapshot.records[0].state = "active".into();
+        snapshot.records[2].state = "completed".into();
+        snapshot.records.push(Record {
+            key: "akr.work.aaa-early-key".into(),
+            title: "Sorts first".into(),
+            kind: "work".into(),
+            state: "proposed".into(),
+            ..Record::default()
+        });
+        let keys = snapshot
+            .outstanding_records()
+            .iter()
+            .map(|record| record.key.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            keys,
+            ["akr.work.aaa-early-key", "akr.work.desktop-review-gui"]
+        );
+        assert_eq!(snapshot.outstanding_count(), 2);
     }
 }

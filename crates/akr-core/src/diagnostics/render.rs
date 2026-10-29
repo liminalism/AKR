@@ -92,6 +92,11 @@ impl SourceMap {
     pub fn get(&self, id: FileId) -> Option<&SourceFile> {
         self.files.iter().find(|f| f.id == id)
     }
+
+    /// Every file, in the order they were added.
+    pub fn iter(&self) -> impl Iterator<Item = &SourceFile> {
+        self.files.iter()
+    }
 }
 
 /// Renders a diagnostic in the caret form.

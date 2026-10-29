@@ -281,11 +281,14 @@ ordinary write pipeline.
 ```text
 akr handoff capsule [--refresh] [--boundary <text>]...
 akr handoff session begin --request <text> | --request-file <path> [...]
+akr handoff session begin --spec <file.json>
 akr handoff session show | end
 akr handoff worker | scout | reviewer | advisor --role <text> --task <text> [...]
+akr handoff worker | scout | reviewer | advisor --spec <file.json>
 akr handoff list | open <id> [--reveal] | expand <id> <section>
 akr handoff reveal <id> | verify <id> | discard <id>
 akr handoff result <packet> [--finding ...] [--read ...] [--not-examined ...]
+akr handoff result <packet> --spec <file.json>
 akr handoff results [<packet>] | coverage
 ```
 
@@ -296,6 +299,21 @@ without the catalogue growing a member per mode.
 
 `--request-file` and `--task-file` exist because a verbatim request is often a paragraph
 with newlines and quotes in it, and a shell mangles those.
+
+`--spec <file.json>` takes every field from a file instead: a JSON object with the MCP
+tool's argument names (`knowledge.handoff_session_begin`, `knowledge.handoff_create`,
+`knowledge.handoff_result`), read by the same function the tool uses, with unknown fields
+refused. It exists because AKR never executes the text it is given but the caller's shell
+does, first: inside double quotes, backticks and `$(...)` are command substitution, and a
+`--known` that quoted a build command in backticks ran that build for 75 minutes before AKR
+started. A file is the one way in that no shell reads. `--spec` takes no other content flag,
+and on `worker|scout|reviewer|advisor` the subcommand is the mode.
+
+A packet cut in the main checkout opens, and is answered, from a linked git worktree: reads
+fall back to the main checkout's store, found through the worktree's `.git` and
+`commondir`, and a result is filed beside its packet. The briefing then says it came from
+another checkout, because that checkout's uncommitted changes — ledger records included —
+are not in the worktree.
 
 Sections for `expand`: `task`, `workspace`, `project`, `session`, `scope`, `assignment`,
 `inherited` — what earlier packets read, ran and changed, with their findings only where

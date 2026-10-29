@@ -15,6 +15,7 @@
 //! reading — a timestamp would make every rebuild produce a diff and the CI gate useless.
 
 mod active_work;
+mod backlog;
 mod common;
 mod current_state;
 mod decision_history;
@@ -87,6 +88,8 @@ use std::collections::{BTreeMap, BTreeSet};
 pub enum View {
     /// Where the project is going.
     Roadmap,
+    /// Compact index of live planning heads.
+    Backlog,
     /// What the project believes right now.
     CurrentState,
     /// What is being worked on, and what is stuck.
@@ -105,6 +108,7 @@ impl View {
     /// The catalogue, in render order. Closed for 0.1.
     pub const ALL: &'static [View] = &[
         View::Roadmap,
+        View::Backlog,
         View::CurrentState,
         View::ActiveWork,
         View::ReviewRequired,
@@ -118,6 +122,7 @@ impl View {
     pub const fn file_name(self) -> &'static str {
         match self {
             Self::Roadmap => "ROADMAP.md",
+            Self::Backlog => "OUTSTANDING-WORK.md",
             Self::CurrentState => "CURRENT-STATE.md",
             Self::ActiveWork => "ACTIVE-WORK.md",
             Self::ReviewRequired => "REVIEW-REQUIRED.md",
@@ -132,6 +137,7 @@ impl View {
     pub const fn name(self) -> &'static str {
         match self {
             Self::Roadmap => "roadmap",
+            Self::Backlog => "outstanding-work",
             Self::CurrentState => "current-state",
             Self::ActiveWork => "active-work",
             Self::ReviewRequired => "review-required",
@@ -331,6 +337,7 @@ impl<'a> RenderContext<'a> {
 pub fn render(view: View, context: RenderContext<'_>) -> Option<String> {
     match view {
         View::Roadmap => Some(render_roadmap(context)),
+        View::Backlog => Some(backlog::render(context)),
         View::CurrentState => Some(render_current_state(context)),
         View::ActiveWork => Some(render_active_work(context)),
         View::ReviewRequired => Some(render_review_required(context)),

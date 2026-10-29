@@ -695,3 +695,135 @@ fn handoff_state_stays_outside_the_ledger() {
     let again = example.run(&["handoff", "discard", &packet]);
     assert_eq!(again.code, 0, "{}", again.output());
 }
+
+#[test]
+fn a_spec_file_carries_text_that_no_shell_has_read() {
+    // The field failure: `--known "... `cargo run ...` ..."` in double quotes made the
+    // caller's shell run the build before AKR started. A spec file is the way in that no
+    // shell reads, so backticks and $(...) arrive as written.
+    let example = Example::materialise("handoff-spec");
+    open_session(&example, &[]);
+    example.write_file(
+        ".agent/spec.json",
+        r#"{"role":"perf-scout","task":"Time `cargo bench` and $(date).","known":["the lane is `sleep 100`"],"commands":["cargo test=ok"]}"#,
+    );
+    let packet = cut(&example, "scout", &["--spec", ".agent/spec.json"]);
+    assert!(
+        packet.starts_with("sc-"),
+        "the subcommand is the mode: {packet}"
+    );
+    let opened = example.run(&["handoff", "open", &packet]);
+    assert_eq!(opened.code, 0, "{}", opened.output());
+    for literal in [
+        "Time `cargo bench` and $(date).",
+        "the lane is `sleep 100`",
+        "perf-scout",
+    ] {
+        assert!(
+            opened.stdout.contains(literal),
+            "{literal}:\n{}",
+            opened.stdout
+        );
+    }
+
+    // A misspelled field would drop the text it carried, so it is refused instead.
+    example.write_file(".agent/typo.json", r#"{"task":"x","knowns":["lost"]}"#);
+    let typo = example.run(&["handoff", "scout", "--spec", ".agent/typo.json"]);
+    assert_eq!(typo.code, 2, "{}", typo.output());
+    assert!(
+        typo.output().contains("unknown field `knowns`"),
+        "{}",
+        typo.output()
+    );
+
+    // One source of fields at a time, and the subcommand and the file must agree.
+    let mixed = example.run(&[
+        "handoff",
+        "scout",
+        "--spec",
+        ".agent/spec.json",
+        "--known",
+        "x",
+    ]);
+    assert_eq!(mixed.code, 2, "{}", mixed.output());
+    assert!(mixed.output().contains("AKR-C005"), "{}", mixed.output());
+    example.write_file(".agent/worker.json", r#"{"mode":"worker","task":"x"}"#);
+    let contradicts = example.run(&["handoff", "scout", "--spec", ".agent/worker.json"]);
+    assert_eq!(contradicts.code, 2, "{}", contradicts.output());
+
+    // A result answers with a spec too.
+    example.write_file(
+        ".agent/result.json",
+        r#"{"findings":["`make` is not used"],"read":["src/lib.rs"]}"#,
+    );
+    let filed = example.run(&["handoff", "result", &packet, "--spec", ".agent/result.json"]);
+    assert_eq!(filed.code, 0, "{}", filed.output());
+    let results = example.run(&["handoff", "results", &packet]);
+    assert!(
+        results.stdout.contains("`make` is not used"),
+        "{}",
+        results.stdout
+    );
+}
+
+#[test]
+fn a_child_in_a_linked_worktree_opens_and_answers_its_packet() {
+    // The store is gitignored, so a worktree has none of its own; a worker isolated in
+    // one used to get AKR-C043 for the id it had just been handed.
+    let example = Example::materialise("handoff-worktree");
+    example.git(&["add", "-A"]);
+    example.git(&["commit", "--quiet", "--allow-empty", "-m", "ledger"]);
+    open_session(&example, &[]);
+    let packet = cut(&example, "worker", &["--task", "Fix the parser."]);
+
+    let tree = example.root().with_extension("worktree");
+    let _ = std::fs::remove_dir_all(&tree);
+    let dir = tree.to_str().expect("a UTF-8 temp path").to_owned();
+    example.git(&["worktree", "add", "--quiet", &dir]);
+
+    let opened = example.run(&["--dir", &dir, "handoff", "open", &packet]);
+    assert_eq!(opened.code, 0, "{}", opened.output());
+    assert!(
+        opened.stdout.contains("Fix the parser."),
+        "{}",
+        opened.stdout
+    );
+    assert!(
+        opened.stdout.contains("FROM ANOTHER CHECKOUT"),
+        "the child is told its tree is not the one the packet was cut in:\n{}",
+        opened.stdout
+    );
+
+    // The result lands beside the packet, where the parent reads results from.
+    let filed = example.run(&[
+        "--dir",
+        &dir,
+        "handoff",
+        "result",
+        &packet,
+        "--finding",
+        "fixed in the worktree",
+        "--read",
+        "src",
+    ]);
+    assert_eq!(filed.code, 0, "{}", filed.output());
+    let results = example.run(&["handoff", "results", &packet]);
+    assert!(
+        results.stdout.contains("fixed in the worktree"),
+        "{}",
+        results.stdout
+    );
+    assert!(
+        !tree.join(".agent/handoffs").exists(),
+        "the worktree grew a second store nobody reads"
+    );
+
+    // The parent's own open carries no such note.
+    let parent = example.run(&["handoff", "open", &packet]);
+    assert!(
+        !parent.stdout.contains("FROM ANOTHER CHECKOUT"),
+        "{}",
+        parent.stdout
+    );
+    let _ = std::fs::remove_dir_all(&tree);
+}

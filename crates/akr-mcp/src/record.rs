@@ -114,6 +114,38 @@ pub fn to_source(heading: &Heading, payload: &Value) -> Result<String, ToolError
     }
 
     if let Some(Value::Array(claims)) = payload.get("claims") {
+        // A claim anchored `intent` reads like the intent, and the refusal that followed
+        // ("work requires slots.intent") read like the claim had been ignored. Say which
+        // field the text belongs in, which the generic missing-slot diagnostic cannot.
+        let supplied = |name: &str| {
+            payload
+                .get("slots")
+                .and_then(|slots| slots.get(name))
+                .is_some_and(|value| !value.is_null())
+        };
+        for claim in claims {
+            let anchor = claim
+                .get("anchor")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if let Some(spec) = kind
+                .content_slots()
+                .iter()
+                .find(|spec| spec.required && spec.slot.name() == anchor)
+                && !supplied(anchor)
+            {
+                return Err(ToolError::new(
+                    "AKR-C004",
+                    format!(
+                        "claim `{anchor}` has the name of a required slot of kind `{}`, but a \
+                         claim is an addressable statement, not a slot; put this text in \
+                         `slots.{}`",
+                        kind.name(),
+                        spec.slot.name()
+                    ),
+                ));
+            }
+        }
         for claim in claims {
             let anchor = claim
                 .get("anchor")

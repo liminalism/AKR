@@ -237,6 +237,9 @@ fn verdict_text(verdict: &Verdict) -> String {
             result.map_or("no result", crate::model::EvidenceResult::name)
         ),
         Verdict::TooOld { by, .. } => format!("not satisfied — `@{by}` predates the last change"),
+        Verdict::TooOldUncommitted { by, .. } => {
+            format!("not satisfied — `@{by}` predates the uncommitted change")
+        }
     }
 }
 
@@ -251,7 +254,7 @@ fn direct_parent(cx: RenderContext<'_>, record: &Record) -> Option<RevisionId> {
         .map(|t| t.id.clone())
 }
 
-fn live_work<'a>(ledger: &'a Ledger, cx: RenderContext<'a>) -> Vec<&'a Record> {
+pub(super) fn live_work<'a>(ledger: &'a Ledger, cx: RenderContext<'a>) -> Vec<&'a Record> {
     let undispositioned = undispositioned_import_drafts(cx);
     ledger
         .records()

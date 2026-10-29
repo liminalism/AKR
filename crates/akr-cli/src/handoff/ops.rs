@@ -52,12 +52,223 @@ fn no_session() -> EnvError {
 
 fn load_packet(session: &Session, id: &str) -> Result<Packet, EnvError> {
     packet::load(&session.root, id).map_err(|reason| {
-        if packet::path(&session.root, id).is_file() {
+        if packet::path(&packet::home(&session.root, id), id).is_file() {
             env(reason)
         } else {
             missing(id)
         }
     })
+}
+
+// ---------------------------------------------------------------------------------------
+// requests as JSON
+// ---------------------------------------------------------------------------------------
+
+/// One request object, read strictly: the MCP tool's arguments, or a `--spec` file.
+///
+/// Both surfaces go through here so that the field names and their types are defined
+/// once. Strict because the failure being prevented is silent: a misspelled `knowns` or a
+/// bare string where a list belongs would otherwise drop the text it carried, and a
+/// packet missing the one fact that mattered looks exactly like a complete one.
+struct Spec<'a> {
+    value: &'a Value,
+}
+
+impl<'a> Spec<'a> {
+    fn new(value: &'a Value, allowed: &[&str]) -> Result<Self, String> {
+        let Value::Object(fields) = value else {
+            return Err("a handoff request must be a JSON object".to_owned());
+        };
+        if let Some((name, _)) = fields
+            .iter()
+            .find(|(name, _)| !allowed.contains(&name.as_str()))
+        {
+            return Err(format!(
+                "unknown field `{name}`; fields are: {}",
+                allowed.join(", ")
+            ));
+        }
+        Ok(Self { value })
+    }
+
+    fn present(&self, name: &str) -> Option<&'a Value> {
+        self.value.get(name).filter(|value| !value.is_null())
+    }
+
+    fn text(&self, name: &str) -> Result<Option<String>, String> {
+        match self.present(name) {
+            None => Ok(None),
+            Some(value) => value
+                .as_str()
+                .map(|text| Some(text.to_owned()))
+                .ok_or_else(|| format!("`{name}` must be a string")),
+        }
+    }
+
+    fn list(&self, name: &str) -> Result<Vec<String>, String> {
+        let Some(value) = self.present(name) else {
+            return Ok(Vec::new());
+        };
+        let items = value
+            .as_array()
+            .ok_or_else(|| format!("`{name}` must be an array of strings"))?;
+        items
+            .iter()
+            .map(|item| {
+                item.as_str()
+                    .map(ToOwned::to_owned)
+                    .ok_or_else(|| format!("`{name}` must be an array of strings"))
+            })
+            .collect()
+    }
+
+    fn count(&self, name: &str) -> Result<Option<usize>, String> {
+        match self.present(name) {
+            None => Ok(None),
+            Some(value) => value
+                .as_integer()
+                .and_then(|value| usize::try_from(value).ok())
+                .map(Some)
+                .ok_or_else(|| format!("`{name}` must be a non-negative integer")),
+        }
+    }
+}
+
+impl SessionRequest {
+    /// Reads `knowledge.handoff_session_begin`'s arguments, or a `--spec` file.
+    ///
+    /// # Errors
+    /// The first field that is unknown or of the wrong type. A missing `request` is the
+    /// caller's to report, since the command line can also take it from a flag.
+    pub fn from_json(value: &Value) -> Result<Self, String> {
+        let spec = Spec::new(
+            value,
+            &[
+                "request",
+                "goal",
+                "governing",
+                "constraints",
+                "commands",
+                "baselines",
+                "evidence",
+                "artifacts",
+                "budget_tokens",
+            ],
+        )?;
+        Ok(Self {
+            request: spec.text("request")?.unwrap_or_default(),
+            goal: spec.text("goal")?,
+            governing: spec.list("governing")?,
+            constraints: spec.list("constraints")?,
+            commands: spec.list("commands")?,
+            baselines: spec.list("baselines")?,
+            evidence: spec.list("evidence")?,
+            artifacts: spec.list("artifacts")?,
+            budget: spec.count("budget_tokens")?,
+        })
+    }
+}
+
+impl CreateRequest {
+    /// Reads `knowledge.handoff_create`'s arguments, or a `--spec` file.
+    ///
+    /// # Errors
+    /// The first field that is unknown or of the wrong type.
+    pub fn from_json(value: &Value) -> Result<Self, String> {
+        let spec = Spec::new(
+            value,
+            &[
+                "mode",
+                "task",
+                "role",
+                "by",
+                "inherits",
+                "scope",
+                "known",
+                "skip",
+                "expect",
+                "commands",
+                "worker_notes",
+            ],
+        )?;
+        let notes = match spec.present("worker_notes") {
+            None => WorkerNotes::default(),
+            Some(value) => {
+                let notes = Spec::new(
+                    value,
+                    &[
+                        "hypotheses",
+                        "examined",
+                        "not_examined",
+                        "approaches",
+                        "searches",
+                    ],
+                )
+                .map_err(|reason| format!("`worker_notes`: {reason}"))?;
+                WorkerNotes {
+                    hypotheses: notes.list("hypotheses")?,
+                    examined: notes.list("examined")?,
+                    not_examined: notes.list("not_examined")?,
+                    approaches: notes.list("approaches")?,
+                    searches: notes.list("searches")?,
+                }
+            }
+        };
+        Ok(Self {
+            mode: spec.text("mode")?,
+            task: spec.text("task")?.unwrap_or_default(),
+            role: spec.text("role")?,
+            by: spec.text("by")?,
+            inherits: spec.list("inherits")?,
+            scope: spec.list("scope")?,
+            known: spec.list("known")?,
+            skip: spec.list("skip")?,
+            expect: spec.list("expect")?,
+            commands: spec.list("commands")?,
+            notes,
+        })
+    }
+}
+
+impl ResultRequest {
+    /// Reads `knowledge.handoff_result`'s arguments, or a `--spec` file.
+    ///
+    /// # Errors
+    /// The first field that is unknown or of the wrong type. A missing `packet` is the
+    /// caller's to report, since the command line takes it positionally.
+    pub fn from_json(value: &Value) -> Result<Self, String> {
+        let spec = Spec::new(
+            value,
+            &[
+                "packet",
+                "by",
+                "findings",
+                "evidence",
+                "changes",
+                "uncertainties",
+                "follow_up",
+                "commands",
+                "read",
+                "searched",
+                "tested",
+                "not_examined",
+            ],
+        )?;
+        Ok(Self {
+            packet: spec.text("packet")?.unwrap_or_default(),
+            by: spec.text("by")?,
+            findings: spec.list("findings")?,
+            evidence: spec.list("evidence")?,
+            changes: spec.list("changes")?,
+            uncertainties: spec.list("uncertainties")?,
+            follow_up: spec.list("follow_up")?,
+            commands: spec.list("commands")?,
+            read: spec.list("read")?,
+            searched: spec.list("searched")?,
+            tested: spec.list("tested")?,
+            not_examined: spec.list("not_examined")?,
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -990,14 +1201,28 @@ pub fn open(session: &Session, id: &str, reveal_now: bool) -> Result<Output, Env
     }
     let shows = stored.shows_notes();
 
-    let text = render(&stored, &inherited, &workspace, &drift);
-    // The text is the briefing and the structured form is an index into it. An MCP
-    // response carries both, so a structured copy of the request, the project capsule and
-    // the session head would put every inherited fact in front of the model twice, and
-    // the budget this tool runs under counts both halves. Each section is one `expand`
-    // away, addressed by the names listed here.
+    let mut text = render(&stored, &inherited, &workspace, &drift);
+    let home = packet::home(&session.root, &stored.id);
+    if home != session.root {
+        // Drift already names what differs; this names why, because "your tree is not
+        // the one this was cut from" reads like a stale packet when it is a worktree.
+        text.push_str(&format!(
+            "\nFROM ANOTHER CHECKOUT\n  {}\n  This packet was cut there and is read from there; you are in a linked\n  \
+             worktree. Its uncommitted changes, ledger records included, are not in this\n  \
+             tree. A result you file goes back beside the packet.\n",
+            home.display()
+        ));
+    }
+    // The text is the briefing and the rest of the structured form is an index into it.
+    // The briefing is ALSO carried structured, once, as `briefing`: an MCP host that
+    // hands the model `structuredContent` in preference to `content` otherwise delivered
+    // only the index, and the child had to fall back to the command line to read its own
+    // assignment. A copy of the text costs a few kilobytes; a packet that cannot be read
+    // costs the delegation. The per-section structure stays out, for the reason it always
+    // did: each section is one `expand` away, addressed by the names listed here.
     let fields = vec![
         ("packet", Value::string(stored.id.clone())),
+        ("briefing", Value::string(text.clone())),
         ("mode", Value::string(stored.mode.as_str())),
         (
             "role",
@@ -1357,7 +1582,10 @@ pub fn file_result(session: &Session, request: &ResultRequest) -> Result<Output,
         not_examined: request.not_examined.clone(),
     };
 
-    packet::write_json(&session.root, &report.id, &report.to_json()).map_err(env)?;
+    // Filed beside the packet, so a child working in a linked worktree reports back to
+    // the checkout its parent reads results from.
+    let store = packet::home(&session.root, &stored.id);
+    packet::write_json(&store, &report.id, &report.to_json()).map_err(env)?;
 
     let mut text = format!("result {} for {}\n", report.id, report.packet);
     if report.coverage.is_empty() {

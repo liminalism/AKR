@@ -435,6 +435,57 @@ pub fn path(root: &Path, id: &str) -> PathBuf {
     directory(root).join(format!("{id}.json"))
 }
 
+/// The same workspace in the main checkout, when `root` is inside a linked git worktree.
+///
+/// The store is gitignored, so a worktree has none of its own: a parent cuts a packet in
+/// the main checkout and a child isolated in a worktree got `AKR-C043` for the very id it
+/// was handed. Found by reading `.git` and `commondir` rather than asking git, because
+/// this is on every handoff read and the answer is two small files.
+#[must_use]
+pub fn main_checkout(root: &Path) -> Option<PathBuf> {
+    let root = root.canonicalize().ok()?;
+    let top = root.ancestors().find(|dir| dir.join(".git").exists())?;
+    let dot_git = top.join(".git");
+    // A directory is the main checkout's own; only a linked worktree has a file here.
+    if !dot_git.is_file() {
+        return None;
+    }
+    let pointer = std::fs::read_to_string(&dot_git).ok()?;
+    let gitdir = pointer
+        .lines()
+        .find_map(|line| line.strip_prefix("gitdir:"))?
+        .trim();
+    let gitdir = top.join(gitdir);
+    let common = std::fs::read_to_string(gitdir.join("commondir")).ok()?;
+    let common = gitdir.join(common.trim()).canonicalize().ok()?;
+    // A bare repository's common dir has no checkout beside it to fall back to.
+    if common.file_name()? != ".git" {
+        return None;
+    }
+    let offset = root.strip_prefix(top).ok()?;
+    let main = common.parent()?.to_path_buf();
+    let main = if offset.as_os_str().is_empty() {
+        main
+    } else {
+        main.join(offset)
+    };
+    (main != root && main.is_dir()).then_some(main)
+}
+
+/// The workspace root whose store holds `id`: this one, else the main checkout's.
+///
+/// Reads fall back; an object that exists nowhere is homed here, so a new capsule or
+/// packet cut inside a worktree stays in that worktree.
+#[must_use]
+pub fn home(root: &Path, id: &str) -> PathBuf {
+    if path(root, id).is_file() {
+        return root.to_path_buf();
+    }
+    main_checkout(root)
+        .filter(|main| path(main, id).is_file())
+        .unwrap_or_else(|| root.to_path_buf())
+}
+
 /// Whether an id names a session capsule.
 #[must_use]
 pub fn is_session_id(id: &str) -> bool {
@@ -453,13 +504,15 @@ pub fn is_packet_id(id: &str) -> bool {
 ///
 /// Sorted rather than by modification time on purpose: two runs of `akr handoff list`
 /// against the same directory print the same thing, on every filesystem.
+///
+/// A linked worktree sees its own store and the main checkout's together, since every
+/// read falls back the same way ([`home`]).
 #[must_use]
 pub fn ids_with(root: &Path, keep: impl Fn(&str) -> bool) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(directory(root)) else {
-        return Vec::new();
-    };
-    let mut ids: Vec<String> = entries
-        .flatten()
+    let mut ids: Vec<String> = std::iter::once(root.to_path_buf())
+        .chain(main_checkout(root))
+        .filter_map(|store| std::fs::read_dir(directory(&store)).ok())
+        .flat_map(|entries| entries.flatten())
         .filter_map(|entry| {
             let name = entry.file_name().to_string_lossy().into_owned();
             name.strip_suffix(".json")
@@ -468,6 +521,7 @@ pub fn ids_with(root: &Path, keep: impl Fn(&str) -> bool) -> Vec<String> {
         })
         .collect();
     ids.sort();
+    ids.dedup();
     ids
 }
 
@@ -482,7 +536,7 @@ pub fn ids(root: &Path) -> Vec<String> {
 /// # Errors
 /// A message when the file is missing, unreadable, or not JSON.
 pub fn read_json(root: &Path, id: &str) -> Result<Value, String> {
-    let path = path(root, id);
+    let path = path(&home(root, id), id);
     let text =
         std::fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
     parse(&text).map_err(|error| format!("{}: {error}", path.display()))
@@ -518,8 +572,11 @@ pub fn load(root: &Path, id: &str) -> Result<Packet, String> {
 ///
 /// # Errors
 /// A message when it cannot be written.
+///
+/// Back where it was read from: a reveal stamped from a worktree must be visible to the
+/// parent that cut the packet.
 pub fn save(root: &Path, packet: &Packet) -> Result<PathBuf, String> {
-    write_json(root, &packet.id, &packet.to_json())
+    write_json(&home(root, &packet.id), &packet.id, &packet.to_json())
 }
 
 /// Deletes one stored object. `false` when there was none.
@@ -527,7 +584,7 @@ pub fn save(root: &Path, packet: &Packet) -> Result<PathBuf, String> {
 /// # Errors
 /// A message when the file exists and cannot be removed.
 pub fn discard(root: &Path, id: &str) -> Result<bool, String> {
-    let path = path(root, id);
+    let path = path(&home(root, id), id);
     if !path.is_file() {
         return Ok(false);
     }

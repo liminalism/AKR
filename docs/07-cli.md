@@ -492,8 +492,9 @@ $ akr search "frame budget" --kind constraint --kind observation
 2 results
 ```
 
-A malformed query is `AKR-X031`; an unavailable backend is `AKR-X032`; a cache built
-without FTS5 is `AKR-I022`. Exit 0 even with zero results — an empty result set is an
+A malformed query is `AKR-X031`; an unavailable backend is `AKR-X032`; a binary built
+without FTS5 is `AKR-I022`; a cache that lacks the full-text table is stale to a binary
+that has FTS5, and is rebuilt like any other stale cache. Exit 0 even with zero results — an empty result set is an
 answer. If `.akr` sources changed since the last index build, search silently rebuilds
 the disposable cache before querying it. Successful JSON output therefore carries
 `"index_stale": false`. With `--no-rebuild`, a missing or stale cache is `AKR-I031` and
@@ -504,7 +505,7 @@ remains untouched.
 ### `akr start`
 
 ```
-akr start <task> [--paths <glob> ...] [--budget <tokens>]
+akr start <task> | --task <task> [--paths <glob> ...] [--budget <tokens>]
 ```
 
 Use this when a task arrives without an exact planning key. Before task matching, it emits
@@ -544,8 +545,10 @@ Assembles the deterministic context bundle specified in
 `AKR-X002`, wrong kind is `AKR-X003`. A pin to the current head is normalized; an older
 pin is `AKR-X004`, and an anchored reference is `AKR-X005`, both with retrieval guidance.
 A malformed `--paths` glob is `AKR-X011`; one that
-matches nothing is `AKR-X012` (warning). A budget too small for the mandatory sections is
-`AKR-X021`; prose truncation is `AKR-X022` (warning).
+matches nothing is `AKR-X012` (warning). A budget too small for the goal, plan,
+acceptance and contradictions is `AKR-X021`; prose truncation is `AKR-X022` (warning).
+Over budget, prose is truncated and whole records are withheld by name, never the goal
+(`09-context-assembly.md` §6); `akr get <key>` reads any of them in full.
 
 This is the single most important command for agent use, and the one an agent should
 call first in any session. A full worked bundle is in `09-context-assembly.md` §7 and in
@@ -657,7 +660,15 @@ needs the flag, as does a propose with no `--from` at all.
 
 An existing key is an error: use `akr revise`. An undeclared namespace is `AKR-L004`.
 The write pipeline of §4 applies in full, so a proposal that would break the ledger is
-refused and nothing is written (`AKR-C031`).
+refused and nothing is written (`AKR-C031`). A record that *replaces* another — a
+decision on a live decision's topic, a correction of a verified observation — is
+created by `akr supersede <old> --with <new> --from <file>` instead, because proposing it
+first produces a ledger that does not validate or a successor that is already sealed.
+
+A `watches` glob that matches no path at the resolved commit is noted as
+`warning[AKR-G022]` on the write's output: §4's stages never look at the tree, so a watch
+over files that exist only in the working tree would otherwise be reported first by the
+next `akr check`, after an empirical record is already sealed. The note never blocks.
 
 **A body source is effectively mandatory.** `--from` and `--edit` read as optional, and
 they are not: §4 validates the *resulting* ledger, every kind requires its prose slot
@@ -742,14 +753,68 @@ never mentioned.
 ### `akr supersede`
 
 ```
-akr supersede <old-key> --with <new-key> [--disposition <child>=<outcome>[:<into>] ...]
+akr supersede <old-key> [--with <new-key> [--from <file>] [--title <text>]]
+              [--disposition <child>=<outcome>[:<into>] ...]
 ```
 
-With a different key, the replacement must already exist as a `proposed` record of the
-same kind: propose its complete body first, then run this command. The second step adds
-the pinned `supersedes` edge and moves the old head to `superseded`; for planning records
-it also requires a `disposition` block for every
-unfinished `part_of` child of the old record (D-017).
+Replaces a record in one atomic write: the successor gains the pinned `supersedes` edge
+and the old head moves to `superseded`. For planning records it also requires a
+`disposition` block for every unfinished `part_of` child of every revision the write
+retires (D-017). Without `--with`, or with `--with` naming the same key, the successor is
+revision *n+1* of the old key, exactly as `akr revise` on a sealed head produces it.
+
+With a different key, what happens depends on the replacement:
+
+| `--with <new-key>` is | `--from`/`--title` | The write |
+|---|---|---|
+| absent | given | creates `<new-key>/1` from the body, exactly as `akr propose` would, carrying the edge |
+| absent | omitted | refused, `AKR-L001`; the help names `--from`/`--title` |
+| `proposed` | omitted | edits it in place to carry the edge (D-015 allows it) |
+| sealed | omitted | creates revision *n+1* of it with the sealed body unchanged plus the edge, and retires *n* |
+| present | given | refused, `AKR-L041`: a created successor needs a new key, and changing an existing one is `akr revise` |
+
+The replacement is the old record's kind — `supersedes` replaces like with like, and a
+`--from` file declaring another kind is `AKR-L031`. A slot-list `--from` is read as
+`akr propose` reads one, with the old record's kind.
+
+**Creating the successor in the same write is not a convenience.** Two replacements
+cannot be staged as separate writes, because the intermediate ledger does not validate
+and §4 refuses to write it. Proposing a new decision on the old one's topic first is
+`AKR-R002` (V-013) while both are live; an `observation` or `evidence` record is
+`verified` — sealed — from the moment it exists, so a correction proposed first can no
+longer be edited to carry the edge (`AKR-C032`), and proposing it *with* `supersedes`
+naming the still-live old record is `AKR-L021`. The successor and the retirement land
+together, and neither intermediate state is ever on disk:
+
+```
+$ akr supersede lege.obs.frame-budget-headroom --with lege.obs.frame-budget-overrun \
+      --title "The barn transition overruns the frame budget" --from corrected.akr
+lege.obs.frame-budget-headroom/1 verified -> superseded
+created lege.obs.frame-budget-overrun/1
+wrote .akr/records/lege/observations.akr
+akr.lock is now stale; run `akr build` to refresh it
+```
+
+The same reasoning gives the sealed-replacement row: an already-verified correction
+cannot gain the edge in place, and the two-command alternative (`akr revise <old> --state
+superseded` on its own) retires the old head while recording no edge at all.
+
+**Live references to the old head follow onto the successor in that same write**, for the
+reason `akr revise` gives: a pin of the retired revision would become `AKR-L021` and a
+floating reference in a liveness slot `AKR-R021` the moment it is retired, and the
+referrer cannot be repointed first because the successor does not exist yet. A pin
+`@old/n` becomes `@new/m` and a floating `@old` becomes `@new`; the referrer gains no
+revision. Historical references (`supersedes`, `contradicts`, `derived_from`) and pinned
+`part_of` stay where they are, as they do for `akr revise`. The write lists every
+referrer it touched. A reference the successor cannot satisfy — an anchor its body does
+not declare, a `resolves` it does not carry — is the resulting ledger's diagnostic, and
+the write is refused with it.
+
+A created successor whose `watches` glob matches no path at the resolved commit gets a
+`warning[AKR-G022]` note — the diagnostic `akr check` would report on the next run, and
+under `--strict` fail. The write cannot see the tree (stages A–D only), so this is the one
+moment to commit the watched files or correct the glob before the record is sealed.
+`akr propose` prints the same note.
 
 The command **lists the children it needs a disposition for and refuses to write until
 each has one**. This is the single most valuable interaction in the tool: it is the
@@ -989,6 +1054,8 @@ akr handoff worker | scout | reviewer | advisor
                    [--note-hypothesis <text>]... [--note-examined <path>]...
                    [--note-unexamined <path>]... [--note-approach <text>]...
                    [--note-search <text>]...
+akr handoff session begin | worker | scout | reviewer | advisor --spec <file.json>
+akr handoff result <packet> --spec <file.json>
 akr handoff list | open <id> [--reveal] | expand <id> <section>
 akr handoff reveal <id> | verify <id> | discard <id>
 akr handoff result <packet> [--finding <text>]... [--evidence <ref>]...
@@ -1034,7 +1101,9 @@ first pass was blind. `create --mode <m>` is accepted so one MCP tool maps onto 
 renders above the assignment, so the narrowing is visible to the agent it was done to,
 which is the only place it can be checked. `--task-file` and `--request-file` exist because
 a verbatim request is often a paragraph with newlines and quotes in it and a shell mangles
-those.
+those. `--spec <file.json>` goes further and takes every field from a file holding the MCP
+tool's arguments, refusing unknown fields: AKR never runs text, but inside double quotes the
+caller's shell runs backticks and `$(...)` before AKR starts (`docs/17-handoff.md` §12).
 
 `--scope` defaults to `**`. A scope drawn from what the parent examined would hand the
 child that parent's blind spot as a boundary, which is the one thing an independent pass is

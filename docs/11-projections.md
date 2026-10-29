@@ -1,6 +1,6 @@
 # 11 — Projections
 
-The seven generated Markdown views: what each one selects, how it is ordered, how each kind
+The eight generated Markdown views: what each one selects, how it is ordered, how each kind
 renders, what the banner contains, and how the never-hand-edit rule is enforced.
 
 Normative for the view catalogue, source queries, section ordering, rendering rules, the
@@ -36,13 +36,14 @@ Seven views, in the fixed order stage F renders them.
 | --- | --- | --- |
 | `ROADMAP.md` | Where is the project going? | Live `milestone` and `track` records, with their plans, acceptance and children |
 | `CURRENT-STATE.md` | What does the project believe right now? | Live `term`, `requirement`, `policy`, `constraint` and live empirical records |
+| `OUTSTANDING-WORK.md` | What planning remains? | Live planning heads grouped by state, with acceptance counts |
 | `ACTIVE-WORK.md` | What is being worked on, and what is stuck? | Live `work` records, grouped by parent |
 | `REVIEW-REQUIRED.md` | What should not be trusted without re-checking? | Records flagged `stale` or `at_risk` by stage D |
 | `OPEN-QUESTIONS.md` | What is not yet known? | `question` records |
 | `DECISION-HISTORY.md` | What was decided, and what was retired? | Every revision of every `decision`, plus terminal revisions of other normative kinds |
 | `PAPERCUTS.md` | Where does the project need sanding down? | Live `papercut` records, newest first. Emitted only once one exists (D-027) |
 
-The catalogue is closed for 0.1. A project needing an eighth view writes a template
+The catalogue is closed for 0.1. A project needing another view writes a template
 against a declared section set (§10) rather than adding a case to the renderer.
 
 `akr view <name>` renders one to stdout; an unknown name is `AKR-E003`.
@@ -479,7 +480,7 @@ carries no timestamp, the result is identical regardless of which side was taken
 
 ## 12. View templates
 
-The seven views are fixed (`PAPERCUTS.md`, the seventh, is emitted only once the ledger holds a papercut — D-027). Projects that need an eighth — a per-team roadmap, a
+The eight views are fixed (`PAPERCUTS.md` is emitted only once the ledger holds a papercut — D-027). Projects that need another — a per-team roadmap, a
 compliance extract — declare a template rather than patching the renderer.
 
 ```
@@ -526,3 +527,7 @@ report a misconfiguration or a bad invocation.
 Next: [`../examples/save-your-skin/docs/generated/`](../examples/save-your-skin/docs/generated/)
 for all six views rendered from a real inventory, or
 [`06-compiler-pipeline.md`](06-compiler-pipeline.md) §8 for the emission stage itself.
+
+## Outstanding work index
+
+`OUTSTANDING-WORK.md` lists unarchived head milestones, tracks, and work in active, blocked, ready, and proposed order, sorted by key within each state. Undispositioned import drafts are excluded as in `ACTIVE-WORK.md`. Each entry links to its detailed view, identifies its parent where present, and counts acceptance checks satisfied by current evidence. Proposed normative records are not a work queue.

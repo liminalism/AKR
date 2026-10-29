@@ -1323,6 +1323,13 @@ pub fn v020_acceptance_satisfied(ledger: &Ledger) -> Vec<Diagnostic> {
                         );
                         continue;
                     }
+                    CommitOrder::PredatesUncommitted => {
+                        reason = format!(
+                            "{} predates the uncommitted change to the definition of {}",
+                            evidence.id, record.id
+                        );
+                        continue;
+                    }
                     CommitOrder::Divergent => {
                         reason = format!(
                             "{} was observed at a commit that is not an ancestor of the last \
@@ -1371,6 +1378,9 @@ enum CommitOrder {
     Descends,
     /// The evidence is genuinely older: the last change descends from it.
     Predates,
+    /// The record's definition changed in the working tree after the evidence was
+    /// observed, so the last change is a commit that does not exist yet.
+    PredatesUncommitted,
     /// Neither commit descends from the other. A rewritten or diverged history, not an
     /// age.
     Divergent,
@@ -1408,6 +1418,16 @@ fn commit_order(ledger: &Ledger, record: &Record, evidence: &Record) -> CommitOr
                 CommitOrder::Unknown
             }
             _ => CommitOrder::Descends,
+        };
+    }
+    if ledger.facts.uncommitted.contains(&record.id) {
+        // Redefined in the working tree: the last content change is the commit that will
+        // land it. Evidence landing in the same commit is the prepared-change shape; any
+        // other evidence names an existing commit, and none of those descends from it.
+        return if ledger.facts.uncommitted.contains(&evidence.id) || observed.is_none() {
+            CommitOrder::Descends
+        } else {
+            CommitOrder::PredatesUncommitted
         };
     }
     let Some(last_change) = ledger.facts.last_change.get(&record.id) else {

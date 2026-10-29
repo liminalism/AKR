@@ -40,7 +40,7 @@ Consult at task and state-transition boundaries, not after every edit.
 
 Because inherited facts are cheap and inherited conclusions are not.
 
-Open a session first (`akr handoff session begin --request "<the user's words, verbatim>"`); each packet inherits it, so no child re-derives the project. `akr handoff --help` has the rest.
+Open a session first (`akr handoff session begin --request-file <file>`, the file holding the user's words verbatim); each packet inherits it, so no child re-derives the project. Your shell runs backticks and `$(...)` inside double quotes before akr starts, so text that names a command goes in a file: `--task-file`, or every field as JSON via `--spec <file>`. `akr handoff --help` has the rest.
 
 ### Scratch
 

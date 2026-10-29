@@ -272,6 +272,181 @@ fn supersede_with_an_already_proposed_key_is_atomic() {
 }
 
 #[test]
+fn supersede_creates_a_same_topic_decision_in_one_command() {
+    // Papercut: `propose` of the replacement fails AKR-R002 while both decisions are
+    // live on one topic, and `supersede --with` used to refuse `--from`/`--title`.
+    let example = Example::materialise("write-supersede-create-decision");
+    let body = example.root().join("snapshot-interface.akr");
+    std::fs::write(
+        &body,
+        "scope [ path \"lege/**\" ]\n\
+         topic renderer-boundary\n\
+         decision \"\"\"\n    The viewer reads a frame snapshot through a narrow interface.\n    \"\"\"\n\
+         resolves [ @lege.question.text-rendering-owner ]\n",
+    )
+    .expect("write body");
+    let body = body.to_str().expect("utf-8");
+
+    let detour = example.run(&[
+        "propose",
+        "lege.decision.snapshot-interface",
+        "--kind",
+        "decision",
+        "--from",
+        body,
+    ]);
+    assert_eq!(detour.code, 1, "{}", detour.output());
+    assert!(detour.output().contains("AKR-R002"), "{}", detour.output());
+
+    let replaced = example.run(&[
+        "supersede",
+        "lege.decision.renderer-boundary",
+        "--with",
+        "lege.decision.snapshot-interface",
+        "--title",
+        "The viewer reads a snapshot interface",
+        "--from",
+        body,
+    ]);
+    assert_eq!(replaced.code, 0, "{}", replaced.output());
+    assert!(
+        replaced
+            .stdout
+            .contains("lege.decision.renderer-boundary/2 active -> superseded"),
+        "{}",
+        replaced.stdout
+    );
+    assert!(
+        replaced
+            .stdout
+            .contains("created lege.decision.snapshot-interface/1"),
+        "{}",
+        replaced.stdout
+    );
+    let source = example.read_file(".akr/records/lege/decisions.akr");
+    assert!(source.contains("record lege.decision.snapshot-interface/1 : decision"));
+    assert!(source.contains("supersedes [ @lege.decision.renderer-boundary/2 ]"));
+    let work = example.read_file(".akr/records/lege/work.akr");
+    assert!(
+        work.contains("depends_on [ @lege.decision.snapshot-interface ]"),
+        "the dependant follows: {work}"
+    );
+    let built = example.run(&["build"]);
+    assert_eq!(built.code, 0, "{}", built.output());
+}
+
+#[test]
+fn supersede_replaces_verified_observation_and_evidence_with_new_records() {
+    // Papercut: observation and evidence records are `verified` from creation, so a
+    // proposed-first correction was sealed and `supersede --with` refused it (AKR-C032).
+    let example = Example::materialise("write-supersede-create-empirical");
+    let commit = example.commit(4).to_owned();
+    let observation = example.root().join("observation.akr");
+    std::fs::write(
+        &observation,
+        format!(
+            "scope [ path \"lege/src/render/**\" ]\n\
+             statement \"\"\"\n    Re-measured: the barn transition reaches 17.2 ms.\n    \"\"\"\n\
+             observed_at git:{commit}\n\
+             method instrumented\n\
+             watches [ \"lege/src/render/**\" ]\n"
+        ),
+    )
+    .expect("write observation");
+    let evidence = example.root().join("evidence.akr");
+    std::fs::write(
+        &evidence,
+        format!(
+            "result pass\n\
+             method command\n\
+             observed_at git:{commit}\n\
+             command \"cargo run -p tools -- boundary-lint --crate lege\"\n\
+             summary \"\"\"\n    Zero engine types, re-run against the corrected lint.\n    \"\"\"\n"
+        ),
+    )
+    .expect("write evidence");
+
+    for (old, new, body, title) in [
+        (
+            "lege.obs.frame-budget-headroom",
+            "lege.obs.frame-budget-overrun",
+            &observation,
+            "The barn transition overruns the frame budget",
+        ),
+        (
+            "lege.evidence.boundary-lint-pass",
+            "lege.evidence.boundary-lint-rerun",
+            &evidence,
+            "Boundary lint rerun reports no engine imports",
+        ),
+    ] {
+        let replaced = example.run(&[
+            "supersede",
+            old,
+            "--with",
+            new,
+            "--title",
+            title,
+            "--from",
+            body.to_str().expect("utf-8"),
+        ]);
+        assert_eq!(replaced.code, 0, "{}", replaced.output());
+        assert!(
+            replaced
+                .stdout
+                .contains(&format!("{old}/1 verified -> superseded")),
+            "{}",
+            replaced.stdout
+        );
+        let get = example.run(&["get", new]);
+        assert!(get.stdout.contains("state verified"), "{}", get.stdout);
+    }
+    let requirements = example.read_file(".akr/records/lege/requirements.akr");
+    assert!(
+        requirements.contains("verified_by [ @lege.evidence.boundary-lint-rerun ]"),
+        "{requirements}"
+    );
+    let built = example.run(&["build"]);
+    assert_eq!(built.code, 0, "{}", built.output());
+}
+
+#[test]
+fn propose_notes_a_watch_that_matches_nothing_at_head() {
+    // Papercut: a verified observation accepted a watch over files that existed only in
+    // the working tree, and the first anyone heard of it was AKR-G022 under --strict.
+    let example = Example::materialise("write-propose-uncommitted-watch");
+    example.write_file("lege/src/snapshot/mod.rs", "// not committed yet\n");
+    let commit = example.commit(4).to_owned();
+    let body = example.root().join("observation.akr");
+    std::fs::write(
+        &body,
+        format!(
+            "scope [ path \"lege/src/snapshot/**\" ]\n\
+             statement \"\"\"\n    The snapshot module exists.\n    \"\"\"\n\
+             observed_at git:{commit}\n\
+             method instrumented\n\
+             watches [ \"lege/src/snapshot/**\" ]\n"
+        ),
+    )
+    .expect("write body");
+    let proposed = example.run(&[
+        "propose",
+        "lege.obs.snapshot-module",
+        "--kind",
+        "observation",
+        "--from",
+        body.to_str().expect("utf-8"),
+    ]);
+    assert_eq!(proposed.code, 0, "{}", proposed.output());
+    assert!(
+        proposed.stdout.contains("warning[AKR-G022]")
+            && proposed.stdout.contains("not committed yet"),
+        "{}",
+        proposed.stdout
+    );
+}
+
+#[test]
 fn complete_names_the_unsatisfied_check_and_writes_nothing() {
     let example = Example::materialise("write-complete");
     let text = refuses(&example, &["complete", "sys.milestone.m3-playable-day"]);
@@ -1601,4 +1776,236 @@ fn revising_a_completed_record_names_every_acceptance_reference() {
         "sys.milestone.m1-walking-skeleton",
     ]);
     assert_eq!(json.code, 0, "{}", json.output());
+}
+
+/// Seals the workspace and commits everything, so the next revise writes revision n+1.
+fn seal_and_commit(example: &Example, message: &str) {
+    assert_eq!(example.run(&["build"]).code, 0);
+    example.git(&["add", "-A"]);
+    example.git(&["commit", "--quiet", "-m", message]);
+}
+
+/// The acceptance verdict line `akr get` prints for the probe's one check.
+fn fixture_verdict(example: &Example, key: &str) -> String {
+    let run = example.run(&["get", key]);
+    assert_eq!(run.code, 0, "{}", run.output());
+    run.stdout
+        .lines()
+        .find(|line| line.contains("#fixture"))
+        .unwrap_or_else(|| panic!("no verdict for #fixture in {}", run.stdout))
+        .to_owned()
+}
+
+/// A check body for the probe record, citing `cites` when given.
+fn fixture_check(statement: &str, cites: Option<&str>) -> String {
+    let cites = cites.map_or_else(String::new, |r| format!("    verified_by [ {r} ]\n"));
+    format!(
+        "acceptance {{\n  check fixture {{\n    statement \"{statement}\"\n    method command\n    \
+         command \"cargo test\"\n{cites}  }}\n}}\n"
+    )
+}
+
+/// Proposes the probe work record with one check, sealed and committed.
+fn propose_probe(example: &Example, key: &str) {
+    example.write_file(
+        "w.akr",
+        &format!(
+            "state active\nintent \"Hold the fixture green.\"\n{}",
+            fixture_check("The fixture passes.", None)
+        ),
+    );
+    let run = example.run(&[
+        "propose", key, "--kind", "work", "--title", "Probe", "--from", "w.akr",
+    ]);
+    assert_eq!(run.code, 0, "{}", run.output());
+    seal_and_commit(example, "probe work");
+}
+
+/// Adds passing evidence observed at `HEAD`.
+fn add_passing_evidence(example: &Example, key: &str) {
+    let run = example.run(&[
+        "evidence",
+        "add",
+        key,
+        "--result",
+        "pass",
+        "--method",
+        "command",
+        "--command",
+        "cargo test",
+        "--summary",
+        "The fixture passed.",
+    ]);
+    assert_eq!(run.code, 0, "{}", run.output());
+}
+
+/// Revises `key` from a fragment holding only its acceptance block.
+fn revise_check(example: &Example, key: &str, statement: &str, cites: Option<&str>) {
+    example.write_file("w.akr", &fixture_check(statement, cites));
+    let run = example.run(&["revise", key, "--from", "w.akr"]);
+    assert_eq!(run.code, 0, "{}", run.output());
+}
+
+/// Re-citing evidence that predates a record's last redefinition, in a revision that has
+/// not been committed yet, must not read as satisfied (the field report: "re-citing the
+/// September E5 evidence in rev 8 computed as satisfied until I removed the citation in
+/// rev 9"). An uncommitted revision had no `last_change` at all, which the descendant gate
+/// read as "no git facts" and took the evidence at its word; the same ledger, committed,
+/// reported the evidence as too old. The verdict before the commit and after it now agree.
+#[test]
+fn a_revision_citing_evidence_older_than_the_definition_is_not_satisfied_before_its_commit() {
+    let example = Example::materialise("write-uncommitted-recitation");
+    let key = "sys.work.recitation-probe";
+    propose_probe(&example, key);
+    add_passing_evidence(&example, "sys.evidence.e5");
+    seal_and_commit(&example, "e5");
+
+    // The check is redefined after E5 was observed: E5 no longer speaks to it.
+    revise_check(&example, key, "The fixture passes on every platform.", None);
+    seal_and_commit(&example, "redefine the check");
+
+    // A revision that only re-cites E5 keeps the committed definition's last change
+    // (D-038), so E5 is too old before the commit exactly as it is after.
+    revise_check(
+        &example,
+        key,
+        "The fixture passes on every platform.",
+        Some("@sys.evidence.e5/1"),
+    );
+    let before = fixture_verdict(&example, key);
+    assert!(before.contains("not satisfied"), "{before}");
+    assert!(before.contains("predates the last change"), "{before}");
+    seal_and_commit(&example, "re-cite e5");
+    assert_eq!(fixture_verdict(&example, key), before);
+
+    // A revision that re-cites E5 *and* redefines the check: its last change is the commit
+    // that will land it, which nothing already observed can descend from. This is the
+    // reported shape, and it used to read as satisfied until committed.
+    revise_check(
+        &example,
+        key,
+        "The fixture passes under the new harness.",
+        Some("@sys.evidence.e5/1"),
+    );
+    let pending = fixture_verdict(&example, key);
+    assert!(pending.contains("not satisfied"), "{pending}");
+    assert!(
+        pending.contains("predates the uncommitted change"),
+        "{pending}"
+    );
+
+    // V-020 agrees with the verdict: a completion on that basis fails `akr check` now,
+    // not only after the commit.
+    let run = example.run(&["complete", key, "--check", "fixture=@sys.evidence.e5/1"]);
+    assert_eq!(run.code, 0, "{}", run.output());
+    let check = example.run(&["check"]);
+    assert_eq!(check.code, 1, "{}", check.output());
+    assert!(check.output().contains("AKR-R022"), "{}", check.output());
+    assert!(
+        check.output().contains("predates the uncommitted change"),
+        "{}",
+        check.output()
+    );
+}
+
+/// The prepared-change shape still holds before the commit: a redefinition and the fresh
+/// evidence that verifies it, written together and both uncommitted, satisfy the check,
+/// as they will once they land in the same commit.
+#[test]
+fn a_redefinition_and_its_fresh_evidence_satisfy_the_check_before_their_commit() {
+    let example = Example::materialise("write-uncommitted-co-commit");
+    let key = "sys.work.co-commit-probe";
+    propose_probe(&example, key);
+    add_passing_evidence(&example, "sys.evidence.e6");
+    revise_check(
+        &example,
+        key,
+        "The fixture passes under the new harness.",
+        Some("@sys.evidence.e6/1"),
+    );
+    let before = fixture_verdict(&example, key);
+    assert!(
+        before.contains("satisfied by @sys.evidence.e6/1"),
+        "{before}"
+    );
+    seal_and_commit(&example, "redefine and verify together");
+    assert_eq!(fixture_verdict(&example, key), before);
+}
+
+/// A definition a branch introduced, merged under a newer commit to the same file, is
+/// committed history. The file timeline walks `log --follow`, which lists the branch
+/// commit below the newer one and omits the merge, so it cannot date the definition; that
+/// used to read as "no git facts", and once uncommitted definitions got their own verdict
+/// it read as "predates the uncommitted change" on a clean tree (seen in a sister
+/// project's milestone, 4 of 5 checks satisfied turning into 0 of 5).
+#[test]
+fn a_definition_introduced_on_a_merged_branch_is_not_read_as_uncommitted() {
+    let example = Example::materialise("write-merged-redefinition");
+    let key = "sys.work.zz-merged-probe";
+    propose_probe(&example, key);
+    let commit_at = |message: &str, date: &str| {
+        let _ = std::fs::remove_file(example.root().join("w.akr"));
+        example.git(&["add", "-A"]);
+        let status = std::process::Command::new("git")
+            .args(["commit", "--quiet", "-m", message])
+            .env("GIT_AUTHOR_DATE", date)
+            .env("GIT_COMMITTER_DATE", date)
+            .current_dir(example.root())
+            .status()
+            .expect("git runs");
+        assert!(status.success(), "commit {message}");
+    };
+    // The fact cache would otherwise travel with the checkouts.
+    example.write_file(".gitignore", ".akr/cache/\n");
+    example.git(&["rm", "-r", "--cached", "--quiet", ".akr/cache"]);
+    commit_at("ignore the cache", "2029-12-31T00:00:00Z");
+
+    example.git(&["checkout", "--quiet", "-b", "side"]);
+    add_passing_evidence(&example, "sys.evidence.e7");
+    revise_check(
+        &example,
+        key,
+        "The fixture passes under the new harness.",
+        Some("@sys.evidence.e7/1"),
+    );
+    commit_at("redefine on a branch", "2030-01-01T00:00:00Z");
+    let on_branch = fixture_verdict(&example, key);
+    assert!(
+        on_branch.contains("satisfied by @sys.evidence.e7/1"),
+        "{on_branch}"
+    );
+
+    // A newer commit to the same file on main, then the merge.
+    example.git(&["checkout", "--quiet", "main"]);
+    example.write_file(
+        "w.akr",
+        &format!(
+            "state active\nintent \"Another.\"\n{}",
+            fixture_check("Another passes.", None)
+        ),
+    );
+    let run = example.run(&[
+        "propose",
+        "sys.work.aa-other-probe",
+        "--kind",
+        "work",
+        "--title",
+        "Other",
+        "--from",
+        "w.akr",
+    ]);
+    assert_eq!(run.code, 0, "{}", run.output());
+    commit_at("newer commit to the same file", "2030-01-02T00:00:00Z");
+    let status = std::process::Command::new("git")
+        .args(["merge", "--quiet", "--no-edit", "side"])
+        .env("GIT_AUTHOR_DATE", "2030-01-03T00:00:00Z")
+        .env("GIT_COMMITTER_DATE", "2030-01-03T00:00:00Z")
+        .current_dir(example.root())
+        .status()
+        .expect("git runs");
+    assert!(status.success(), "the branches merge cleanly");
+
+    let merged = fixture_verdict(&example, key);
+    assert!(!merged.contains("uncommitted"), "{merged}");
+    assert_eq!(merged, on_branch);
 }

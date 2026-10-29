@@ -227,6 +227,7 @@ for it (D-016):
 | No evidence | `not satisfied — no evidence` |
 | Failing evidence | `not satisfied — @key/n reports <result>` |
 | Evidence too old | `not satisfied — @key/n observed at <commit>, which does not descend from <last-change>` |
+| Evidence too old for an uncommitted redefinition | `not satisfied — @key/n observed at <commit>, which does not descend from the uncommitted change` |
 
 The last row is the one that earns its keep. Evidence that passed before the definition
 changed does not count, and an agent that cannot see *why* a check is unsatisfied will
@@ -328,46 +329,57 @@ The bundle reports the exclusions in aggregate, by reason, so that a reader can 
 
 `--budget` is an approximate token ceiling on the **delivered** bundle: the rendered text
 and the JSON half together, which is what a caller pays for, rather than the records the
-selection chose, which is a much smaller number and used to be the only thing measured. The
-command renders, measures both halves, and re-assembles to proportionally less when the
-result overshoots — three passes, because the ratio is stable enough that the second lands.
-The result reports `budget.requested_tokens` and `budget.delivered_tokens`, and says so
-when the two cannot be reconciled, which happens when the mandatory sections alone cost
-more than the request (§6, V-123): that is not a failure, it is the ceiling this document
-puts under every bundle, and the fix is a narrower `--paths`.
+selection chose, which is a much smaller number and used to be the only thing measured.
+Tokens are estimated at four characters each — what tokenizers average on prose and what
+hosts assume when they decide a tool result is too large to keep. (A words-plus-punctuation
+count used before it read a dotted key or a JSON field as one token, and a bundle "within"
+a 12,000-token budget arrived at over 100,000 characters and was refused by the host.)
 
-When the assembled bundle exceeds it, content
-is reduced in a fixed order, and the order encodes what the design considers expendable:
+Assembly renders the bundle, measures both forms, and when the result overshoots applies
+the shortest prefix of a fixed reduction sequence that fits. Each section is spent from its
+tail, the low-ranked end of its sort order:
 
 ```
-   1. prose bodies of step 8 observations      truncate to 2 sentences
-   2. prose bodies of step 5 normative records truncate to 2 sentences
-   3. rationale / context / consequences slots drop entirely
-   4. claim texts on non-goal records          truncate to 1 sentence
-   5. step 6 dependency depth                  reduce 3 -> 2 -> 1
-   6. step 8 observations beyond the 10 most   drop, and say how many
-      recent
+   1. prose of observations, normative records,   dropped; header, scope and
+      dependencies and open questions              relations stay
+   2. observations beyond the 10 that lead the    withheld whole, named by key
+      section
+   3. normative records, then dependencies        withheld whole, named by key
+      (deepest first, blockers last)
+   4. prose of work items                         dropped
+   5. open questions, the leading observations,   withheld whole, named by key
+      then work items
 ```
 
-**What never truncates (V-123):**
+A **withheld** record was selected; only its entry was left out. Its key and revision are
+listed in the section it came from (`WITHHELD (n)` in the text form, `withheld` in the
+JSON), so the reader knows exactly which records it has not seen and fetches any of them
+with `akr get` / `knowledge.get`. The result reports `budget.requested_tokens` and
+`budget.delivered_tokens`, and when anything was reduced, `budget.withheld_records`,
+`budget.truncated_records` and `budget.continue`, which says how to get the rest.
 
-- Any relation. Every edge shown is shown in full, with its target key and revision. A
-  truncated relation set is a lie about the graph, and the graph is the part a reader
-  cannot reconstruct from anywhere else.
-- The goal, the plan of record, and their `disposition` blocks.
+**What never reduces (V-123):**
+
+- The goal, in full. Its body is the intent the whole bundle serves; the JSON form carries
+  it as `goal.body`.
+- The containing milestone, the plan of record, and its `disposition` blocks.
+- Any relation of a record that is shown. Every edge shown is shown in full, with its
+  target key and revision. A truncated relation set is a lie about the graph; a withheld
+  record, named as withheld, is not.
 - Any acceptance check, or any check's verdict.
 - Any contradiction.
-- Any staleness or at-risk warning.
-- Any state, scope, key or revision anywhere in the bundle.
+- Any staleness or at-risk warning, including one about a withheld record.
+- The key and revision of every selected record, shown or withheld.
 
-If the mandatory content alone exceeds the budget, the command fails with `AKR-X021`
-rather than silently dropping something load-bearing. Truncation that did occur is
-reported as `AKR-X022` (a warning) and listed in `truncated_prose`, so a consumer knows
-exactly what it is missing and can fetch it with `knowledge.get`.
+If the goal, milestone, plan, acceptance and contradictions alone exceed the budget, the
+command fails with `AKR-X021`. When everything reducible has been reduced and the bundle
+is still over — a large staleness section, say — it is delivered anyway and
+`budget.note` says so: the fix is a narrower `--paths`. Truncation that did occur is
+reported as `AKR-X022` (a warning) and listed in `truncated_prose`.
 
-Truncation points are deterministic — sentence boundaries computed by a fixed rule, not
-by a model. Summarising a record to fit is a job for the *consumer* of the bundle, above
-the LLM boundary (D-020).
+Every reduction point is deterministic — a fixed sequence over the sections' own sort
+orders, not a model. Ranking sections by relevance is future work; summarising a record to
+fit is a job for the *consumer* of the bundle, above the LLM boundary (D-020).
 
 ## 7. Bundle format
 
@@ -466,7 +478,7 @@ The exclusion summary for this request:
 | --- | --- | --- |
 | **V-121** | Every `contradicts` edge with an endpoint among the selected records appears in the contradictions section, including when an endpoint is terminal or archived, and including when `acknowledged true`. | `AKR-X051` |
 | **V-122** | No non-head revision, terminal record, or archived record appears in a bundle outside the contradictions section. | `AKR-X052` |
-| **V-123** | Budgeting truncates prose only. Relations, states, scopes, keys, revisions, acceptance verdicts, contradictions and staleness warnings are never reduced; if they alone exceed the budget, the request fails. | `AKR-X021`, `AKR-X022` |
+| **V-123** | Budgeting truncates prose and withholds whole records by name, never anything else. The goal, the plan of record, the relations of every record shown, acceptance verdicts, contradictions, staleness warnings, and the key and revision of every selected record are never reduced; if the goal, plan, acceptance and contradictions alone exceed the budget, the request fails. | `AKR-X021`, `AKR-X022` |
 
 V-121 and V-122 are internal invariants: they fire only on a defect in the assembler, not
 on anything a ledger author can write. They are stated as rules, and checked, because

@@ -646,5 +646,8 @@ fn verdict_text(verdict: &Verdict) -> String {
         } => {
             format!("evidence {by} predates {last_change}")
         }
+        Verdict::TooOldUncommitted { by, .. } => {
+            format!("evidence {by} predates the uncommitted change")
+        }
     }
 }

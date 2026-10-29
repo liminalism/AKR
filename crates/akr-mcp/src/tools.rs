@@ -44,9 +44,12 @@ fn missing_commit(session: &Session, suggest_observed_at: bool) -> ToolError {
         "; make an initial commit"
     };
     if session.repository.is_some() {
+        // Nothing to name with `observed_at` in a repository that has no commits.
         ToolError::new(
             "AKR-G001",
-            format!("no commit to record: the repository has no commits yet{hint}"),
+            "no commit to record: the repository has no commits yet; an empirical record \
+             is anchored to a commit and there is none — `git commit --allow-empty -m root` \
+             makes one, then retry",
         )
     } else {
         ToolError::new(
@@ -831,10 +834,10 @@ fn propose(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
     akr_cli::write::ensure_commits_exist(&session, &akr_cli::write::commits_named_by(&template))
         .map_err(environment)?;
     let context = write_context(&session);
+    let mut result = akr_core::ops::propose(&context, &parsed, kind, title, Some(template.clone()));
+    akr_cli::write::note_unmatched_watches(&session, &mut result, &parsed, Some(&template));
     Ok(ToolResult::Structured(write_result(
-        &session,
-        &parsed,
-        akr_core::ops::propose(&context, &parsed, kind, title, Some(template)),
+        &session, &parsed, result,
     )?))
 }
 
@@ -882,6 +885,14 @@ fn revise(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
         &merged(arguments, head),
     )?;
     let mut replacement = record::parse(&source, &parsed)?;
+    // The same commit-presence gate `knowledge.propose` and `akr revise --from` run, before
+    // anything is written: an `observed_at` naming no commit used to land here and surface
+    // only as AKR-G011 on the next `akr check`.
+    akr_cli::write::ensure_commits_exist(
+        &session,
+        &akr_cli::write::commits_introduced_by(Some(head), &replacement),
+    )
+    .map_err(environment)?;
     replacement.dispositions.clone_from(&head.dispositions);
     let requested_state = arguments
         .get("state")
@@ -921,33 +932,80 @@ fn supersede(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
         .map(key_of)
         .transpose()?
         .unwrap_or_else(|| parsed.clone());
-    if replacement != parsed && session.ledger.head(&replacement).is_err() {
-        return Err(ToolError::new(
-            "AKR-L001",
-            format!(
-                "replacement {replacement} does not exist; create it with knowledge.propose, then retry knowledge.supersede"
-            ),
-        ));
-    }
-    if arguments.get("slots").is_some() {
-        return Err(ToolError::new(
-            "AKR-C004",
-            "knowledge.supersede does not author content; use knowledge.revise for the same key or knowledge.propose for a different replacement, then omit `slots` here",
-        ));
-    }
+    // Any content field asks for the successor to be created in this write, exactly as
+    // `akr supersede --with <new> --from/--title` does. The library decides whether that
+    // is possible (a new key, the same kind), so both surfaces refuse identically.
+    let successor = if SUCCESSOR_FIELDS
+        .iter()
+        .any(|field| arguments.get(field).is_some())
+    {
+        let kind = match arguments.get("kind").and_then(Value::as_str) {
+            Some(name) => akr_core::model::Kind::from_name(name).ok_or_else(|| {
+                ToolError::new("AKR-C004", format!("`{name}` is not a record kind"))
+            })?,
+            None => session
+                .ledger
+                .head(&parsed)
+                .map(|head| head.kind)
+                .map_err(|_| ToolError::new("AKR-L001", format!("{key} does not resolve")))?,
+        };
+        let title = arguments
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let source = record::to_source(
+            &record::Heading {
+                root: &session.root,
+                project: &session.ledger.project.name,
+                key: &replacement,
+                revision: 1,
+                kind,
+                title,
+                state: arguments.get("state").and_then(Value::as_str),
+            },
+            arguments,
+        )?;
+        let template = record::parse(&source, &replacement)?;
+        akr_cli::write::ensure_commits_exist(
+            &session,
+            &akr_cli::write::commits_named_by(&template),
+        )
+        .map_err(environment)?;
+        Some(akr_core::ops::NewSuccessor {
+            title: title.to_owned(),
+            template: Some(template),
+        })
+    } else {
+        None
+    };
+    let template = successor.as_ref().and_then(|s| s.template.clone());
     let dispositions = dispositions(arguments)?;
     let context = write_context(&session);
-    let result = if replacement == parsed {
-        akr_core::ops::supersede(&context, &parsed, &dispositions)
-    } else {
-        akr_core::ops::supersede_with(&context, &parsed, &replacement, &dispositions)
-    };
+    let mut result =
+        akr_core::ops::supersede_into(&context, &parsed, &replacement, successor, &dispositions);
+    akr_cli::write::note_unmatched_watches(&session, &mut result, &replacement, template.as_ref());
     Ok(ToolResult::Structured(write_result(
         &session,
         &replacement,
         result,
     )?))
 }
+
+/// The `knowledge.supersede` fields that describe a successor to create, as
+/// `knowledge.propose` takes them.
+const SUCCESSOR_FIELDS: &[&str] = &[
+    "kind",
+    "title",
+    "state",
+    "scope",
+    "topic",
+    "slots",
+    "claims",
+    "relations",
+    "acceptance",
+    "sources",
+    "acknowledged",
+];
 
 fn complete(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
     let session = open(root, true)?;
@@ -1167,82 +1225,29 @@ fn run_coordination(root: &Path, command: Command) -> Result<ToolResult, ToolErr
 
 /// `knowledge.handoff_session_begin`.
 fn handoff_session_begin(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
-    let request = required_str(arguments, "request")?;
-    run_coordination(
-        root,
-        Command::HandoffSessionBegin(Box::new(akr_cli::handoff::ops::SessionRequest {
-            request: request.to_owned(),
-            goal: optional_str(arguments, "goal"),
-            governing: string_list(arguments, "governing"),
-            constraints: string_list(arguments, "constraints"),
-            commands: string_list(arguments, "commands"),
-            baselines: string_list(arguments, "baselines"),
-            evidence: string_list(arguments, "evidence"),
-            artifacts: string_list(arguments, "artifacts"),
-            budget: arguments
-                .get("budget_tokens")
-                .and_then(Value::as_integer)
-                .and_then(|value| usize::try_from(value).ok()),
-        })),
-    )
+    required_str(arguments, "request")?;
+    let request = akr_cli::handoff::ops::SessionRequest::from_json(arguments)
+        .map_err(|reason| ToolError::new("AKR-C004", reason))?;
+    run_coordination(root, Command::HandoffSessionBegin(Box::new(request)))
 }
 
 /// `knowledge.handoff_create`.
+///
+/// The arguments are read by the same function `akr handoff <mode> --spec` uses, so a
+/// field cannot exist on one surface and not the other.
 fn handoff_create(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
-    let mode = required_str(arguments, "mode")?;
-    let notes = arguments.get("worker_notes");
-    let note_list = |field: &str| {
-        notes
-            .and_then(|notes| notes.get(field))
-            .and_then(Value::as_array)
-            .unwrap_or_default()
-            .iter()
-            .filter_map(Value::as_str)
-            .map(ToOwned::to_owned)
-            .collect()
-    };
-    let request = akr_cli::handoff::ops::CreateRequest {
-        mode: Some(mode.to_owned()),
-        task: optional_str(arguments, "task").unwrap_or_default(),
-        role: optional_str(arguments, "role"),
-        by: optional_str(arguments, "by"),
-        inherits: string_list(arguments, "inherits"),
-        scope: string_list(arguments, "scope"),
-        known: string_list(arguments, "known"),
-        skip: string_list(arguments, "skip"),
-        expect: string_list(arguments, "expect"),
-        commands: string_list(arguments, "commands"),
-        notes: akr_cli::handoff::packet::WorkerNotes {
-            hypotheses: note_list("hypotheses"),
-            examined: note_list("examined"),
-            not_examined: note_list("not_examined"),
-            approaches: note_list("approaches"),
-            searches: note_list("searches"),
-        },
-    };
+    required_str(arguments, "mode")?;
+    let request = akr_cli::handoff::ops::CreateRequest::from_json(arguments)
+        .map_err(|reason| ToolError::new("AKR-C004", reason))?;
     run_coordination(root, Command::HandoffCreate(Box::new(request)))
 }
 
 /// `knowledge.handoff_result`.
 fn handoff_result(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
-    let packet = required_str(arguments, "packet")?;
-    run_coordination(
-        root,
-        Command::HandoffResult(Box::new(akr_cli::handoff::ops::ResultRequest {
-            packet: packet.to_owned(),
-            by: optional_str(arguments, "by"),
-            findings: string_list(arguments, "findings"),
-            evidence: string_list(arguments, "evidence"),
-            changes: string_list(arguments, "changes"),
-            uncertainties: string_list(arguments, "uncertainties"),
-            follow_up: string_list(arguments, "follow_up"),
-            commands: string_list(arguments, "commands"),
-            read: string_list(arguments, "read"),
-            searched: string_list(arguments, "searched"),
-            tested: string_list(arguments, "tested"),
-            not_examined: string_list(arguments, "not_examined"),
-        })),
-    )
+    required_str(arguments, "packet")?;
+    let request = akr_cli::handoff::ops::ResultRequest::from_json(arguments)
+        .map_err(|reason| ToolError::new("AKR-C004", reason))?;
+    run_coordination(root, Command::HandoffResult(Box::new(request)))
 }
 
 fn run_write(root: &Path, command: Command) -> Result<ToolResult, ToolError> {

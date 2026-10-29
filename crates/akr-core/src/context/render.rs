@@ -103,6 +103,86 @@ pub fn render_text(bundle: &Bundle, model: &ResolvedModel<'_>, freshness: &Fresh
             format!("Prose truncated in {} records.", bundle.truncated.len())
         }
     ));
+    let withheld = bundle.withheld_count();
+    if withheld > 0 || !bundle.truncated.is_empty() {
+        out.push_str(&wrap(
+            &format!(
+                "{withheld} entries withheld whole to fit the budget, each named in its \
+                 section. `akr get <key>` (knowledge.get) reads any withheld or truncated \
+                 record in full; a larger --budget or a narrower --paths keeps them in the \
+                 bundle."
+            ),
+            "",
+            0,
+        ));
+    }
+    out
+}
+
+/// What no budget reduces, rendered: the goal, the milestone, the plan of record,
+/// acceptance and contradictions. The budget's floor is measured on this.
+pub(super) fn mandatory_text(
+    bundle: &Bundle,
+    model: &ResolvedModel<'_>,
+    freshness: &Freshness,
+) -> String {
+    let mut out = render_goal(bundle, model, freshness);
+    out.push_str(&render_milestone(bundle, model));
+    out.push_str(&render_records(
+        bundle,
+        model,
+        freshness,
+        Section::PlanOfRecord,
+    ));
+    out.push_str(&render_acceptance(bundle, model));
+    out.push_str(&render_contradictions(bundle, model));
+    out
+}
+
+/// The records a section's budget withheld, by key, and how to read them.
+///
+/// Consecutive keys that share everything but their last segment fold into one brace
+/// group, `@ns.kind.{a/1, b/2}`. A section is sorted by kind, so the fold is what keeps a
+/// list of a hundred withheld names from costing a large share of what withholding the
+/// records saved.
+fn withheld_lines(bundle: &Bundle, section: Section) -> String {
+    let Some(ids) = bundle.withheld.get(&section).filter(|ids| !ids.is_empty()) else {
+        return String::new();
+    };
+    let mut groups: Vec<(String, Vec<String>)> = Vec::new();
+    for id in ids {
+        let key = id.key.to_string();
+        let (prefix, last) = key.rsplit_once('.').unwrap_or(("", key.as_str()));
+        let item = format!("{last}/{}", id.revision);
+        match groups.last_mut() {
+            Some((current, items)) if current == prefix => items.push(item),
+            _ => groups.push((prefix.to_owned(), vec![item])),
+        }
+    }
+    let mut out = String::from("\n");
+    out.push_str(&wrap(
+        &format!(
+            "WITHHELD ({}) to fit the budget, from the low-ranked end of this section; \
+             `akr get <key>` reads one in full:",
+            ids.len()
+        ),
+        "  ",
+        2,
+    ));
+    for (prefix, items) in groups {
+        if prefix.is_empty() {
+            for item in items {
+                out.push_str(&format!("    @{item}\n"));
+            }
+        } else if items.len() == 1 {
+            out.push_str(&format!("    @{prefix}.{}\n", items[0]));
+        } else {
+            let mut group = wrap(&items.join(", "), &format!("    @{prefix}.{{"), 6);
+            group.pop();
+            group.push_str("}\n");
+            out.push_str(&group);
+        }
+    }
     out
 }
 
@@ -219,6 +299,7 @@ fn render_records(
             out.push_str(&risk_lines(record, freshness, 2));
         }
     }
+    out.push_str(&withheld_lines(bundle, section));
     out
 }
 
@@ -580,6 +661,10 @@ fn verdict_text(verdict: &Verdict) -> String {
             &observed_at.as_str()[..8],
             &last_change.as_str()[..8]
         ),
+        Verdict::TooOldUncommitted { by, observed_at } => format!(
+            "NOT SATISFIED — @{by} observed at {}, which does not descend from the uncommitted change",
+            &observed_at.as_str()[..8]
+        ),
     }
 }
 
@@ -782,6 +867,16 @@ pub fn render_json(bundle: &Bundle, model: &ResolvedModel<'_>) -> crate::json::V
                 ("key", Value::string(bundle.goal.key.to_string())),
                 ("rev", Value::integer(i64::from(bundle.goal.revision))),
                 ("title", Value::string(goal_title)),
+                // The goal's intent is what the bundle exists to serve. A structured
+                // reader that saw only key, rev and title had to fall back to one
+                // `knowledge.get` per record to learn what it had been asked to do.
+                (
+                    "body",
+                    ledger
+                        .get(&bundle.goal)
+                        .and_then(body_of)
+                        .map_or(Value::Null, |body| Value::string(body.trim_end())),
+                ),
             ]),
         ),
         (
@@ -832,6 +927,26 @@ pub fn render_json(bundle: &Bundle, model: &ResolvedModel<'_>) -> crate::json::V
                     .truncated
                     .iter()
                     .map(|id| Value::string(id.to_string()))
+                    .collect(),
+            ),
+        ),
+        (
+            "withheld",
+            Value::array(
+                bundle
+                    .withheld
+                    .iter()
+                    .map(|(section, ids)| {
+                        Value::object(vec![
+                            ("section", Value::string(section.id())),
+                            (
+                                "records",
+                                Value::array(
+                                    ids.iter().map(|id| Value::string(id.to_string())).collect(),
+                                ),
+                            ),
+                        ])
+                    })
                     .collect(),
             ),
         ),

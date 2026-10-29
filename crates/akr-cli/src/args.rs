@@ -490,6 +490,10 @@ pub enum Command {
         key: String,
         /// The superseding key, when it differs.
         with: Option<String>,
+        /// A body for a successor this write creates under `with`.
+        from: Option<PathBuf>,
+        /// A title for a successor this write creates under `with`.
+        title: Option<String>,
         /// `child=outcome[:into]` pairs.
         dispositions: Vec<String>,
     },
@@ -1184,7 +1188,7 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
             }
         }
         "start" => {
-            known_flags(&["--paths", "--budget"])?;
+            known_flags(&["--paths", "--budget", "--task"])?;
             let budget = match option_value(tail, "--budget") {
                 Some(text) => Some(text.parse().map_err(|_| {
                     UsageError::new(
@@ -1194,8 +1198,31 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
                 })?),
                 None => None,
             };
+            // `--task` is what knowledge.start calls the field, so an agent translating
+            // from the tool catalogue reaches for it first. The bare positional stays the
+            // documented form; a flag's value is never mistaken for it.
+            let bare = values_skipped(tail, &["--paths", "--budget", "--task"]);
+            let task = match (
+                option_value(tail, "--task"),
+                bare.first().map(|s| (*s).clone()),
+            ) {
+                (Some(_), Some(_)) => {
+                    return Err(UsageError::new(
+                        "AKR-C005",
+                        "start takes either a positional <task> or --task <task>, not both",
+                    ));
+                }
+                (Some(task), None) | (None, Some(task)) => task,
+                (None, None) => {
+                    return Err(
+                        UsageError::new("AKR-C003", "start requires a task description").with_help(
+                            "akr start \"<the task, in a sentence>\" [--paths <glob>]...",
+                        ),
+                    );
+                }
+            };
             Command::Start {
-                task: need(0, "a task description")?,
+                task,
                 paths: repeated(tail, "--paths")
                     .iter()
                     .map(|path| Glob::new(path))
@@ -1312,10 +1339,12 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
             }
         }
         "supersede" => {
-            known_flags(&["--with", "--disposition"])?;
+            known_flags(&["--with", "--from", "--title", "--disposition"])?;
             Command::Supersede {
                 key: need(0, "a key")?,
                 with: option_value(tail, "--with"),
+                from: option_value(tail, "--from").map(PathBuf::from),
+                title: option_value(tail, "--title"),
                 dispositions: repeated(tail, "--disposition"),
             }
         }
@@ -2035,12 +2064,67 @@ fn parse_handoff(
         }
     };
 
+    // Every text flag passes through the caller's shell before AKR sees it, and inside
+    // double quotes `backticks` and $(...) are command substitution. A `--known` that
+    // quoted a build command in backticks ran that build -- 75 minutes of it, into a
+    // directory literally named DIR -- and the packet was never cut, because AKR had not
+    // started yet. Nothing here can detect that after the fact; what it can do is offer a
+    // way in that no shell reads. The file holds the MCP tool's arguments, so the two
+    // surfaces share one schema (`CreateRequest::from_json` and its siblings).
+    let spec = match option_value(tail, "--spec") {
+        None => None,
+        Some(path) => {
+            let alongside = |arg: &&String| {
+                let base = arg.split('=').next().unwrap_or(arg);
+                base.starts_with("--") && !matches!(base, "--spec" | "--mode")
+            };
+            if let Some(other) = tail.iter().find(alongside) {
+                let base = other.split('=').next().unwrap_or(other);
+                return Err(UsageError::new(
+                    "AKR-C005",
+                    format!("--spec cannot be combined with {base}"),
+                )
+                .with_help("put every field in the spec file; it takes the MCP tool's arguments"));
+            }
+            let text = std::fs::read_to_string(&path)
+                .map_err(|error| UsageError::new("AKR-C004", format!("--spec {path}: {error}")))?;
+            Some(
+                akr_core::json::parse(&text).map_err(|error| {
+                    UsageError::new("AKR-C004", format!("--spec {path}: {error}"))
+                })?,
+            )
+        }
+    };
+    let spec_error = |reason: String| UsageError::new("AKR-C004", format!("--spec: {reason}"));
+    let takes_spec = match sub {
+        "session" => positional.get(1).map(|s| s.as_str()) == Some("begin"),
+        "worker" | "scout" | "reviewer" | "advisor" | "create" | "result" => true,
+        _ => false,
+    };
+    if spec.is_some() && !takes_spec {
+        return Err(UsageError::new(
+            "AKR-C002",
+            format!("--spec is not accepted by `handoff {sub}`"),
+        )
+        .with_help("--spec is for session begin, worker, scout, reviewer, advisor and result"));
+    }
+
     Ok(match sub {
         "capsule" => Command::HandoffCapsule {
             refresh: tail.iter().any(|a| a == "--refresh"),
             boundaries: repeated(tail, "--boundary"),
         },
         "session" => match positional.get(1).map(|s| s.as_str()) {
+            Some("begin") if spec.is_some() => {
+                let value = spec.as_ref().expect("guarded by is_some");
+                let request =
+                    crate::handoff::ops::SessionRequest::from_json(value).map_err(spec_error)?;
+                if request.request.trim().is_empty() {
+                    return Err(UsageError::new("AKR-C003", "--spec has no `request`")
+                        .with_help("pass the user's request verbatim in `request`"));
+                }
+                Command::HandoffSessionBegin(Box::new(request))
+            }
             Some("begin") => {
                 let request = one_of("--request", "--request-file")?.ok_or_else(|| {
                     UsageError::new(
@@ -2084,12 +2168,34 @@ fn parse_handoff(
             }
         },
         "worker" | "scout" | "reviewer" | "advisor" | "create" => {
+            let from_spec = match &spec {
+                Some(value) => {
+                    Some(crate::handoff::ops::CreateRequest::from_json(value).map_err(spec_error)?)
+                }
+                None => None,
+            };
+            let spec_mode = from_spec.as_ref().and_then(|request| request.mode.clone());
             let mode = if sub == "create" {
-                option_value(tail, "--mode").ok_or_else(|| {
+                match (option_value(tail, "--mode"), spec_mode) {
+                    (Some(flag), Some(field)) if flag != field => {
+                        return Err(UsageError::new(
+                            "AKR-C005",
+                            format!("--mode {flag} contradicts the spec's mode {field:?}"),
+                        ));
+                    }
+                    (flag, field) => flag.or(field),
+                }
+                .ok_or_else(|| {
                     UsageError::new("AKR-C003", "handoff create requires --mode <mode>")
                         .with_help("modes are: worker, scout, reviewer, advisor")
                 })?
             } else {
+                if let Some(field) = spec_mode.filter(|field| field != sub) {
+                    return Err(UsageError::new(
+                        "AKR-C005",
+                        format!("`handoff {sub}` contradicts the spec's mode {field:?}"),
+                    ));
+                }
                 sub.to_owned()
             };
             if crate::handoff::packet::Mode::from_name(&mode).is_none() {
@@ -2097,6 +2203,14 @@ fn parse_handoff(
                     UsageError::new("AKR-C004", format!("{mode:?} is not a handoff mode"))
                         .with_help("modes are: worker, scout, reviewer, advisor"),
                 );
+            }
+            if let Some(request) = from_spec {
+                return Ok(Command::HandoffCreate(Box::new(
+                    crate::handoff::ops::CreateRequest {
+                        mode: Some(mode),
+                        ..request
+                    },
+                )));
             }
             Command::HandoffCreate(Box::new(crate::handoff::ops::CreateRequest {
                 mode: Some(mode),
@@ -2147,6 +2261,26 @@ fn parse_handoff(
         "discard" => Command::HandoffDiscard {
             id: at(1, "an id")?,
         },
+        "result" if spec.is_some() => {
+            let value = spec.as_ref().expect("guarded by is_some");
+            let request =
+                crate::handoff::ops::ResultRequest::from_json(value).map_err(spec_error)?;
+            let packet = match (positional.get(1), request.packet.as_str()) {
+                (Some(given), field) if !field.is_empty() && given.as_str() != field => {
+                    return Err(UsageError::new(
+                        "AKR-C005",
+                        format!("packet {given} contradicts the spec's packet {field:?}"),
+                    ));
+                }
+                (Some(given), _) => (*given).clone(),
+                (None, "") => at(1, "the packet it answers")?,
+                (None, field) => field.to_owned(),
+            };
+            Command::HandoffResult(Box::new(crate::handoff::ops::ResultRequest {
+                packet,
+                ..request
+            }))
+        }
         "result" => Command::HandoffResult(Box::new(crate::handoff::ops::ResultRequest {
             packet: at(1, "the packet it answers")?,
             by: option_value(tail, "--by"),
@@ -2289,6 +2423,24 @@ fn option_value(tail: &[String], flag: &str) -> Option<String> {
     None
 }
 
+/// The bare arguments, with every value-taking flag's value removed.
+///
+/// The general `positional` list keeps flag values, which is right for commands whose
+/// flags all come after the positional but turns `--paths src/** "the task"` into a task
+/// called `src/**`.
+fn values_skipped<'a>(tail: &'a [String], value_flags: &[&str]) -> Vec<&'a String> {
+    let mut out = Vec::new();
+    let mut args = tail.iter();
+    while let Some(arg) = args.next() {
+        if value_flags.contains(&arg.as_str()) {
+            args.next();
+        } else if !arg.starts_with('-') {
+            out.push(arg);
+        }
+    }
+    out
+}
+
 /// Every value of a repeatable flag, in order.
 fn repeated(tail: &[String], flag: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -2419,6 +2571,7 @@ pub fn help_for(name: &str) -> Option<String> {
              \x20                         [--constraint <text>]... [--command <cmd>[=<result>]]...\n\
              \x20                         [--baseline <text>]... [--evidence <ref>]...\n\
              \x20                         [--artifact <path>]... [--budget <tokens>]\n\
+             akr handoff session begin --spec <file.json>\n\
              akr handoff session show | end\n\
              akr handoff worker | scout | reviewer | advisor\n\
              \x20                  --role <text> --task <text> | --task-file <path>\n\
@@ -2428,6 +2581,7 @@ pub fn help_for(name: &str) -> Option<String> {
              \x20                  [--note-hypothesis <text>]... [--note-examined <path>]...\n\
              \x20                  [--note-unexamined <path>]... [--note-approach <text>]...\n\
              \x20                  [--note-search <text>]...\n\
+             akr handoff worker | scout | reviewer | advisor --spec <file.json>\n\
              akr handoff list | open <id> [--reveal] | expand <id> <section>\n\
              akr handoff reveal <id> | verify <id> | discard <id>\n\
              akr handoff result <packet> [--finding <text>]... [--evidence <ref>]...\n\
@@ -2435,7 +2589,17 @@ pub fn help_for(name: &str) -> Option<String> {
              \x20                  [--follow-up <text>]... [--command <cmd>[=<result>]]...\n\
              \x20                  [--read <path[:range]>]... [--searched <query>]...\n\
              \x20                  [--tested <text>]... [--not-examined <path>]...\n\
+             akr handoff result <packet> --spec <file.json>\n\
              akr handoff results [<packet>] | coverage\n\
+             \n\
+             QUOTING. AKR never executes the text it is given -- but your shell does,\n\
+             before AKR starts. Inside double quotes `backticks` and $(...) are command\n\
+             substitution: --known \"run `cargo run --release ...`\" RUNS that build,\n\
+             and the packet is not cut until it finishes. Single-quote text that names a\n\
+             command, or write the fields to a file and pass --spec <file.json>: a JSON\n\
+             object with the MCP tool's argument names (knowledge.handoff_create,\n\
+             _session_begin, _result), which no shell reads. Unknown fields are refused.\n\
+             --spec takes no other content flags; the subcommand is the mode.\n\
              \n\
              A bounded, inheritable context object for transferring work between agents\n\
              (D-040, D-041). Three levels, inherited by reference and never copied:\n\
@@ -2571,13 +2735,14 @@ pub fn help_for(name: &str) -> Option<String> {
              \x20   --budget <tokens>   approximate token ceiling for the bundle\n"
         }
         "start" => {
-            "akr start <task> [--paths <glob> ...] [--budget <tokens>]\n\
+            "akr start <task> | --task <task> [--paths <glob> ...] [--budget <tokens>]\n\
              \n\
              Prints a validated project handoff (latest Git/AKR work, outstanding branches,\n\
              review attention and any dirty ledger overlay), then searches live planning\n\
              records and returns a ready-made context request when one result is clear.\n\
              \n\
              FLAGS\n\
+             \x20   --task <task>       the task, as knowledge.start names it; instead of <task>\n\
              \x20   --paths <glob>      path globs the work will touch; repeatable\n\
              \x20   --budget <tokens>   approximate token ceiling for the combined response\n"
         }
@@ -2797,13 +2962,28 @@ pub fn help_for(name: &str) -> Option<String> {
              \x20   --disposition     <child>=<outcome>[:<into>]; repeatable\n"
         }
         "supersede" => {
-            "akr supersede <old-key> --with <new-key>\n\
+            "akr supersede <old-key> [--with <new-key> [--from <file>] [--title <text>]]\n\
              \x20             [--disposition <child>=<outcome>[:<into>] ...]\n\
              \n\
-             Creates or updates the superseding record, moves the old head to\n\
-             `superseded`, and requires a disposition for every unfinished part_of\n\
-             child of a planning record (D-017). The error lists the children it\n\
-             needs; answer each one.\n\
+             Replaces a record in one atomic write: the successor gains a pinned\n\
+             `supersedes` edge and the old head moves to `superseded`. Requires a\n\
+             disposition for every unfinished part_of child of a planning record\n\
+             (D-017); the error lists the children it needs, so answer each one.\n\
+             \n\
+             Without --with, revision n+1 of <old-key> is the successor. With a\n\
+             --with key that does not exist yet, --from and/or --title create it,\n\
+             exactly as propose would, in the same write: the way to replace a\n\
+             decision on the same topic (no AKR-R002 window) or a verified\n\
+             observation or evidence record (no AKR-C032). An existing proposed\n\
+             replacement is edited to carry the edge; a sealed one gains revision\n\
+             n+1 with its body unchanged. Live references to the old head follow\n\
+             onto the successor.\n\
+             \n\
+             FLAGS\n\
+             \x20   --with <key>      the successor key; the same kind as <old-key>\n\
+             \x20   --from <file>     the new successor's body (slot list or record)\n\
+             \x20   --title <text>    the new successor's title\n\
+             \x20   --disposition     <child>=<outcome>[:<into>]; repeatable\n\
              \n\
              Outcomes: completed, carried_forward (with :<into>), intentionally_dropped,\n\
              obsolete.\n"

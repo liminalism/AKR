@@ -144,9 +144,13 @@ pub const TOOLS: &[Tool] = &[
     },
     Tool {
         name: "knowledge.supersede",
-        description: "Replace a record, disposing of every unfinished part_of child. A \
-                      different new_key must already be a proposed same-kind record; \
-                      propose its body first. Missing children are listed in the error.",
+        description: "Replace a record in one atomic write, disposing of every unfinished \
+                      part_of child. A new_key that does not exist is created from the \
+                      propose-style content fields in the same write — the way to replace \
+                      a decision on the same topic, or a verified observation or evidence \
+                      record. An existing proposed new_key gains the edge; a sealed one \
+                      gains revision n+1 with its body unchanged. Missing children are \
+                      listed in the error.",
         writes: true,
     },
     Tool {
@@ -630,10 +634,39 @@ pub fn input_schema(name: &str) -> Option<Value> {
                 (
                     "new_key",
                     string(
-                        "The superseding key. Defaults to old_key. A different key must \
-                         already exist as a proposed record of the same kind.",
+                        "The superseding key. Defaults to old_key (revision n+1 replaces \
+                         n). A key that does not exist yet is created in this write from \
+                         the content fields below, as knowledge.propose would; an \
+                         existing one is linked as it stands and the content fields \
+                         must be omitted.",
                     ),
                 ),
+                (
+                    "kind",
+                    string("The new successor's kind; defaults to, and must equal, old_key's."),
+                ),
+                ("title", string("The new successor's one-line label.")),
+                (
+                    "state",
+                    string("The new successor's state; defaults to its class's initial state."),
+                ),
+                ("scope", scope_schema()),
+                (
+                    "topic",
+                    string(
+                        "The new successor's exclusivity handle, normative kinds only. It \
+                         may be old_key's topic: the old head is retired in the same write.",
+                    ),
+                ),
+                ("slots", slots_schema()),
+                ("claims", claims_schema()),
+                ("relations", relations_schema()),
+                (
+                    "acceptance",
+                    acceptance_schema("The new successor's acceptance block."),
+                ),
+                ("sources", sources_schema()),
+                ("acknowledged", acknowledged_schema()),
                 ("dispositions", dispositions_schema()),
             ],
             &["old_key"],
@@ -1326,10 +1359,24 @@ fn relations_schema() -> Value {
     let properties = akr_core::model::Relation::ALL
         .iter()
         .map(|relation| {
-            (
-                relation.name().to_owned(),
-                string_array("References; target kinds are checked by V-005."),
-            )
+            // Each relation names the kinds it may point at. A proposer reading only that
+            // a decision "has supported_by" found out from two refusals in a row that a
+            // constraint is not among them.
+            let targets = match relation.range() {
+                akr_core::model::Range::Any => "References to any kind.".to_owned(),
+                akr_core::model::Range::SameKind => {
+                    "References to records of the same kind as this one.".to_owned()
+                }
+                akr_core::model::Range::Kinds(kinds) => format!(
+                    "References to: {} (V-005).",
+                    kinds
+                        .iter()
+                        .map(|kind| kind.name())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            };
+            (relation.name().to_owned(), string_array(&targets))
         })
         .collect();
     Value::object(vec![

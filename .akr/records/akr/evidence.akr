@@ -1060,6 +1060,18 @@ record akr.evidence.p11-change-protocol-suite/1 : evidence {
         """
 }
 
+record akr.evidence.papercut-reconciliation-2026-10-28/1 : evidence {
+    title "Fixes for the 19 papercuts collated into akr.papercut.collated-19-papercuts-from-kitchen-concept-lege verified on 2026-10-28: cargo test --no-fail-fast (default features and --no-default-features), cargo clippy --all-targets and cargo fmt --check are clean, except transcripts.rs every_transcript_is_reproduced_by_the_binary, which fails only on the eighth view OUTSTANDING-WORK.md introduced by the pre-existing uncommitted backlog view work, not by these fixes. Covered: handoff --spec and shell-substitution guidance, worktree packet fallback, MCP handoff_open briefing in structuredContent, start --task, get did-you-mean, V-105 shell-quote awareness, budgeted context bound and goal body, FTS-less index rebuild, revise commit gate, uncommitted-redefinition citation verdict, one-write supersede, relation target descriptions, claim-as-slot message, empty-repo G001 hint."
+    state verified
+    result pass
+    method manual
+    observed_at git:1fa96ea4a7d77fbf9f05c8b12ebad033b1ea896b
+    summary """
+        Fixes for the 19 papercuts collated into akr.papercut.collated-19-papercuts-from-kitchen-concept-lege verified on 2026-10-28: cargo test --no-fail-fast (default features and --no-default-features), cargo clippy --all-targets and cargo fmt --check are clean, except transcripts.rs every_transcript_is_reproduced_by_the_binary, which fails only on the eighth view OUTSTANDING-WORK.md introduced by the pre-existing uncommitted backlog view work, not by these fixes. Covered: handoff --spec and shell-substitution guidance, worktree packet fallback, MCP handoff_open briefing in structuredContent, start --task, get did-you-mean, V-105 shell-quote awareness, budgeted context bound and goal body, FTS-less index rebuild, revise commit gate, uncommitted-redefinition citation verdict, one-write supersede, relation target descriptions, claim-as-slot message, empty-repo G001 hint.
+        """
+    author "dk"
+}
+
 record akr.evidence.papercut-reconciliation-classification/1 : evidence {
     title "All 18 reports were reviewed against current implementation, docs, tests, decisions, and work history; each is explicitly classified in assessment akr.assessment.papercut-reconciliation-2026-08-11/2 and every surviving cluster has a live work record."
     state verified
@@ -1640,6 +1652,19 @@ record akr.evidence.snapshot-suite-after-help-and-version-fixes/1 : evidence {
         3 tests passed: hierarchy and inspector projection, freshness and git provenance ownership, and a missing workspace reported without a panic.
         """
     author "GitHub Uploader"
+}
+
+record akr.evidence.supersede-into-new-successor-suite/1 : evidence {
+    title "One-write supersede onto a new or sealed successor: same-topic decision replacement, verified observation and evidence corrections, sealed successor n+1, refusals (L041, L001, L031), live references following, and the propose-time G022 note all pass on CLI and MCP (2026-10-28, uncommitted working tree over 1fa96ea)."
+    state verified
+    result pass
+    method command
+    observed_at git:1fa96ea4a7d77fbf9f05c8b12ebad033b1ea896b
+    command "cargo test -p akr-core --test ops_write && cargo test -p akr-cli --test writes && cargo test -p akr-mcp --test writes"
+    summary """
+        One-write supersede onto a new or sealed successor: same-topic decision replacement, verified observation and evidence corrections, sealed successor n+1, refusals (L041, L001, L031), live references following, and the propose-time G022 note all pass on CLI and MCP (2026-10-28, uncommitted working tree over 1fa96ea).
+        """
+    author "dk"
 }
 
 record akr.evidence.sys-warm-cache-timing/1 : evidence {

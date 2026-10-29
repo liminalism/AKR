@@ -340,12 +340,12 @@ fn the_banner_is_identical_before_and_after_git_resolves_a_commit() {
 // -------------------------------------------------------------------------------------
 
 #[test]
-fn the_catalogue_is_seven_views_with_distinct_names_and_files() {
-    assert_eq!(View::ALL.len(), 7);
+fn the_catalogue_is_eight_views_with_distinct_names_and_files() {
+    assert_eq!(View::ALL.len(), 8);
     let names: BTreeSet<&str> = View::ALL.iter().map(|v| v.name()).collect();
     let files: BTreeSet<&str> = View::ALL.iter().map(|v| v.file_name()).collect();
-    assert_eq!(names.len(), 7);
-    assert_eq!(files.len(), 7);
+    assert_eq!(names.len(), 8);
+    assert_eq!(files.len(), 8);
 }
 
 #[test]
@@ -859,5 +859,45 @@ fn regenerate_the_worked_example_views() {
             continue;
         };
         std::fs::write(dir.join(view.file_name()), rendered).expect("writable");
+    }
+}
+
+#[test]
+fn outstanding_work_lists_only_live_planning_heads() {
+    let workspace = example();
+    let inputs = example_inputs(&workspace);
+    let model = ResolvedModel::build(&workspace.ledger, &inputs);
+    let freshness = Freshness::none();
+    let view = render(View::Backlog, RenderContext::new(&model, &freshness)).unwrap();
+    assert!(view.contains("1/2 checks satisfied"), "{view}");
+    assert!(view.contains("0/1 checks satisfied"), "{view}");
+    assert!(
+        view.contains("part of `@sys.milestone.m3-playable-day/1`"),
+        "{view}"
+    );
+    assert!(
+        view.contains("ACTIVE-WORK.md#extract-the-render-graph-behind-the-boundary"),
+        "{view}"
+    );
+    for heading in ["## Active", "## Blocked", "## Ready", "## Proposed"] {
+        assert!(view.contains(heading), "{view}");
+    }
+    for id in model.heads.values() {
+        let record = workspace.ledger.get(id).unwrap();
+        let included = matches!(record.kind, Kind::Milestone | Kind::Track | Kind::Work)
+            && matches!(
+                record.state.name(),
+                "active" | "blocked" | "ready" | "proposed"
+            )
+            && !record
+                .file
+                .as_deref()
+                .is_some_and(|p| p.contains("/archive/") || p.starts_with("archive/"));
+        assert_eq!(
+            view.contains(&format!("`@{}`", record.id)),
+            included,
+            "{}",
+            record.id
+        );
     }
 }

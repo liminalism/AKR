@@ -315,10 +315,28 @@ impl Session {
 
         if let Some(repository) = &repository {
             let cache = akr_core::cache::FactCache::new(&self.akr_dir);
-            if let Ok(last_change) =
-                akr_core::git::last_changes_cached(repository, &self.ledger, &cache)
+            // Answered against the definitions the working tree holds, not the ones `HEAD`
+            // does: a revision written but not yet committed is newer than every commit, and
+            // reading it as "no facts" let it take any passing evidence at its word.
+            let record_files: std::collections::BTreeSet<&str> = self
+                .ledger
+                .records()
+                .iter()
+                .filter_map(|record| record.file.as_deref())
+                .collect();
+            let mut working = std::collections::BTreeMap::new();
+            for file in self.sources.iter() {
+                if record_files.contains(file.path.as_str()) {
+                    working
+                        .entry(file.path.clone())
+                        .or_insert_with(|| file.text.clone());
+                }
+            }
+            if let Ok(facts) =
+                akr_core::git::definition_facts_cached(repository, &self.ledger, &working, &cache)
             {
-                self.ledger.facts.last_change = last_change;
+                self.ledger.facts.last_change = facts.last_change;
+                self.ledger.facts.uncommitted = facts.uncommitted;
             }
             let commits: Vec<Commit> = self
                 .ledger

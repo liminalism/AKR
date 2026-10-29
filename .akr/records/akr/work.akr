@@ -3219,7 +3219,7 @@ record akr.work.sources-merge-or-refuse/1 : work {
 
 record akr.work.supersede-onto-sealed-successor/1 : work {
     title "Supersede onto a sealed successor in one command"
-    state proposed
+    state completed
     intent """
         Supersede onto a sealed successor in one command. Moving to an already-sealed
         successor record currently fails AKR-C032 with help text only; no single command

@@ -8,7 +8,6 @@
 #![allow(missing_docs)] // The adapter is intentionally public while its CLI API settles.
 
 pub mod model;
-pub mod render;
 pub mod ui;
 
 pub use model::{

@@ -913,9 +913,16 @@ fn a_handoff_opens_the_same_way_from_either_surface() {
     assert_eq!(tool.to_pretty(), cli.to_pretty());
 
     // The session capsule is inherited, not copied, and it comes through resolved -- in
-    // the text, which is the briefing. The structured half is an index into it, so the
-    // model is not shown every inherited fact twice under one budget.
+    // the text, which is the briefing. The structured half carries that same briefing
+    // once, because a host that shows the model only `structuredContent` otherwise
+    // delivered an index with no assignment in it; beyond that it is an index, so no
+    // section is duplicated field by field.
     let briefing = call_text(&example, "knowledge.handoff_open", &request);
+    assert_eq!(
+        tool.get("briefing").and_then(Value::as_str),
+        Some(briefing.as_str()),
+        "a structured-only host must still receive the briefing"
+    );
     assert!(
         briefing.contains("memory and CPU"),
         "the verbatim request reaches the child:\n{briefing}"
@@ -933,7 +940,7 @@ fn a_handoff_opens_the_same_way_from_either_surface() {
     );
     assert!(
         tool.get("request").is_none() && tool.get("session_head").is_none(),
-        "the structured half must not duplicate the briefing:\n{}",
+        "the structured half must not duplicate the briefing section by section:\n{}",
         tool.to_pretty()
     );
     assert!(

@@ -1781,6 +1781,96 @@ record akr.papercut.collated-19-papercuts-from-evidence-intake/2 : papercut {
     created_at 2026-08-22
 }
 
+record akr.papercut.collated-19-papercuts-from-kitchen-concept-lege/1 : papercut {
+    title "Collated 19 papercuts from Kitchen-Concept, Lege-ecosystem, LegeOS, SYS and 2 more"
+    state verified
+    statement """
+        Collated 19 papercuts from /home/dk/rust-projects on 2026-10-28 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
+
+        ## Kitchen-Concept @kitchen.papercut.replacing-a-decision-on-the-same-topic-needs-a [about akr]
+        Replacing a decision on the same topic needs a detour: propose of the new record fails AKR-R002 (both live on one topic), and supersede --with refuses until the new key exists and has no --from/--title. Workaround: propose without topic, repoint dependants, supersede, then revise to add the topic.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.akr-start-for-outstanding-planning-view-failed [about akr]
+        akr start for outstanding planning view failed with AKR-I022 because the existing index cache was built without FTS5; the mandated planning read could not complete.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.while-auditing-proposed-records-the-cli [about akr]
+        While auditing proposed records, the CLI spelling of knowledge.start's task argument was not obvious: `akr start --task ...` failed with AKR-C002. The MCP uses a named task field but the CLI expects a positional request; the catalogue's mapping could include this difference.
+
+        ## LegeOS @legeos.papercut.after-committing-the-lxqt-task-as45b3a19 [about akr]
+        After the LXQt commit 45b3a19, knowledge.validate increased from 15 pre-commit warnings to 51 diagnostics: obsolete scopes (G023), historical commands with symbols missing from the current tree (G024), and command-shape checks (G025). None of those older tests changed in this commit; reconcile historical evidence and source-index behavior separately.
+
+        ## LegeOS @legeos.papercut.while-recording-the-lxqt-task-propose-required [about akr]
+        While recording the LXQt task, propose required work slots.intent although an intent claim was supplied. Retried with slots.intent; broad context paths also exceeded the hard output limit and needed a narrowed greeter path.
+
+        ## SYS @saveyourskin.papercut.a-newly-proposed-verified-observation-accepted [about akr]
+        A newly proposed verified observation accepted watches for files introduced in the current working tree, but strict check later raises G022 because the paths are absent at HEAD. No metadata-only watch edit/rebaseline operation is exposed; supersession also cannot fix this without a sealed revision: propose with supersedes refuses L021 while the old observation is verified, and supersede refuses sealed observation replacements (C032). Need a supported atomic observation replacement or metadata-watch correction that preserves sealed prose.
+
+        ## SYS @saveyourskin.papercut.after-the-garden-drop-ledger-commits-akr [about akr]
+        After the garden-drop ledger commits, `akr validate` on this 2711-record ledger took 10m53s of wall clock for one run (0 errors, 224 pre-existing AKR-G023/G024 scope-path warnings), where `akr build && akr validate` had finished inside a 180 s tool timeout an hour earlier; running two validates concurrently made both hang past 12 minutes and had to be killed. The slow stage looks like V-102 scope matching against git at HEAD for every stale-path record; caching the tracked-path set per commit would likely fix it.
+
+        ## SYS @saveyourskin.papercut.akr-0-5-2-g024-g025-scan-quoted-jq-programs-as [about akr]
+        AKR 0.5.2 G024/G025 scan quoted jq programs as shell pipelines and test filters; a valid jq -e object expression raised both errors. Historical placeholder commands also need a report-only representation instead of reclassifying their prose as runnable gates. Fresh-head validation's unscoped git grep over tracked assets takes several minutes.
+
+        ## SYS @saveyourskin.papercut.akr-handoff-worker-cut-on-2026-10-27-07-03 [about akr]
+        `akr handoff worker` cut on 2026-10-27 07:03 never returned: its --known text quoted the seed-corpus lane command in backticks (`cargo run --release -p sys_headless -- --seed-corpus ... --out DIR --write-corpus`) and the tool compiled and executed that line literally (task output shows `Running target/release/sys_headless --seed-corpus ... --out DIR --write-corpus`, 95/144 witnesses into a repo-root DIR/ before the session was killed ~75 min later); no packet was written, and the parent session blocked on it for the rest of the day. Guess: the packet cutter runs any shell-looking string it finds in --command/--known to capture a result; it should never execute text, or should require an explicit opt-in flag.
+
+        ## SYS @saveyourskin.papercut.knowledge-context-with-budget-tokens-12000-for [about akr]
+        knowledge.context with budget_tokens 12000 for saveyourskin.work.dunwold-profession-offices returned a 210,403-character bundle that the harness refused and spilled to a file; the goal record itself came back with only key/rev/title, so the budget neither bounded the bundle nor protected the goal's intent. Had to fall back to knowledge.get per record.
+
+        ## SYS @saveyourskin.papercut.rewriting-a-work-record-s-acceptance-block-via [about akr]
+        Rewriting a work record's acceptance block via knowledge.revise flipped a stale citation to satisfied: re-citing the September E5 evidence (whose fixture provably fails at HEAD) in rev 8 computed as satisfied until I removed the citation in rev 9. A revise that carries a stale verified_by forward should keep it stale, or warn; silent laundering risks false greens.
+
+        ## SYS @saveyourskin.papercut.superseding-a-mistaken-empirical-observation [about akr]
+        Superseding a mistaken empirical observation/evidence with newly proposed corrected empirical records fails AKR-C032 because observation/evidence initialize verified, while supersede edits replacements only if proposed. The diagnostic recommends sealed revise, forbidden by project workflow; retained explicit correction records instead.
+
+        ## TemplarTorrent @templartorrent.papercut.knowledge-revise-accepted-an-observation-whose [about akr]
+        knowledge.revise accepted an observation whose observed_at named a commit that does not exist, and wrote the revision; only the next `akr check` reported AKR-G011. knowledge.propose rejects the same input up front. revise should run the same commit-presence check before writing.
+
+        ## nofurthercontact @nofurthercontact.papercut.knowledge-handoff-open-mcp-for-packet-wk [about akr]
+        knowledge.handoff_open (MCP) for packet wk-e8cf5f5dc165 returned only the structured index (sections list, drift) and none of the briefing text its description promises; had to rerun `akr handoff open <id>` on the CLI to read the assignment, notes and commands.
+
+        ## nofurthercontact @nofurthercontact.papercut.opening-the-worker-packet-from-inside-a [about akr]
+        Opening the worker packet from inside a worktree checkout fails (AKR-C043: no handoff object): packets live only in the main checkout's .agent/handoffs, which is not versioned, so worktree agents read the JSON by absolute path. Falling back to the main checkout's .agent/handoffs would fix it.
+
+        ## nofurthercontact @nofurthercontact.papercut.proposing-an-active-decision-was-refused-twice [about akr]
+        Proposing an active decision was refused twice: first for citing nothing (V-021), then because supported_by may not target a constraint (V-005) although the propose tool's kind description lists supported_by among decision relations without naming allowed targets; the second error's help text was what made it clear. Separately, papercut and evidence writes fail with AKR-G001 on a repository with no commits, which forced a root commit before any Phase-0 ledger evidence could be recorded.
+
+        ## nofurthercontact @nofurthercontact.papercut.the-handoff-briefing-named-constraints-by-short [about akr]
+        The handoff briefing named constraints by short name (foot-ray-geometry, ...); 'akr get foot-ray-geometry' and 'akr get constraint.foot-ray-geometry' both fail with AKR-L001 and only '@nofurthercontact.constraint.foot-ray-geometry' resolves. A did-you-mean on a unique suffix match would save the retry.
+
+        ## nofurthercontact @nofurthercontact.papercut.the-handoff-open-command-fails-with-akr-c043-no [about akr]
+        The handoff open command fails with AKR-C043 (no handoff object) when run inside a git worktree of the repository: packets live only in the main checkout's untracked state, so a worktree-isolated worker has to open its packet from the parent checkout. Resolving the main worktree via the git common dir would fix it.
+
+        ## nofurthercontact @nofurthercontact.papercut.worker-packet-opened-from-a-worktree-akr [about akr]
+        Worker packet opened from a worktree: `akr handoff open wk-05dd5c1fcefd` fails with AKR-C043 inside the worktree, because the handoff store and the uncommitted revision of the work record exist only in the main checkout. The worker saw v1 of the record, and its evidence had to be written to the main checkout's ledger. Packets cut for worktree agents could embed the record bodies, or `handoff open` could fall back to the main checkout.
+        """
+    observed_at git:1fa96ea4a7d77fbf9f05c8b12ebad033b1ea896b
+    about "akr"
+    collated [
+        "kitchen.papercut.replacing-a-decision-on-the-same-topic-needs-a",
+        "lege-ecosystem.papercut.akr-start-for-outstanding-planning-view-failed",
+        "lege-ecosystem.papercut.while-auditing-proposed-records-the-cli",
+        "legeos.papercut.after-committing-the-lxqt-task-as45b3a19",
+        "legeos.papercut.while-recording-the-lxqt-task-propose-required",
+        "saveyourskin.papercut.a-newly-proposed-verified-observation-accepted",
+        "saveyourskin.papercut.after-the-garden-drop-ledger-commits-akr",
+        "saveyourskin.papercut.akr-0-5-2-g024-g025-scan-quoted-jq-programs-as",
+        "saveyourskin.papercut.akr-handoff-worker-cut-on-2026-10-27-07-03",
+        "saveyourskin.papercut.knowledge-context-with-budget-tokens-12000-for",
+        "saveyourskin.papercut.rewriting-a-work-record-s-acceptance-block-via",
+        "saveyourskin.papercut.superseding-a-mistaken-empirical-observation",
+        "templartorrent.papercut.knowledge-revise-accepted-an-observation-whose",
+        "nofurthercontact.papercut.knowledge-handoff-open-mcp-for-packet-wk",
+        "nofurthercontact.papercut.opening-the-worker-packet-from-inside-a",
+        "nofurthercontact.papercut.proposing-an-active-decision-was-refused-twice",
+        "nofurthercontact.papercut.the-handoff-briefing-named-constraints-by-short",
+        "nofurthercontact.papercut.the-handoff-open-command-fails-with-akr-c043-no",
+        "nofurthercontact.papercut.worker-packet-opened-from-a-worktree-akr"
+    ]
+    author "dk"
+    created_at 2026-10-28
+}
+
 record akr.papercut.collated-2-papercuts-from-evidence-intake/1 : papercut {
     title "Collated 2 papercuts from Evidence-intake-project, Kitchen-Concept, Lege-ecosystem, SaveYourSkin and 5 more"
     state superseded

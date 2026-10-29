@@ -42,11 +42,16 @@ fn missing_commit(session: &Session, suggest_flag: bool) -> EnvError {
         "make an initial commit, or pass observed_at"
     };
     if session.repository.is_some() {
+        // No --observed-at here: a repository with no commits has nothing it could name,
+        // and suggesting one sent a caller looking for a commit that does not exist.
         EnvError::new(
             "AKR-G001",
             "no commit to record: the repository has no commits yet",
         )
-        .help(hint)
+        .help(
+            "an empirical record is anchored to a commit and this repository has none; \
+             `git commit --allow-empty -m root` makes one, then retry",
+        )
     } else {
         EnvError::new(
             "AKR-G001",
@@ -80,16 +85,15 @@ pub fn run(session: &Session, command: &Command) -> Result<Output, EnvError> {
             if let Some(record) = &template {
                 ensure_commits_exist(session, &commits_named_by(record))?;
             }
-            render(
-                session,
-                akr_core::ops::propose(
-                    &context,
-                    &key,
-                    kind,
-                    title.as_deref().unwrap_or_default(),
-                    template,
-                ),
-            )
+            let mut result = akr_core::ops::propose(
+                &context,
+                &key,
+                kind,
+                title.as_deref().unwrap_or_default(),
+                template.clone(),
+            );
+            note_unmatched_watches(session, &mut result, &key, template.as_ref());
+            render(session, result)
         }
         Command::Revise {
             key,
@@ -120,7 +124,10 @@ pub fn run(session: &Session, command: &Command) -> Result<Output, EnvError> {
                 .map(|head| head.kind)
                 .unwrap_or(Kind::Work);
             if let Some(body) = body_from(session, from.as_deref(), &key, kind)? {
-                ensure_commits_exist(session, &commits_named_by(&body.record))?;
+                ensure_commits_exist(
+                    session,
+                    &commits_introduced_by(session.ledger.head(&key).ok(), &body.record),
+                )?;
                 if let Ok(head) = session.ledger.head(&key) {
                     if edits.state.is_none() && body.mentioned.contains("state") {
                         edits.state = Some(body.record.state);
@@ -146,17 +153,48 @@ pub fn run(session: &Session, command: &Command) -> Result<Output, EnvError> {
         Command::Supersede {
             key,
             with,
+            from,
+            title,
             dispositions,
         } => {
             let key = parse_key(key)?;
-            let replacement = with.as_deref().map(parse_key).transpose()?;
+            let replacement = with
+                .as_deref()
+                .map(parse_key)
+                .transpose()?
+                .unwrap_or_else(|| key.clone());
             let dispositions = parse_dispositions(dispositions)?;
-            let result = match replacement {
-                Some(replacement) if replacement != key => {
-                    akr_core::ops::supersede_with(&context, &key, &replacement, &dispositions)
+            // `--from`/`--title` ask for the successor to be created in this write. The
+            // body is read as propose reads one, with the old record's kind for a slot
+            // list: `supersedes` replaces like with like, and the library refuses a file
+            // that declares another kind.
+            let successor = if from.is_some() || title.is_some() {
+                let kind = session
+                    .ledger
+                    .head(&key)
+                    .map(|head| head.kind)
+                    .unwrap_or(Kind::Work);
+                let template = body_from(session, from.as_deref(), &replacement, kind)?
+                    .map(|body| body.record);
+                if let Some(record) = &template {
+                    ensure_commits_exist(session, &commits_named_by(record))?;
                 }
-                _ => akr_core::ops::supersede(&context, &key, &dispositions),
+                Some(akr_core::ops::NewSuccessor {
+                    title: title.clone().unwrap_or_default(),
+                    template,
+                })
+            } else {
+                None
             };
+            let template = successor.as_ref().and_then(|s| s.template.clone());
+            let mut result = akr_core::ops::supersede_into(
+                &context,
+                &key,
+                &replacement,
+                successor,
+                &dispositions,
+            );
+            note_unmatched_watches(session, &mut result, &replacement, template.as_ref());
             render(session, result)
         }
         Command::Complete { key, checks } => {
@@ -597,6 +635,82 @@ pub fn commits_named_by(record: &akr_core::model::Record) -> Vec<Commit> {
             akr_core::model::ContentValue::Commit(commit) => Some(commit.clone()),
             _ => None,
         })
+        .collect()
+}
+
+/// Adds a note for each `watches` glob of a record this write created that matches no
+/// path at the resolved commit.
+///
+/// That is `AKR-G022` (V-102) waiting to happen: the write validates stages A–D, which
+/// never look at the tree, so a watch over files that exist only in the working tree is
+/// accepted here and first reported by the next `akr check`, after the record is sealed
+/// — and an observation is sealed from the moment it exists. Saying so now is the one
+/// moment the author can still commit the files first or correct the glob. A note, never
+/// a refusal: the files being uncommitted is usually just the order of work.
+pub fn note_unmatched_watches(
+    session: &Session,
+    result: &mut WriteResult,
+    key: &LogicalKey,
+    template: Option<&Record>,
+) {
+    let (Ok(applied), Some(template)) = (result.as_mut(), template) else {
+        return;
+    };
+    if akr_core::freshness::watches(template).is_empty() {
+        return;
+    }
+    let (Some(repository), Some(commit)) = (&session.repository, &session.commit) else {
+        return;
+    };
+    let Some(created) = applied
+        .changes
+        .iter()
+        .find(|change| change.id.key == *key && matches!(change.kind, ChangeKind::Created))
+    else {
+        return;
+    };
+    let mut record = template.clone();
+    record.id = created.id.clone();
+    let mut ledger = akr_core::model::Ledger::new(session.ledger.project.clone());
+    ledger.insert(record);
+    let Ok(diagnostics) = akr_core::freshness::unmatched_watches(&ledger, repository, commit)
+    else {
+        return;
+    };
+    for diagnostic in diagnostics
+        .iter()
+        .filter(|d| d.code == akr_core::git::codes::G022)
+    {
+        let help = diagnostic
+            .help
+            .as_deref()
+            .map(|help| format!("; {help}"))
+            .unwrap_or_default();
+        applied.notes.push(format!(
+            "warning[{}]: {}{help}",
+            diagnostic.code, diagnostic.message
+        ));
+    }
+}
+
+/// The commits a revision names that the revision it replaces did not, for
+/// [`ensure_commits_exist`] on every revise path.
+///
+/// `knowledge.revise` merges its slots onto the head, so the record it writes names every
+/// commit the head already named as well as any the caller supplied, and checking all of
+/// them would refuse a retitle of a record whose `observed_at` a rewritten history has
+/// since stranded — the AKR-G011 the build already reports, and one a write that does not
+/// touch the slot cannot repair. A write answers for what it introduces, not for what it
+/// inherits (D-039), so only the commits this write brings in are checked; with no head
+/// (revise of a key that does not resolve yet) that is all of them.
+pub fn commits_introduced_by(
+    head: Option<&akr_core::model::Record>,
+    record: &akr_core::model::Record,
+) -> Vec<Commit> {
+    let inherited = head.map(commits_named_by).unwrap_or_default();
+    commits_named_by(record)
+        .into_iter()
+        .filter(|commit| !inherited.contains(commit))
         .collect()
 }
 

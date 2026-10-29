@@ -305,7 +305,9 @@ and the ledger stops being the single source of truth.
 
 A second concurrent build in the same workspace fails with `AKR-I032` rather than
 racing. A read command that needs a rebuild while `--no-rebuild` is in force fails with
-`AKR-I031`; `akr search` against a cache built without FTS5 fails with `AKR-I022`.
+`AKR-I031`. `akr search` in a binary built without FTS5 fails with `AKR-I022`; a binary
+with FTS5 treats a cache that lacks `records_fts` (one written by a binary without it) as
+stale and rebuilds it, or under `--no-rebuild` fails with `AKR-I031` naming `akr build`.
 
 **Determinism.** Rows are inserted in canonical order (§8) so that a dump is stable, and
 `rowid` is never used as an identifier that escapes the cache. SQLite's on-disk page

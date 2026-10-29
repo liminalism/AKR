@@ -171,6 +171,15 @@ pub struct LedgerFacts {
     pub lock_present: bool,
     /// The last commit that changed each revision's content (V-020, D-016).
     pub last_change: BTreeMap<RevisionId, Commit>,
+    /// Revisions whose definition no commit holds yet: their last content change is the
+    /// working tree itself (V-020, D-016).
+    ///
+    /// Distinct from a revision that is simply absent from `last_change`, which means the
+    /// facts to decide were not supplied and the evidence is taken at its word. A revision
+    /// in here is newer than every commit, so evidence observed at any existing commit
+    /// cannot descend from it — unless the evidence is uncommitted too, which is the
+    /// prepared-change shape the two would share a commit in.
+    pub uncommitted: BTreeSet<RevisionId>,
     /// Commit ancestry (V-020, D-016).
     pub ancestry: Ancestry,
     /// Referenced commits the resolved head does not reach (V-020, `AKR-G012`).

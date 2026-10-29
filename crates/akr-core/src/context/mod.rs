@@ -316,7 +316,12 @@ pub struct Bundle {
     pub excluded: Excluded,
     /// Records whose prose the budget truncated (`AKR-X022`).
     pub truncated: Vec<RevisionId>,
-    /// The approximate token count.
+    /// Records the budget withheld whole, by the section they were selected into, each
+    /// list in that section's order. The selection reached them; only their entries were
+    /// left out, and the bundle names every one so the reader can fetch it.
+    pub withheld: BTreeMap<Section, Vec<RevisionId>>,
+    /// The approximate token count of the delivered bundle, both forms
+    /// ([`delivered_tokens`]).
     pub estimated_tokens: usize,
 }
 
@@ -343,6 +348,12 @@ impl Bundle {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.members().is_empty()
+    }
+
+    /// How many entries the budget withheld, across sections.
+    #[must_use]
+    pub fn withheld_count(&self) -> usize {
+        self.withheld.values().map(Vec::len).sum()
     }
 }
 
@@ -786,10 +797,11 @@ pub fn assemble(
         contradictions,
         excluded,
         truncated: Vec::new(),
+        withheld: BTreeMap::new(),
         estimated_tokens: 0,
     };
 
-    apply_budget(&mut bundle, model, request)?;
+    apply_budget(&mut bundle, model, freshness, request)?;
     Ok(bundle)
 }
 
@@ -797,96 +809,263 @@ pub fn assemble(
 // Budgeting (§6)
 // -------------------------------------------------------------------------------------
 
-/// Applies the token budget, truncating prose only.
+/// Tokens held back from the budget for the `budget` accounting object the command adds
+/// after assembly, so that the object reporting the promise does not itself break it.
+const BUDGET_RESERVE: usize = 64;
+
+/// How many observations survive whole before any other record is withheld (§6 step 6).
+const KEPT_OBSERVATIONS: usize = 10;
+
+/// The token estimate every context budget is measured with: four characters a token.
 ///
-/// What never truncates: any relation, the goal, the plan of record and its dispositions,
-/// any acceptance check or verdict, any contradiction, any staleness warning, and any
-/// state, scope, key or revision. A truncated relation set is a lie about the graph, and
-/// the graph is the part a reader cannot reconstruct from anywhere else (V-123).
+/// That is what tokenizers average on English prose and the rule of thumb hosts apply
+/// when they decide a tool result is too large to keep, so a budget measured this way is
+/// a budget the host agrees with. It overcounts runs of indentation a little, which errs
+/// toward a smaller bundle rather than a refused one.
+///
+/// It replaced a words-plus-punctuation count that read a dotted key, a JSON field or a
+/// box-drawing rule as a single token. On a 2,700-record ledger that undercounted the
+/// delivered bundle about two and a half times, so a bundle "within" a 12,000-token
+/// budget arrived at more than 100,000 characters and was refused by the host.
+#[must_use]
+pub fn estimate_tokens(text: &str) -> usize {
+    text.chars().count().div_ceil(4)
+}
+
+/// What a bundle costs to deliver: its text form and its JSON form, which MCP sends
+/// together and which `--budget` is stated in.
+#[must_use]
+pub fn delivered_tokens(
+    bundle: &Bundle,
+    model: &ResolvedModel<'_>,
+    freshness: &Freshness,
+) -> usize {
+    estimate_tokens(&render_text(bundle, model, freshness))
+        + estimate_tokens(&render_json(bundle, model).to_pretty())
+}
+
+/// One step of reduction, in the order the budget spends them.
+#[derive(Debug, Clone)]
+enum Reduction {
+    /// Drop a record's prose, keeping its header, scope and relations.
+    Truncate(RevisionId),
+    /// Withhold a record's entry from a section whole, naming it in the section's
+    /// `withheld` list so the reader can fetch it.
+    Withhold(Section, RevisionId),
+}
+
+/// Applies the token budget.
+///
+/// The budget is measured against the *rendered* bundle — both forms, with the same
+/// estimator the command reports — not against the records selected, which is a far
+/// smaller number and the reason a budgeted bundle used to arrive several times over.
+///
+/// Reduction is a fixed sequence (§6), each section spent from its tail, which is the
+/// least-ranked end of every section's sort order:
+///
+/// 1. prose of observations, normative records, dependencies and questions;
+/// 2. observations beyond the ten that lead the section, withheld whole;
+/// 3. normative records, then dependencies (deepest first, blockers last), withheld whole;
+/// 4. prose of work items;
+/// 5. questions, the leading observations, and work items, withheld whole.
+///
+/// The bundle takes the shortest prefix of that sequence that fits. What never reduces:
+/// the goal — its body is the intent the whole bundle serves — the milestone, the plan of
+/// record and its dispositions, acceptance verdicts, contradictions, staleness warnings,
+/// and the key and revision of every record the selection reached. A withheld record is
+/// named in its section, so the graph the reader is shown is incomplete in a way it says,
+/// never in a way it hides (V-123).
 fn apply_budget(
     bundle: &mut Bundle,
     model: &ResolvedModel<'_>,
+    freshness: &Freshness,
     request: &Request,
 ) -> Result<(), ContextError> {
-    let mandatory = mandatory_tokens(bundle, model);
-    let mut truncated: BTreeSet<RevisionId> = BTreeSet::new();
-    bundle.estimated_tokens = total_tokens(bundle, model, &truncated);
-
     let Some(budget) = request.budget else {
+        bundle.estimated_tokens = delivered_tokens(bundle, model, freshness);
         return Ok(());
     };
+    let mandatory = mandatory_tokens(bundle, model, freshness);
     if mandatory > budget {
         return Err(ContextError::BudgetTooSmall {
             budget,
             required: mandatory,
         });
     }
-    if bundle.estimated_tokens <= budget {
+    let target = budget.saturating_sub(BUDGET_RESERVE).max(mandatory);
+
+    let base = bundle.clone();
+    let measure = |reduced: &Bundle| delivered_tokens(reduced, model, freshness);
+    let initial = measure(&base);
+    if initial <= target {
+        bundle.estimated_tokens = initial;
         return Ok(());
     }
 
-    // Order of reduction (§6): observation prose, then normative prose. Everything else
-    // is mandatory.
-    for section in [Section::Observations, Section::Normative] {
-        for entry in bundle.section(section).to_vec() {
-            if bundle.estimated_tokens <= budget {
-                break;
-            }
-            truncated.insert(entry.id().clone());
-            bundle.estimated_tokens = total_tokens(bundle, model, &truncated);
+    let reductions = reductions_for(&base);
+    let full = reduce(&base, &reductions);
+    let full_cost = measure(&full);
+    if full_cost > target {
+        // Irreducible above the request. Deliver the smallest honest bundle; the command
+        // reports both figures.
+        *bundle = full;
+        bundle.estimated_tokens = full_cost;
+        return Ok(());
+    }
+
+    // The cost falls as the prefix grows, so the shortest prefix that fits is found by
+    // bisection: a handful of renders rather than one per record.
+    let (mut low, mut high) = (0usize, reductions.len());
+    let mut best = (full, full_cost);
+    while low + 1 < high {
+        let middle = low + (high - low) / 2;
+        let candidate = reduce(&base, &reductions[..middle]);
+        let cost = measure(&candidate);
+        if cost <= target {
+            high = middle;
+            best = (candidate, cost);
+        } else {
+            low = middle;
         }
     }
-    bundle.truncated = truncated.into_iter().collect();
+    let (reduced, cost) = best;
+    *bundle = reduced;
+    bundle.estimated_tokens = cost;
     Ok(())
 }
 
-/// A crude token estimate: words plus punctuation, which is close enough for a budget
-/// whose only job is to decide what to shorten.
-fn tokens_of(text: &str) -> usize {
-    text.split_whitespace().count() * 4 / 3
-}
-
-fn record_tokens(model: &ResolvedModel<'_>, id: &RevisionId, include_prose: bool) -> usize {
-    let Some(record) = model.ledger().get(id) else {
-        return 0;
+/// The reduction sequence for a bundle, in spending order.
+fn reductions_for(bundle: &Bundle) -> Vec<Reduction> {
+    let protected: BTreeSet<&RevisionId> = std::iter::once(&bundle.goal)
+        .chain(bundle.section(Section::Milestone).iter().map(Entry::id))
+        .chain(bundle.section(Section::PlanOfRecord).iter().map(Entry::id))
+        .collect();
+    let tail = |section: Section, skip: usize| -> Vec<RevisionId> {
+        bundle
+            .section(section)
+            .iter()
+            .skip(skip)
+            .rev()
+            .map(Entry::id)
+            .filter(|id| !protected.contains(id))
+            .cloned()
+            .collect()
     };
-    let mut total = tokens_of(&record.title) + 12;
-    if include_prose {
-        for value in record.content.values() {
-            if let ContentValue::Prose(text) | ContentValue::Text(text) = value {
-                total += tokens_of(text);
+    let head = |section: Section, take: usize| -> Vec<RevisionId> {
+        bundle
+            .section(section)
+            .iter()
+            .take(take)
+            .rev()
+            .map(Entry::id)
+            .filter(|id| !protected.contains(id))
+            .cloned()
+            .collect()
+    };
+
+    let mut out = Vec::new();
+    let mut truncated: BTreeSet<RevisionId> = BTreeSet::new();
+    let mut truncate = |out: &mut Vec<Reduction>, ids: Vec<RevisionId>| {
+        for id in ids {
+            if truncated.insert(id.clone()) {
+                out.push(Reduction::Truncate(id));
             }
         }
-        for claim in &record.claims {
-            total += tokens_of(&claim.text);
+    };
+    let withhold = |out: &mut Vec<Reduction>, section: Section, ids: Vec<RevisionId>| {
+        out.extend(ids.into_iter().map(|id| Reduction::Withhold(section, id)));
+    };
+
+    for section in [
+        Section::Observations,
+        Section::Normative,
+        Section::Dependencies,
+        Section::Questions,
+    ] {
+        truncate(&mut out, tail(section, 0));
+    }
+    withhold(
+        &mut out,
+        Section::Observations,
+        tail(Section::Observations, KEPT_OBSERVATIONS),
+    );
+    withhold(&mut out, Section::Normative, tail(Section::Normative, 0));
+    withhold(
+        &mut out,
+        Section::Dependencies,
+        tail(Section::Dependencies, 0),
+    );
+    truncate(&mut out, tail(Section::WorkItems, 0));
+    withhold(&mut out, Section::Questions, tail(Section::Questions, 0));
+    withhold(
+        &mut out,
+        Section::Observations,
+        head(Section::Observations, KEPT_OBSERVATIONS),
+    );
+    withhold(&mut out, Section::WorkItems, tail(Section::WorkItems, 0));
+    out
+}
+
+/// `bundle` with `reductions` applied.
+fn reduce(bundle: &Bundle, reductions: &[Reduction]) -> Bundle {
+    let mut out = bundle.clone();
+    let mut truncated: BTreeSet<RevisionId> = bundle.truncated.iter().cloned().collect();
+    let mut withheld: BTreeMap<Section, BTreeSet<RevisionId>> = BTreeMap::new();
+    for reduction in reductions {
+        match reduction {
+            Reduction::Truncate(id) => {
+                truncated.insert(id.clone());
+            }
+            Reduction::Withhold(section, id) => {
+                withheld.entry(*section).or_default().insert(id.clone());
+            }
         }
     }
-    total
+    for (section, ids) in &withheld {
+        let Some(entries) = out.sections.get_mut(section) else {
+            continue;
+        };
+        // In the section's own order, so the list reads like the section it came from.
+        let list = out.withheld.entry(*section).or_default();
+        list.extend(
+            entries
+                .iter()
+                .map(Entry::id)
+                .filter(|id| ids.contains(*id))
+                .cloned(),
+        );
+        entries.retain(|entry| !ids.contains(entry.id()));
+    }
+    out.withheld.retain(|_, ids| !ids.is_empty());
+    // A record withheld everywhere has no prose left to truncate; one still shown in
+    // another section (a blocking question is in two) keeps its truncation marker there.
+    // Staleness, acceptance and contradictions name records without rendering their
+    // prose, so an entry there does not count as showing it.
+    let members: BTreeSet<RevisionId> = out
+        .sections
+        .iter()
+        .filter(|(section, _)| {
+            !matches!(
+                section,
+                Section::Staleness | Section::Acceptance | Section::Contradictions
+            )
+        })
+        .flat_map(|(_, entries)| entries.iter().map(Entry::id).cloned())
+        .collect();
+    out.truncated = truncated
+        .into_iter()
+        .filter(|id| members.contains(id))
+        .collect();
+    out
 }
 
-fn total_tokens(
-    bundle: &Bundle,
-    model: &ResolvedModel<'_>,
-    truncated: &BTreeSet<RevisionId>,
-) -> usize {
-    bundle
-        .members()
-        .iter()
-        .map(|id| record_tokens(model, id, !truncated.contains(id)))
-        .sum()
-}
-
-/// What the bundle must hold whatever the budget: keys, states, relations, acceptance,
-/// contradictions and staleness. Prose is excluded, because prose is what truncates.
-fn mandatory_tokens(bundle: &Bundle, model: &ResolvedModel<'_>) -> usize {
-    let structural = bundle.members().len() * 12;
-    let goal = record_tokens(model, &bundle.goal, true);
-    let plan: usize = bundle
-        .section(Section::PlanOfRecord)
-        .iter()
-        .map(|entry| record_tokens(model, entry.id(), true))
-        .sum();
-    structural + goal + plan + bundle.acceptance.len() * 24 + bundle.contradictions.len() * 24
+/// What the bundle must hold whatever the budget: the goal in full, the milestone and the
+/// plan of record, every acceptance verdict and every contradiction — measured as
+/// rendered, in both forms. Everything else can be truncated or withheld by name.
+fn mandatory_tokens(bundle: &Bundle, model: &ResolvedModel<'_>, freshness: &Freshness) -> usize {
+    let text = render::mandatory_text(bundle, model, freshness);
+    // The JSON form repeats keys and titles; twice the text is a close bound for it.
+    estimate_tokens(&text) * 2
 }
 
 // -------------------------------------------------------------------------------------

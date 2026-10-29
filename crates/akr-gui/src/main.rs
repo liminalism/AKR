@@ -1,294 +1,97 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 #![allow(missing_docs)]
 
-use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, mpsc};
-use std::time::Instant;
+use std::sync::{Arc, OnceLock, mpsc};
+use std::time::{Duration, Instant};
 
 use akr_gui::model::{
     AcceptanceCheck, Diagnostic, GitMetadata, LoadPhase, Record, Relation, ReviewCounts,
     ReviewSnapshot, SnapshotError, WorkspaceLoader,
 };
-use akr_gui::render::Canvas;
 use akr_gui::ui::{AppModel, Panel, TreeMode};
-use softbuffer::{Context, Surface};
-use winit::application::ApplicationHandler;
-use winit::dpi::PhysicalSize;
-use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
-use winit::window::{Window, WindowId};
+use pixelkit_raster::{Painter, RasterKernel, Rect, WindowBuffer};
+use pixelkit_shell::{Input, KeyInput, Modifiers, MouseButton, Scale};
+use pixelkit_text::{Align, Face, FontSet, TextCache};
+use pixelkit_ui::list::GUTTER as LIST_GUTTER;
+use pixelkit_ui::widget::TABLE_GUTTER;
+use pixelkit_ui::{
+    Cell, Column, Row, ScrollState, TableOutcome, TableState, TextFieldState, Theme, Ui, navigate,
+};
+use pixelkit_windowing::{ImeEvent, PixelApp, Waker, WindowConfig, run_app};
 
-const BG: u32 = 0x0010_1720;
-const SURFACE: u32 = 0x001a_2633;
-const RAISED: u32 = 0x0022_3444;
-const LINE: u32 = 0x0032_4658;
-const TEXT: u32 = 0x00d8_e3ed;
-const MUTED: u32 = 0x008d_a4b8;
-const ACCENT: u32 = 0x0056_b6d9;
-const SELECTED: u32 = 0x0033_5870;
-const WARNING: u32 = 0x00ed_b55f;
-const THUMB: u32 = 0x0047_6178;
+// --- embedded type --------------------------------------------------------
 
-/// Minimum readable glyph magnification; the 8x8 bitmap font is unreadable at
-/// 1x on any modern display, so the shell never renders below 2x.
-const MIN_SCALE: i32 = 2;
-const MAX_SCALE: i32 = 5;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-struct Rect {
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
+fn latin_face() -> &'static Face {
+    static FACE: OnceLock<Face> = OnceLock::new();
+    FACE.get_or_init(|| {
+        Face::from_bytes(include_bytes!("../fonts/NotoSans-Regular.ttf"))
+            .expect("the embedded Noto Sans parses")
+    })
 }
 
-impl Rect {
-    fn contains(self, x: f64, y: f64) -> bool {
-        let (x, y) = (x as i32, y as i32);
-        x >= self.x && x < self.x + self.w && y >= self.y && y < self.y + self.h
-    }
-    fn inset(self, amount: i32) -> Self {
-        Self {
-            x: self.x + amount,
-            y: self.y + amount,
-            w: (self.w - amount * 2).max(0),
-            h: (self.h - amount * 2).max(0),
-        }
+fn font_set() -> &'static FontSet {
+    static SET: OnceLock<FontSet> = OnceLock::new();
+    SET.get_or_init(|| {
+        let mut set = FontSet::new();
+        set.add(latin_face());
+        set
+    })
+}
+
+fn theme() -> Theme {
+    Theme {
+        accent: 0x0056_b6d9,
+        selection: 0x0033_5870,
+        ..Theme::default()
     }
 }
 
-/// Text metrics for the current glyph scale. Every layout number in the shell
-/// is derived from these so the window, the panes and the type all resize
-/// together instead of drifting apart.
+// --- layout (logical pixels; tests and frames share this) ------------------
+
+const HEADER_H: i32 = 52;
+const FILTER_H: i32 = 52;
+const FOOTER_H: i32 = 30;
+const LEFT_FRAC: f32 = 0.32;
+const SPLIT_GAP: i32 = 6;
+
 #[derive(Debug, Clone, Copy)]
-struct Metrics {
-    scale: i32,
-    cw: i32,
-    row: i32,
-    pad: i32,
-    bar: i32,
-}
-
-impl Metrics {
-    fn new(scale: i32) -> Self {
-        let cw = 8 * scale;
-        let row = 8 * scale + 4 * scale;
-        let pad = 4 * scale;
-        Self {
-            scale,
-            cw,
-            row,
-            pad,
-            bar: row + pad * 2,
-        }
-    }
-    fn width_of(self, text: &str) -> i32 {
-        text.chars().count() as i32 * self.cw
-    }
-}
-
-/// Everything the frame needs that is not ledger state.
-#[derive(Debug, Clone, Copy)]
-struct ViewState {
-    tree_scroll: i32,
-    panel_scroll: i32,
-    /// Left pane width as a fraction of the window, so panes keep their
-    /// proportions when the window is resized.
-    split: f64,
-    filter_editing: bool,
-    /// True while the "open workspace" prompt owns the keyboard.
-    path_editing: bool,
-    scale: i32,
-}
-
-impl Default for ViewState {
-    fn default() -> Self {
-        Self {
-            tree_scroll: 0,
-            panel_scroll: 0,
-            split: 0.30,
-            filter_editing: false,
-            path_editing: false,
-            scale: MIN_SCALE,
-        }
-    }
-}
-
-struct Layout {
-    metrics: Metrics,
+struct Areas {
     header: Rect,
-    tabs: Vec<(Rect, usize)>,
-    open_button: Option<Rect>,
     filter_bar: Rect,
-    filter_box: Rect,
-    buttons: Vec<(Rect, Panel, &'static str)>,
-    tree_header: Rect,
-    mode_button: Rect,
-    tree_list: Rect,
-    splitter: Rect,
-    panel: Rect,
+    left: Rect,
+    right: Rect,
     footer: Rect,
 }
 
-/// Panel switcher entries as (panel, full label, short label). The short label
-/// is used when the window is too narrow for the full one at the current zoom,
-/// and the switcher is dropped entirely rather than crowd out the filter box.
-const PANEL_BUTTONS: [(Panel, &str, &str); 4] = [
-    (Panel::Dashboard, "Dashboard", "D"),
-    (Panel::Inspector, "Detail", "I"),
-    (Panel::Relations, "Relations", "L"),
-    (Panel::Git, "Git", "G"),
-];
-
-fn layout(width: i32, height: i32, model: &AppModel, view: ViewState) -> Layout {
-    let metrics = Metrics::new(view.scale);
-    let Metrics { cw, pad, bar, .. } = metrics;
-
-    let header = Rect {
-        x: 0,
-        y: 0,
-        w: width,
-        h: bar,
-    };
-    let mut tabs = Vec::new();
-    let mut x = pad + metrics.width_of("AKR REVIEW") + cw * 2;
-    for (index, tab) in model.tabs.iter().enumerate() {
-        let label = workspace_label(tab.workspace.as_path());
-        let w = metrics.width_of(&label) + pad * 2;
-        if x + w > width - pad {
-            break;
-        }
-        tabs.push((
-            Rect {
-                x,
-                y: pad / 2,
-                w,
-                h: bar - pad,
-            },
-            index,
-        ));
-        x += w + pad;
-    }
-    let open_w = metrics.width_of("+ Open") + pad * 2;
-    let open_button = (x + open_w <= width - pad).then_some(Rect {
-        x,
-        y: pad / 2,
-        w: open_w,
-        h: bar - pad,
-    });
-
-    let filter_bar = Rect {
-        x: 0,
-        y: bar,
-        w: width,
-        h: bar,
-    };
-    // The filter box always keeps a usable minimum; the switcher degrades to
-    // short labels and then disappears when the window cannot fit it.
-    let filter_min = cw * 10;
-    let switcher_width = |short: bool| {
-        PANEL_BUTTONS
-            .iter()
-            .map(|(_, long, brief)| metrics.width_of(if short { brief } else { long }) + pad * 3)
-            .sum::<i32>()
-    };
-    let short = width - pad * 2 - switcher_width(false) < filter_min;
-    let mut buttons = Vec::new();
-    let mut right = width - pad;
-    if width - pad * 2 - switcher_width(short) >= filter_min {
-        for (panel, long, brief) in PANEL_BUTTONS.iter().rev() {
-            let label = if short { *brief } else { *long };
-            let w = metrics.width_of(label) + pad * 2;
-            right -= w;
-            buttons.push((
-                Rect {
-                    x: right,
-                    y: filter_bar.y + pad / 2,
-                    w,
-                    h: bar - pad,
-                },
-                *panel,
-                label,
-            ));
-            right -= pad;
-        }
-        buttons.reverse();
-    }
-    let filter_box = Rect {
-        x: pad,
-        y: filter_bar.y + pad / 2,
-        w: (right - pad * 2).max(cw * 2),
-        h: bar - pad,
-    };
-
-    let footer = Rect {
-        x: 0,
-        y: height - bar,
-        w: width,
-        h: bar,
-    };
-    let content_y = filter_bar.y + filter_bar.h;
-    let content_h = (footer.y - content_y).max(0);
-
-    let handle = (pad / 2).max(3);
-    // Minimums are expressed in glyphs but capped as a share of the window, so
-    // a small window at a large zoom still yields two non-empty panes.
-    let min_left = (cw * 14).min(width / 4).max(0);
-    let min_right = (cw * 20).min(width / 2);
-    let max_left = (width - min_right - handle).max(0);
-    let split_x = ((width as f64 * view.split) as i32).clamp(min_left.min(max_left), max_left);
-
-    let tree_header = Rect {
-        x: 0,
-        y: content_y,
-        w: split_x,
-        h: bar,
-    };
-    let mode_label = mode_label(model.mode);
-    let mode_w = metrics.width_of(mode_label) + pad * 2;
-    let mode_button = Rect {
-        x: (split_x - mode_w - pad).max(pad),
-        y: content_y + pad / 2,
-        w: mode_w.min(split_x - pad * 2),
-        h: bar - pad,
-    };
-    let tree_list = Rect {
-        x: 0,
-        y: content_y + bar,
-        w: split_x,
-        h: (content_h - bar).max(0),
-    };
-    let splitter = Rect {
-        x: split_x,
-        y: content_y,
-        w: handle,
-        h: content_h,
-    };
-    let panel = Rect {
-        x: split_x + handle,
-        y: content_y,
-        w: (width - split_x - handle).max(0),
-        h: content_h,
-    };
-
-    Layout {
-        metrics,
+fn layout_areas(width: i32, height: i32) -> Areas {
+    let header = Rect::new(0, 0, width, HEADER_H);
+    let filter_bar = Rect::new(0, HEADER_H, width, FILTER_H);
+    let footer = Rect::new(0, height - FOOTER_H, width, FOOTER_H);
+    let content = Rect::new(
+        0,
+        HEADER_H + FILTER_H,
+        width,
+        height - HEADER_H - FILTER_H - FOOTER_H,
+    );
+    let left_w = (width as f32 * LEFT_FRAC) as i32;
+    let left = Rect::new(content.x, content.y, left_w, content.h);
+    let right = Rect::new(
+        content.x + left_w + SPLIT_GAP,
+        content.y,
+        (content.w - left_w - SPLIT_GAP).max(0),
+        content.h,
+    );
+    Areas {
         header,
-        tabs,
-        open_button,
         filter_bar,
-        filter_box,
-        buttons,
-        tree_header,
-        mode_button,
-        tree_list,
-        splitter,
-        panel,
+        left,
+        right,
         footer,
     }
 }
+
+// --- workspace helpers ------------------------------------------------------
 
 /// Resolves a typed or dropped path to the workspace to open.
 ///
@@ -327,6 +130,29 @@ fn workspace_label(workspace: &Path) -> String {
         .to_owned()
 }
 
+/// AKR projects living next to `workspace`: every sibling directory holding a
+/// `.akr` ledger, with the workspace itself first. Most checkouts keep all
+/// their projects in one folder, so this is the project switcher.
+fn discover_projects(workspace: &Path) -> Vec<PathBuf> {
+    let Some(parent) = workspace.parent() else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return Vec::new();
+    };
+    let mut projects: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir() && path.join(".akr").is_dir())
+        .collect();
+    projects.sort();
+    if let Some(position) = projects.iter().position(|path| path == workspace) {
+        let current = projects.remove(position);
+        projects.insert(0, current);
+    }
+    projects
+}
+
 fn mode_label(mode: TreeMode) -> &'static str {
     match mode {
         TreeMode::Planning => "Planning",
@@ -334,148 +160,46 @@ fn mode_label(mode: TreeMode) -> &'static str {
     }
 }
 
-/// A clipped, scrollable column of text rows. Panels paint into one of these
-/// instead of computing absolute pixel offsets, which is what previously made
-/// every panel overflow the window.
-struct Pane<'a> {
-    canvas: &'a mut Canvas,
-    rect: Rect,
-    metrics: Metrics,
-    scroll: i32,
-    cursor: i32,
-}
-
-impl<'a> Pane<'a> {
-    fn new(canvas: &'a mut Canvas, rect: Rect, metrics: Metrics, scroll: i32) -> Self {
-        Self {
-            canvas,
-            rect: rect.inset(metrics.pad),
-            metrics,
-            scroll,
-            cursor: 0,
-        }
-    }
-    fn row_top(&self) -> i32 {
-        self.rect.y + self.cursor - self.scroll
-    }
-    fn visible(&self) -> bool {
-        let y = self.row_top();
-        y + self.metrics.row > self.rect.y && y < self.rect.y + self.rect.h
-    }
-    fn advance(&mut self) {
-        self.cursor += self.metrics.row;
-    }
-    fn line(&mut self, text: &str, color: u32) {
-        self.indented(0, text, color);
-    }
-    fn indented(&mut self, indent: i32, text: &str, color: u32) {
-        if self.visible() {
-            let y = self.row_top();
-            self.canvas
-                .text_clipped(self.rect.x + indent, y, self.rect.w - indent, text, color);
-        }
-        self.advance();
-    }
-    fn selectable(&mut self, indent: i32, text: &str, selected: bool) {
-        if self.visible() {
-            let y = self.row_top();
-            if selected {
-                self.canvas.rect(
-                    self.rect.x - self.metrics.pad / 2,
-                    y - self.metrics.pad / 2,
-                    self.rect.w + self.metrics.pad,
-                    self.metrics.row,
-                    SELECTED,
-                );
-            }
-            self.canvas.text_clipped(
-                self.rect.x + indent,
-                y,
-                self.rect.w - indent,
-                text,
-                if selected { TEXT } else { MUTED },
-            );
-        }
-        self.advance();
-    }
-    fn heading(&mut self, text: &str) {
-        self.gap(1);
-        self.line(text, ACCENT);
-    }
-    /// A determinate bar filling `done` of `total`, one row tall.
-    fn progress(&mut self, done: usize, total: usize) {
-        if self.visible() {
-            let y = self.row_top();
-            let height = (self.metrics.scale * 2).max(4);
-            let width = self.rect.w.min(self.metrics.cw * 40);
-            let top = y + (self.metrics.row - height) / 2;
-            self.canvas.rect(self.rect.x, top, width, height, RAISED);
-            self.canvas.border(self.rect.x, top, width, height, LINE);
-            let filled = if total == 0 {
-                0
-            } else {
-                (width as i64 * done.min(total) as i64 / total as i64) as i32
-            };
-            self.canvas.rect(self.rect.x, top, filled, height, ACCENT);
-        }
-        self.advance();
-    }
-    fn gap(&mut self, rows: i32) {
-        self.cursor += self.metrics.row * rows;
-    }
-    fn paragraph(&mut self, text: &str, color: u32) {
-        let columns = (self.rect.w / self.metrics.cw).max(8) as usize;
-        for block in text.split('\n') {
-            if block.trim().is_empty() {
-                self.gap(1);
-                continue;
-            }
-            for line in wrap(block, columns) {
-                self.line(&line, color);
-            }
-        }
-    }
-    fn content_height(&self) -> i32 {
-        self.cursor + self.metrics.pad
-    }
-}
-
-/// Draws a proportional scrollbar on the right edge of `rect`.
-fn scrollbar(canvas: &mut Canvas, rect: Rect, metrics: Metrics, scroll: i32, content: i32) {
-    if content <= rect.h || rect.h <= 0 {
-        return;
-    }
-    let width = (metrics.scale * 2).max(4);
-    let track = Rect {
-        x: rect.x + rect.w - width - 1,
-        y: rect.y,
-        w: width,
-        h: rect.h,
+fn tree_rows(model: &AppModel) -> Vec<(i32, String)> {
+    let Some(snapshot) = model.snapshot() else {
+        return Vec::new();
     };
-    canvas.rect(track.x, track.y, track.w, track.h, SURFACE);
-    let thumb_h = ((rect.h as i64 * rect.h as i64 / content as i64) as i32).max(metrics.row);
-    let span = (content - rect.h).max(1);
-    let offset = ((rect.h - thumb_h) as i64 * scroll.clamp(0, span) as i64 / span as i64) as i32;
-    canvas.rect(track.x, track.y + offset, track.w, thumb_h, THUMB);
+    let allowed = model
+        .filtered_keys()
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
+    match model.mode {
+        TreeMode::Planning => {
+            fn visit(
+                node: &akr_gui::model::TreeNode,
+                depth: i32,
+                allowed: &std::collections::BTreeSet<String>,
+                out: &mut Vec<(i32, String)>,
+            ) {
+                if allowed.contains(&node.key) {
+                    out.push((depth, node.key.clone()));
+                }
+                for child in &node.children {
+                    visit(child, depth + 1, allowed, out);
+                }
+            }
+            let mut out = Vec::new();
+            for root in snapshot.planning_roots() {
+                visit(&root, 0, &allowed, &mut out);
+            }
+            out
+        }
+        TreeMode::Knowledge => snapshot
+            .knowledge_groups()
+            .into_values()
+            .flatten()
+            .filter(|key| allowed.contains(key))
+            .map(|key| (0, key))
+            .collect(),
+    }
 }
 
-fn button(canvas: &mut Canvas, rect: Rect, metrics: Metrics, label: &str, active: bool) {
-    canvas.rect(
-        rect.x,
-        rect.y,
-        rect.w,
-        rect.h,
-        if active { SELECTED } else { RAISED },
-    );
-    canvas.border(rect.x, rect.y, rect.w, rect.h, LINE);
-    canvas.text_clipped(
-        rect.x + metrics.pad,
-        rect.y + (rect.h - metrics.cw).max(0) / 2,
-        rect.w - metrics.pad * 2,
-        label,
-        if active { TEXT } else { MUTED },
-    );
-}
+// --- loading ----------------------------------------------------------------
 
 #[derive(Clone)]
 struct AkrLoader;
@@ -620,29 +344,36 @@ enum LoadMessage {
     },
 }
 
-struct NativeApp {
-    window: Option<Arc<Window>>,
-    context: Option<Context<Arc<Window>>>,
-    surface: Option<Surface<Arc<Window>, Arc<Window>>>,
-    canvas: Canvas,
+struct ReviewApp {
     model: AppModel,
-    view: ViewState,
-    pointer: (f64, f64),
-    dragging_split: bool,
-    control_held: bool,
-    path_input: String,
+    text: TextCache,
+    kernel: RasterKernel,
+    input: Input,
+    theme: Theme,
+    tree_table: TableState,
+    out_table: TableState,
+    panel_scroll: ScrollState,
+    tree_visible_rows: i32,
+    out_visible_rows: i32,
+    filter_field: TextFieldState,
+    filter_focused: bool,
+    path_field: TextFieldState,
+    projects: Vec<PathBuf>,
+    project_table: TableState,
+    modal_open: bool,
+    scroll_drag: Option<ScrollDrag>,
+    zoom: f32,
     status: Option<String>,
+    pending_title: Option<String>,
     load_started: Option<Instant>,
-    /// Frame counter, so the loading marker animates without a wall clock.
     tick: u64,
-    tree_content: i32,
-    panel_content: i32,
+    waker: Option<Waker>,
     loads: mpsc::Receiver<LoadMessage>,
     sender: mpsc::Sender<LoadMessage>,
     loader: Arc<dyn WorkspaceLoader>,
 }
 
-impl NativeApp {
+impl ReviewApp {
     fn new(workspaces: Vec<PathBuf>) -> Self {
         let (sender, loads) = mpsc::channel();
         let mut model = AppModel::default();
@@ -653,26 +384,35 @@ impl NativeApp {
             model.add_tab(std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
         }
         Self {
-            window: None,
-            context: None,
-            surface: None,
-            canvas: Canvas::new(1, 1),
             model,
-            view: ViewState::default(),
-            pointer: (0.0, 0.0),
-            dragging_split: false,
-            control_held: false,
-            path_input: String::new(),
+            text: TextCache::new(font_set()),
+            kernel: RasterKernel::new(),
+            input: Input::new(),
+            theme: theme(),
+            tree_table: TableState::new(),
+            out_table: TableState::new(),
+            panel_scroll: ScrollState::new(),
+            tree_visible_rows: 10,
+            out_visible_rows: 10,
+            filter_field: TextFieldState::new(),
+            filter_focused: false,
+            path_field: TextFieldState::new(),
+            projects: Vec::new(),
+            project_table: TableState::new(),
+            modal_open: false,
+            scroll_drag: None,
+            zoom: 1.0,
             status: None,
+            pending_title: None,
             load_started: None,
             tick: 0,
-            tree_content: 0,
-            panel_content: 0,
+            waker: None,
             loads,
             sender,
             loader: Arc::new(AkrLoader),
         }
     }
+
     fn request_load(&mut self, tab: usize) {
         let Some(workspace) = self.model.tabs.get_mut(tab).map(|tab| {
             tab.load_generation += 1;
@@ -685,6 +425,7 @@ impl NativeApp {
         let generation = self.model.tabs[tab].load_generation;
         let sender = self.sender.clone();
         let loader = self.loader.clone();
+        let waker = self.waker.clone();
         self.load_started = Some(Instant::now());
         std::thread::spawn(move || {
             let progress = sender.clone();
@@ -700,13 +441,18 @@ impl NativeApp {
                 generation,
                 result: Box::new(result),
             });
+            if let Some(waker) = waker {
+                waker.wake();
+            }
         });
     }
+
     fn request_active_load(&mut self) {
         if let Some(tab) = self.model.active_tab {
             self.request_load(tab);
         }
     }
+
     /// Opens a workspace in a tab, reusing the tab if it is already open.
     fn open_workspace(&mut self, requested: &Path) {
         let path = match workspace_root(requested) {
@@ -716,8 +462,9 @@ impl NativeApp {
                 return;
             }
         };
-        self.view.tree_scroll = 0;
-        self.view.panel_scroll = 0;
+        self.tree_table = TableState::new();
+        self.out_table = TableState::new();
+        self.panel_scroll = ScrollState::new();
         if let Some(index) = self.model.tabs.iter().position(|tab| tab.workspace == path) {
             self.model.active_tab = Some(index);
             self.status = Some(format!("already open: {}", path.display()));
@@ -729,14 +476,19 @@ impl NativeApp {
         self.sync_title();
         self.request_load(index);
     }
-    /// Starts the open prompt, seeded with the active workspace's parent so the
-    /// common case — a sibling project — is a short edit rather than a retype.
-    fn begin_open_prompt(&mut self) {
-        self.path_input = self
+
+    /// Opens the project switcher: every sibling AKR project, clickable, plus
+    /// a path field seeded with the active workspace's parent so a project
+    /// anywhere else is a short edit rather than a retype.
+    fn begin_open_dialog(&mut self) {
+        let workspace = self
             .model
             .active_tab
             .and_then(|index| self.model.tabs.get(index))
-            .and_then(|tab| tab.workspace.parent())
+            .map(|tab| tab.workspace.clone());
+        let seed = workspace
+            .as_deref()
+            .and_then(|workspace| workspace.parent())
             .map(|parent| {
                 let text = parent.to_string_lossy().into_owned();
                 if text.ends_with(['/', '\\']) {
@@ -746,44 +498,66 @@ impl NativeApp {
                 }
             })
             .unwrap_or_default();
-        self.view.path_editing = true;
-        self.view.filter_editing = false;
+        self.path_field = TextFieldState::with_text(seed);
+        self.path_field.end();
+        self.projects = workspace
+            .as_deref()
+            .map(discover_projects)
+            .unwrap_or_default();
+        self.project_table = TableState::new();
+        self.scroll_drag = None;
+        self.modal_open = true;
+        self.filter_focused = false;
         self.status = None;
     }
+
     fn submit_open_prompt(&mut self) {
-        self.view.path_editing = false;
-        let typed = self.path_input.trim().trim_matches('"').to_owned();
+        self.modal_open = false;
+        let typed = self.path_field.text().trim().trim_matches('"').to_owned();
         if typed.is_empty() {
             return;
         }
         self.open_workspace(Path::new(&typed));
     }
+
     fn close_active_workspace(&mut self) {
         let Some(index) = self.model.active_tab else {
             return;
         };
         let label = workspace_label(self.model.tabs[index].workspace.as_path());
         self.model.close_active_tab();
-        self.view.tree_scroll = 0;
-        self.view.panel_scroll = 0;
+        self.tree_table = TableState::new();
+        self.out_table = TableState::new();
+        self.panel_scroll = ScrollState::new();
         self.status = Some(format!("closed {label}"));
         self.sync_title();
     }
+
     /// Mirrors the active workspace into the OS title bar, so the full path is
     /// visible even when the tab chip is truncated.
-    fn sync_title(&self) {
-        let Some(window) = &self.window else {
-            return;
-        };
-        match self
-            .model
-            .active_tab
-            .and_then(|index| self.model.tabs.get(index))
-        {
-            Some(tab) => window.set_title(&format!("AKR Review — {}", tab.workspace.display())),
-            None => window.set_title("AKR Review"),
+    fn sync_title(&mut self) {
+        self.pending_title = Some(
+            match self
+                .model
+                .active_tab
+                .and_then(|index| self.model.tabs.get(index))
+            {
+                Some(tab) => format!("AKR Review — {}", tab.workspace.display()),
+                None => "AKR Review".to_owned(),
+            },
+        );
+    }
+
+    fn switch_tab(&mut self, index: usize) {
+        if self.model.active_tab != Some(index) {
+            self.model.active_tab = Some(index);
+            self.tree_table = TableState::new();
+            self.out_table = TableState::new();
+            self.panel_scroll = ScrollState::new();
+            self.sync_title();
         }
     }
+
     fn poll_loads(&mut self) {
         while let Ok(message) = self.loads.try_recv() {
             let (index, generation) = match &message {
@@ -836,672 +610,1181 @@ impl NativeApp {
             }
         }
     }
+
     /// Whether any tab is still loading, which is also what decides between a
-    /// polling and a waiting event loop.
+    /// ticking and a waiting event loop.
     fn is_loading(&self) -> bool {
         self.model
             .tabs
             .iter()
             .any(|tab| tab.snapshot.is_none() && tab.error.is_none())
     }
-    fn layout(&self) -> Layout {
-        layout(
-            self.canvas.width as i32,
-            self.canvas.height as i32,
-            &self.model,
-            self.view,
-        )
-    }
-    fn clamp_scrolls(&mut self) {
-        let layout = self.layout();
-        self.view.tree_scroll = self
-            .view
-            .tree_scroll
-            .clamp(0, (self.tree_content - layout.tree_list.h).max(0));
-        self.view.panel_scroll = self
-            .view
-            .panel_scroll
-            .clamp(0, (self.panel_content - layout.panel.h).max(0));
-    }
-    fn redraw(&mut self) {
-        self.poll_loads();
-        self.tick = self.tick.wrapping_add(1);
-        let Some(window) = &self.window else {
-            return;
-        };
-        let size = window.inner_size();
-        if size.width == 0 || size.height == 0 {
-            return;
-        }
-        if self.canvas.width != size.width || self.canvas.height != size.height {
-            self.canvas.resize(size.width, size.height);
-        }
-        self.canvas.set_scale(self.view.scale);
-        // One measuring pass so scroll offsets can be clamped against real
-        // content height, then a second pass with the corrected offsets.
-        let (tree, panel) = render_app(
-            &mut self.canvas,
-            &self.model,
-            self.view,
-            &self.path_input,
-            self.status.as_deref(),
-            self.load_started
-                .map_or(0.0, |start| start.elapsed().as_secs_f32()),
-            self.tick,
-        );
-        self.tree_content = tree;
-        self.panel_content = panel;
-        let before = (self.view.tree_scroll, self.view.panel_scroll);
-        self.clamp_scrolls();
-        if before != (self.view.tree_scroll, self.view.panel_scroll) {
-            let (tree, panel) = render_app(
-                &mut self.canvas,
-                &self.model,
-                self.view,
-                &self.path_input,
-                self.status.as_deref(),
-                self.load_started
-                    .map_or(0.0, |start| start.elapsed().as_secs_f32()),
-                self.tick,
-            );
-            self.tree_content = tree;
-            self.panel_content = panel;
-        }
-        if let Some(surface) = &mut self.surface
-            && let (Some(width), Some(height)) =
-                (NonZeroU32::new(size.width), NonZeroU32::new(size.height))
-        {
-            let _ = surface.resize(width, height);
-            if let Ok(mut buffer) = surface.buffer_mut() {
-                buffer.copy_from_slice(&self.canvas.pixels);
-                let _ = buffer.present();
-            }
-        }
-    }
-    fn visible_keys(&self) -> Vec<String> {
-        tree_rows(&self.model)
-            .into_iter()
-            .map(|(_, key)| key)
-            .collect()
-    }
-    fn set_scale(&mut self, scale: i32) {
-        let scale = scale.clamp(MIN_SCALE, MAX_SCALE);
-        if scale != self.view.scale {
-            self.view.scale = scale;
-            self.canvas.set_scale(scale);
-        }
-    }
-    fn move_selection(&mut self, delta: isize) {
-        let keys = self.visible_keys();
-        if keys.is_empty() {
-            return;
-        }
-        let selected = self.model.selected().map(|record| record.key.as_str());
-        let current = selected
-            .and_then(|key| keys.iter().position(|candidate| candidate == key))
-            .unwrap_or(0) as isize;
-        let next = (current + delta).clamp(0, keys.len() as isize - 1) as usize;
-        self.model.select(keys[next].clone());
-        self.reveal_selection(next, keys.len());
-    }
-    /// Keeps the selected row inside the visible list after keyboard movement.
-    fn reveal_selection(&mut self, index: usize, _total: usize) {
-        let layout = self.layout();
-        let row = layout.metrics.row;
-        let top = index as i32 * row;
-        let visible = (layout.tree_list.h - layout.metrics.pad * 2).max(row);
-        if top < self.view.tree_scroll {
-            self.view.tree_scroll = top;
-        } else if top + row > self.view.tree_scroll + visible {
-            self.view.tree_scroll = top + row - visible;
-        }
-    }
-    fn scroll_by(&mut self, amount: i32) {
-        let layout = self.layout();
-        let (x, y) = self.pointer;
-        if layout.tree_list.contains(x, y) || layout.tree_header.contains(x, y) {
-            self.view.tree_scroll -= amount;
-        } else {
-            self.view.panel_scroll -= amount;
-        }
-        self.clamp_scrolls();
-    }
-    fn press(&mut self) {
-        let layout = self.layout();
-        let (x, y) = self.pointer;
-        if layout.splitter.inset(-layout.metrics.pad).contains(x, y) {
-            self.dragging_split = true;
-        }
-    }
-    fn click(&mut self) {
-        let layout = self.layout();
-        let (x, y) = self.pointer;
-        if layout.open_button.is_some_and(|rect| rect.contains(x, y)) {
-            self.begin_open_prompt();
-            return;
-        }
-        if let Some((_, index)) = layout.tabs.iter().find(|(rect, _)| rect.contains(x, y)) {
-            self.model.active_tab = Some(*index);
-            self.view.tree_scroll = 0;
-            self.view.panel_scroll = 0;
-            self.sync_title();
-            return;
-        }
-        if layout.header.contains(x, y) {
-            return;
-        }
-        if let Some((_, panel, _)) = layout.buttons.iter().find(|(rect, ..)| rect.contains(x, y)) {
-            self.model.panel = *panel;
-            self.view.panel_scroll = 0;
-            return;
-        }
-        if layout.filter_box.contains(x, y) {
-            self.view.filter_editing = true;
-            return;
-        }
-        if layout.filter_bar.contains(x, y) {
-            return;
-        }
-        if layout.mode_button.contains(x, y) {
-            self.model.mode = match self.model.mode {
-                TreeMode::Planning => TreeMode::Knowledge,
-                TreeMode::Knowledge => TreeMode::Planning,
-            };
-            self.view.tree_scroll = 0;
-            return;
-        }
-        if layout.tree_list.contains(x, y) {
-            let metrics = layout.metrics;
-            let local = y as i32 - (layout.tree_list.y + metrics.pad) + self.view.tree_scroll;
-            if local < 0 {
-                return;
-            }
-            let index = (local / metrics.row) as usize;
-            if let Some(key) = self.visible_keys().get(index) {
-                self.model.select(key.clone());
-                self.view.panel_scroll = 0;
-            }
-        }
-    }
-    fn drag(&mut self) {
-        if !self.dragging_split {
-            return;
-        }
-        let width = self.canvas.width.max(1) as f64;
-        self.view.split = (self.pointer.0 / width).clamp(0.12, 0.75);
-    }
 }
 
-impl ApplicationHandler for NativeApp {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_some() {
-            return;
-        }
-        let attributes = Window::default_attributes()
-            .with_title("AKR Review")
-            .with_inner_size(PhysicalSize::new(1280, 800))
-            .with_min_inner_size(PhysicalSize::new(640, 420))
-            .with_resizable(true);
-        let window = Arc::new(
-            event_loop
-                .create_window(attributes)
-                .expect("create AKR review window"),
-        );
-        // Start at a scale that suits the display: HiDPI screens and large
-        // windows get bigger type, and the user can still zoom from there.
-        let size = window.inner_size();
-        self.view.scale = default_scale(window.scale_factor(), size.width, size.height);
-        self.canvas.set_scale(self.view.scale);
-        let context = Context::new(window.clone()).expect("create software presentation context");
-        let surface =
-            Surface::new(&context, window.clone()).expect("create software presentation surface");
-        self.window = Some(window);
-        self.context = Some(context);
-        self.surface = Some(surface);
-        self.sync_title();
-        for tab in 0..self.model.tabs.len() {
-            self.request_load(tab);
-        }
-        self.redraw();
-    }
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
-        match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::Resized(_) | WindowEvent::RedrawRequested => self.redraw(),
-            WindowEvent::ModifiersChanged(modifiers) => {
-                self.control_held = modifiers.state().control_key();
-            }
-            WindowEvent::CursorMoved { position, .. } => {
-                self.pointer = (position.x, position.y);
-                if self.dragging_split {
-                    self.drag();
-                    self.redraw();
-                }
-            }
-            WindowEvent::MouseWheel { delta, .. } => {
-                let (lines, pixels) = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => {
-                        (y, y * self.canvas.char_height() as f32 * 3.0)
-                    }
-                    MouseScrollDelta::PixelDelta(point) => (point.y as f32 / 40.0, point.y as f32),
-                };
-                if self.control_held {
-                    if lines.abs() > 0.01 {
-                        self.set_scale(self.view.scale + lines.signum() as i32);
-                    }
-                } else {
-                    self.scroll_by(pixels as i32);
-                }
-                self.redraw();
-            }
-            WindowEvent::MouseInput {
-                state: ElementState::Pressed,
-                button: MouseButton::Left,
-                ..
-            } => {
-                self.press();
-                self.redraw();
-            }
-            WindowEvent::MouseInput {
-                state: ElementState::Released,
-                button: MouseButton::Left,
-                ..
-            } => {
-                if self.dragging_split {
-                    self.dragging_split = false;
-                } else {
-                    self.click();
-                }
-                self.redraw();
-            }
-            WindowEvent::DroppedFile(path) => {
-                self.open_workspace(&path);
-                self.view.path_editing = false;
-                self.redraw();
-            }
-            WindowEvent::Ime(winit::event::Ime::Commit(text)) if self.view.path_editing => {
-                self.path_input.push_str(&text);
-                self.redraw();
-            }
-            WindowEvent::Ime(winit::event::Ime::Commit(text)) if self.view.filter_editing => {
-                self.model.filter.query.push_str(&text);
-                self.redraw();
-            }
-            WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
-                let physical = event.physical_key;
-                let logical = event.logical_key;
-                let editing = self.view.filter_editing;
-                let page = (self.layout().panel.h - self.layout().metrics.row).max(1);
-                // The open prompt is modal: it takes every key until it is
-                // submitted or cancelled, so a typed path cannot half-trigger
-                // the single-letter shortcuts.
-                if self.view.path_editing {
-                    match logical {
-                        Key::Named(NamedKey::Escape) => {
-                            self.view.path_editing = false;
-                            self.path_input.clear();
-                        }
-                        Key::Named(NamedKey::Enter) => self.submit_open_prompt(),
-                        Key::Named(NamedKey::Backspace) => {
-                            self.path_input.pop();
-                        }
-                        Key::Named(NamedKey::Space) => self.path_input.push(' '),
-                        Key::Character(ref value) => self.path_input.push_str(value),
-                        _ => {}
-                    }
-                    self.redraw();
-                    return;
-                }
-                match logical {
-                    Key::Named(NamedKey::Escape) => self.view.filter_editing = false,
-                    Key::Named(NamedKey::Enter) if editing => self.view.filter_editing = false,
-                    Key::Named(NamedKey::Backspace) if editing => {
-                        self.model.filter.query.pop();
-                        self.view.tree_scroll = 0;
-                    }
-                    Key::Named(NamedKey::Space) if editing => self.model.filter.query.push(' '),
-                    Key::Named(NamedKey::ArrowDown) if !editing => self.move_selection(1),
-                    Key::Named(NamedKey::ArrowUp) if !editing => self.move_selection(-1),
-                    Key::Named(NamedKey::PageDown) if !editing => self.scroll_by(-page),
-                    Key::Named(NamedKey::PageUp) if !editing => self.scroll_by(page),
-                    Key::Named(NamedKey::Home) if !editing => {
-                        self.view.panel_scroll = 0;
-                        self.view.tree_scroll = 0;
-                    }
-                    Key::Named(NamedKey::End) if !editing => self.scroll_by(-i32::MAX / 2),
-                    // Zoom works with or without control so it is reachable on
-                    // keyboards where the shifted forms differ.
-                    Key::Character(ref value)
-                        if matches!(value.as_str(), "+" | "=") && !editing =>
-                    {
-                        self.set_scale(self.view.scale + 1)
-                    }
-                    Key::Character(ref value)
-                        if matches!(value.as_str(), "-" | "_") && !editing =>
-                    {
-                        self.set_scale(self.view.scale - 1)
-                    }
-                    Key::Character(ref value) if value == "0" && !editing => {
-                        let scale = self
-                            .window
-                            .as_ref()
-                            .map(|window| {
-                                let size = window.inner_size();
-                                default_scale(window.scale_factor(), size.width, size.height)
-                            })
-                            .unwrap_or(MIN_SCALE);
-                        self.set_scale(scale);
-                    }
-                    Key::Character(ref value) if value == "/" && !editing => {
-                        self.view.filter_editing = true
-                    }
-                    Key::Character(ref value) if editing => {
-                        self.model.filter.query.push_str(value);
-                        self.view.tree_scroll = 0;
-                    }
-                    Key::Character(ref value) if value.eq_ignore_ascii_case("o") => {
-                        self.begin_open_prompt()
-                    }
-                    Key::Character(ref value) if value.eq_ignore_ascii_case("w") => {
-                        self.close_active_workspace()
-                    }
-                    Key::Character(ref value) if value.eq_ignore_ascii_case("r") => {
-                        self.request_active_load()
-                    }
-                    Key::Character(ref value) if value.eq_ignore_ascii_case("p") => {
-                        self.model.mode = TreeMode::Planning;
-                        self.view.tree_scroll = 0;
-                    }
-                    Key::Character(ref value) if value.eq_ignore_ascii_case("k") => {
-                        self.model.mode = TreeMode::Knowledge;
-                        self.view.tree_scroll = 0;
-                    }
-                    Key::Character(ref value) if value.eq_ignore_ascii_case("d") => {
-                        self.model.panel = Panel::Dashboard;
-                        self.view.panel_scroll = 0;
-                    }
-                    Key::Character(ref value) if value.eq_ignore_ascii_case("i") => {
-                        self.model.panel = Panel::Inspector;
-                        self.view.panel_scroll = 0;
-                    }
-                    Key::Character(ref value) if value.eq_ignore_ascii_case("l") => {
-                        self.model.panel = Panel::Relations;
-                        self.view.panel_scroll = 0;
-                    }
-                    Key::Character(ref value) if value.eq_ignore_ascii_case("g") => {
-                        self.model.panel = Panel::Git;
-                        self.view.panel_scroll = 0;
-                    }
-                    _ if !editing && matches!(physical, PhysicalKey::Code(KeyCode::Tab)) => {
-                        self.model.cycle_tab();
-                        self.view.tree_scroll = 0;
-                        self.view.panel_scroll = 0;
-                        self.sync_title();
-                    }
-                    _ => {}
-                }
-                self.redraw();
-            }
-            _ => {}
-        }
-    }
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        self.poll_loads();
-        // Animate — and keep draining the load channel — only while something
-        // is in flight. Idle, the shell waits for input instead of repainting
-        // a static frame as fast as the display allows.
-        if self.is_loading() {
-            event_loop.set_control_flow(ControlFlow::Poll);
-            if let Some(window) = &self.window {
-                window.request_redraw();
-            }
-        } else {
-            event_loop.set_control_flow(ControlFlow::Wait);
-        }
-    }
+// --- frames ---------------------------------------------------------------
+
+/// Work a frame decided on that needs `&mut ReviewApp`, applied once the
+/// frame's widget borrows end.
+#[derive(Default)]
+struct Deferred {
+    switch_tab: Option<usize>,
+    sync_title: bool,
+    open_dialog: bool,
+    open_path: Option<PathBuf>,
+    submit_modal: bool,
+    cancel_modal: bool,
+    close_tab: bool,
+    reload_tab: bool,
+    request_loads: Vec<usize>,
 }
 
-/// Paints one frame and returns the content height of the tree list and of the
-/// active panel, so the caller can clamp scrolling to real content.
-fn render_app(
-    canvas: &mut Canvas,
-    model: &AppModel,
-    view: ViewState,
-    path_input: &str,
-    status: Option<&str>,
-    elapsed: f32,
+/// Which scrollable region a thumb drag belongs to. One drag at a time: the
+/// pointer is either dragging a thumb or it is not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScrollTarget {
+    Tree,
+    Outstanding,
+    Panel,
+    Projects,
+}
+
+/// A scrollbar thumb under the pointer: the distance from the press point to
+/// the thumb's top, so the thumb follows without jumping.
+#[derive(Debug, Clone, Copy)]
+struct ScrollDrag {
+    target: ScrollTarget,
+    grab: i32,
+}
+
+/// The frame's mutable pieces, split so panels can borrow them alongside the
+/// [`Ui`] without fighting over `self`.
+struct FrameState<'a> {
+    model: &'a mut AppModel,
+    tree_table: &'a mut TableState,
+    out_table: &'a mut TableState,
+    panel_scroll: &'a mut ScrollState,
+    tree_visible_rows: &'a mut i32,
+    out_visible_rows: &'a mut i32,
+    filter_field: &'a mut TextFieldState,
+    filter_focused: &'a mut bool,
+    path_field: &'a mut TextFieldState,
+    projects: &'a mut Vec<PathBuf>,
+    project_table: &'a mut TableState,
+    modal_open: &'a mut bool,
+    scroll_drag: &'a mut Option<ScrollDrag>,
+    zoom: &'a mut f32,
+    status: &'a mut Option<String>,
     tick: u64,
-) -> (i32, i32) {
-    canvas.clear(BG);
-    let width = canvas.width as i32;
-    let height = canvas.height as i32;
-    let layout = layout(width, height, model, view);
-    let metrics = layout.metrics;
+    deferred: &'a mut Deferred,
+}
 
-    // Title bar with one clickable chip per workspace tab.
-    canvas.rect(0, 0, width, layout.header.h, SURFACE);
-    canvas.rect(0, layout.header.h - 1, width, 1, LINE);
-    canvas.text(
-        metrics.pad,
-        (layout.header.h - metrics.cw) / 2,
+struct Line {
+    text: String,
+    colour: u32,
+}
+
+/// Wraps `text` into display lines at `width` physical pixels.
+fn wrapped_lines(ui: &mut Ui, text: &str, width: i32, colour: u32, out: &mut Vec<Line>) {
+    let style = ui.theme.body;
+    for block in text.split('\n') {
+        if block.trim().is_empty() {
+            out.push(Line {
+                text: String::new(),
+                colour,
+            });
+            continue;
+        }
+        for range in ui.text.wrap(block, width, style).iter() {
+            out.push(Line {
+                text: block[range.clone()].to_owned(),
+                colour,
+            });
+        }
+    }
+}
+
+fn scroll_lines(
+    ui: &mut Ui,
+    scroll: &mut ScrollState,
+    slot: &mut Option<ScrollDrag>,
+    area: Rect,
+    lines: &[Line],
+) {
+    if lines.is_empty() {
+        return;
+    }
+    let line_height = ui.text.line_height(ui.theme.body);
+    let content = line_height * lines.len() as i32;
+    if let Some(geom) = list_thumb(
+        area,
+        ui.px(LIST_GUTTER),
+        ui.px(2),
+        ui.px(18),
+        content,
+        scroll.offset(),
+    ) {
+        drag_thumb(ui.input, slot, ScrollTarget::Panel, scroll, &geom);
+    }
+    let heights = vec![line_height; lines.len()];
+    ui.scroll_list(scroll, area, &heights, |ui, index, rect| {
+        if !lines[index].text.is_empty() {
+            ui.label(rect, &lines[index].text, lines[index].colour, Align::Left);
+        }
+    });
+}
+
+fn render_header(ui: &mut Ui, state: &mut FrameState, area: Rect) {
+    ui.painter.fill_rect(area, ui.theme.panel);
+    ui.painter.fill_rect(
+        Rect::new(area.x, area.bottom() - 1, area.w, 1),
+        ui.theme.panel_edge,
+    );
+    let pad = ui.px(12);
+    let title_w = ui.px(150);
+    ui.label(
+        Rect::new(area.x + pad, area.y, title_w, area.h),
         "AKR REVIEW",
-        ACCENT,
+        ui.theme.accent,
+        Align::Left,
     );
-    for (rect, index) in &layout.tabs {
-        let tab = &model.tabs[*index];
-        button(
-            canvas,
-            *rect,
-            metrics,
-            &workspace_label(tab.workspace.as_path()),
-            model.active_tab == Some(*index),
-        );
+    let open_w = ui.px(110);
+    let open = Rect::new(
+        area.right() - open_w - pad,
+        area.y + ui.px(8),
+        open_w,
+        area.h - ui.px(16),
+    );
+    if ui.button(open, "+ Open") {
+        state.deferred.open_dialog = true;
     }
-    if let Some(rect) = layout.open_button {
-        button(canvas, rect, metrics, "+ Open", false);
+    let tabs_area = Rect::new(
+        area.x + pad + title_w,
+        area.y + ui.px(8),
+        open.x - ui.px(8) - (area.x + pad + title_w),
+        area.h - ui.px(16),
+    );
+    if state.model.tabs.is_empty() || tabs_area.w < ui.px(60) {
+        return;
     }
+    let labels: Vec<String> = state
+        .model
+        .tabs
+        .iter()
+        .map(|tab| workspace_label(tab.workspace.as_path()))
+        .collect();
+    let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+    let mut selected = state.model.active_tab.unwrap_or(0).min(refs.len() - 1);
+    if ui.tabs(&mut selected, tabs_area, &refs) {
+        state.deferred.switch_tab = Some(selected);
+    }
+}
 
-    // Filter row plus the panel switcher — replaced by the open prompt while
-    // one is being typed, since the prompt owns the keyboard anyway.
-    canvas.rect(0, layout.filter_bar.y, width, layout.filter_bar.h, SURFACE);
-    canvas.rect(
-        0,
-        layout.filter_bar.y + layout.filter_bar.h - 1,
-        width,
-        1,
-        LINE,
+fn render_filter_bar(ui: &mut Ui, state: &mut FrameState, area: Rect, pressed: &[KeyInput]) {
+    ui.painter.fill_rect(area, ui.theme.panel_alt);
+    ui.painter.fill_rect(
+        Rect::new(area.x, area.bottom() - 1, area.w, 1),
+        ui.theme.panel_edge,
     );
-    if view.path_editing {
-        let box_rect = Rect {
-            x: metrics.pad,
-            y: layout.filter_bar.y + metrics.pad / 2,
-            w: width - metrics.pad * 2,
-            h: layout.filter_bar.h - metrics.pad,
-        };
-        canvas.rect(box_rect.x, box_rect.y, box_rect.w, box_rect.h, BG);
-        canvas.border(box_rect.x, box_rect.y, box_rect.w, box_rect.h, ACCENT);
-        let text = format!("open workspace: {path_input}_");
-        // Show the tail of a long path: the end is the part being typed.
-        let columns = canvas.columns(box_rect.w - metrics.pad * 2);
-        let shown = if text.chars().count() > columns && columns > 1 {
-            let skip = text.chars().count() - columns + 1;
-            format!("<{}", text.chars().skip(skip).collect::<String>())
-        } else {
-            text
-        };
-        canvas.text(
-            box_rect.x + metrics.pad,
-            box_rect.y + (box_rect.h - metrics.cw) / 2,
-            &shown,
-            TEXT,
-        );
+    let pad = ui.px(12);
+    let wide = area.w > ui.px(900);
+    let count = state.model.outstanding_count();
+    let items: Vec<(Panel, String, i32)> = if wide {
+        vec![
+            (Panel::Dashboard, "Dashboard".to_owned(), ui.px(120)),
+            (
+                Panel::Outstanding,
+                format!("Outstanding ({count})"),
+                ui.px(200),
+            ),
+            (Panel::Inspector, "Detail".to_owned(), ui.px(100)),
+            (Panel::Relations, "Relations".to_owned(), ui.px(120)),
+            (Panel::Git, "Git".to_owned(), ui.px(80)),
+        ]
     } else {
-        let box_rect = layout.filter_box;
-        canvas.rect(box_rect.x, box_rect.y, box_rect.w, box_rect.h, BG);
-        canvas.border(
-            box_rect.x,
-            box_rect.y,
-            box_rect.w,
-            box_rect.h,
-            if view.filter_editing { ACCENT } else { LINE },
-        );
-        let query = if model.filter.query.is_empty() && !view.filter_editing {
-            "/ filter records".to_owned()
-        } else {
-            format!(
-                "{}{}",
-                model.filter.query,
-                if view.filter_editing { "_" } else { "" }
-            )
-        };
-        canvas.text_clipped(
-            box_rect.x + metrics.pad,
-            box_rect.y + (box_rect.h - metrics.cw) / 2,
-            box_rect.w - metrics.pad * 2,
-            &query,
-            if model.filter.query.is_empty() && !view.filter_editing {
-                MUTED
+        vec![
+            (Panel::Dashboard, "D".to_owned(), ui.px(44)),
+            (Panel::Outstanding, format!("O({count})"), ui.px(72)),
+            (Panel::Inspector, "I".to_owned(), ui.px(44)),
+            (Panel::Relations, "L".to_owned(), ui.px(44)),
+            (Panel::Git, "G".to_owned(), ui.px(44)),
+        ]
+    };
+    let mut right = area.right() - pad;
+    for (panel, label, width) in items.iter().rev() {
+        let rect = Rect::new(right - width, area.y + ui.px(8), *width, area.h - ui.px(16));
+        if ui.button(rect, label) {
+            state.model.panel = *panel;
+            *state.panel_scroll = ScrollState::new();
+        }
+        if state.model.panel == *panel {
+            ui.painter.fill_rect(
+                Rect::new(rect.x, rect.bottom() - ui.px(3), rect.w, ui.px(3)),
+                ui.theme.accent,
+            );
+        }
+        right -= width + ui.px(8);
+    }
+    let field = Rect::new(
+        area.x + pad,
+        area.y + ui.px(8),
+        (right - (area.x + pad)).max(ui.px(60)),
+        area.h - ui.px(16),
+    );
+    if ui.input.take_click(field) {
+        *state.filter_focused = true;
+    }
+    let mut changed = false;
+    if *state.filter_focused {
+        changed |= state.filter_field.apply(pressed);
+    }
+    changed |= ui.text_field(
+        state.filter_field,
+        field,
+        "/ filter records",
+        *state.filter_focused,
+        false,
+    );
+    if changed {
+        state.model.filter.query = state.filter_field.text().to_owned();
+    }
+}
+
+/// Everything a thumb drag needs: the handle, its track, and the scroll
+/// range it maps onto.
+struct ThumbGeom {
+    thumb: Rect,
+    track_top: i32,
+    max: i32,
+    travel: i32,
+    viewport: i32,
+    content: i32,
+}
+
+/// A table's scrollbar thumb, mirroring pixelkit's indicator math so the drag
+/// handle sits exactly on what the eye sees, or nothing when everything fits.
+fn table_thumb(
+    table_area: Rect,
+    row_height: i32,
+    row_count: usize,
+    offset: i32,
+) -> Option<ThumbGeom> {
+    let body_h = table_area.h - row_height;
+    let content = row_count as i32 * row_height;
+    let max = ScrollState::max_offset(body_h, content);
+    if max <= 0 || body_h <= 0 {
+        return None;
+    }
+    let thumb_h = (body_h * body_h / content).max(20);
+    let travel = body_h - thumb_h;
+    let body_y = table_area.y + row_height;
+    let top = body_y + travel * offset.clamp(0, max) / max;
+    Some(ThumbGeom {
+        thumb: Rect::new(table_area.right() - TABLE_GUTTER + 3, top, 4, thumb_h),
+        track_top: body_y,
+        max,
+        travel,
+        viewport: body_h,
+        content,
+    })
+}
+
+/// A scroll list's thumb, same contract as [`table_thumb`].
+fn list_thumb(
+    list_area: Rect,
+    gutter: i32,
+    inset: i32,
+    min_thumb: i32,
+    content: i32,
+    offset: i32,
+) -> Option<ThumbGeom> {
+    if content <= list_area.h || list_area.h <= 0 {
+        return None;
+    }
+    let max = ScrollState::max_offset(list_area.h, content);
+    if max <= 0 {
+        return None;
+    }
+    let thumb_h = ((list_area.h as i64 * list_area.h as i64) / content.max(1) as i64)
+        .max(min_thumb as i64) as i32;
+    let travel = (list_area.h - thumb_h).max(0);
+    let top = list_area.y + (travel as i64 * offset.clamp(0, max) as i64 / max as i64) as i32;
+    Some(ThumbGeom {
+        thumb: Rect::new(
+            list_area.right() - gutter + inset,
+            top,
+            (gutter - inset * 2).max(1),
+            thumb_h.min(list_area.h),
+        ),
+        track_top: list_area.y,
+        max,
+        travel,
+        viewport: list_area.h,
+        content,
+    })
+}
+
+/// Runs a scrollbar thumb drag for one region. Call before the region's widget
+/// draws: a press on the thumb is claimed here, so the rows underneath never
+/// see it, while a press anywhere else passes through untouched.
+fn drag_thumb(
+    input: &mut Input,
+    slot: &mut Option<ScrollDrag>,
+    target: ScrollTarget,
+    scroll: &mut ScrollState,
+    geom: &ThumbGeom,
+) {
+    match slot {
+        Some(drag) if drag.target == target => {
+            if input.is_held() {
+                if geom.travel > 0
+                    && let Some((_, cursor_y)) = input.cursor()
+                {
+                    let wanted = (cursor_y - drag.grab - geom.track_top) * geom.max / geom.travel;
+                    scroll.scroll_by(
+                        wanted.clamp(0, geom.max) - scroll.offset(),
+                        geom.viewport,
+                        geom.content,
+                    );
+                }
             } else {
-                TEXT
-            },
-        );
-        for (rect, panel, label) in &layout.buttons {
-            button(
-                canvas,
-                *rect,
-                metrics,
-                label,
-                model.panel == *panel || (*panel == Panel::Inspector && model.panel == Panel::Tree),
-            );
+                *slot = None;
+            }
+            return;
+        }
+        // Another region's live drag owns the pointer; a stale one is dead.
+        Some(_) if input.is_held() => return,
+        _ => {}
+    }
+    *slot = None;
+    // A press still pending is a fresh press: a live drag elsewhere consumed
+    // its own press when it began, so anything pending in this thumb starts a
+    // drag, and anything else passes through to the rows underneath.
+    if let Some((_, press_y)) = input.press_position() {
+        // `take_click` only consumes a press inside the thumb; anything else
+        // passes through to the rows underneath.
+        if input.take_click(geom.thumb) {
+            *slot = Some(ScrollDrag {
+                target,
+                grab: press_y - geom.thumb.y,
+            });
         }
     }
+}
 
-    // Left pane: header strip, then the scrollable record list.
-    canvas.rect(
-        0,
-        layout.tree_header.y,
-        layout.tree_header.w,
-        layout.tree_header.h + layout.tree_list.h,
-        SURFACE,
-    );
-    let rows = tree_rows(model);
-    let summary = match model.active_tab.and_then(|index| model.tabs.get(index)) {
-        Some(tab) if tab.snapshot.is_none() && tab.error.is_none() => match &tab.phase {
-            Some(phase) => format!("loading {}/{}", phase.step, phase.total),
-            None => "loading".to_owned(),
-        },
-        _ => format!("{} records", rows.len()),
-    };
-    canvas.text_clipped(
-        metrics.pad,
-        layout.tree_header.y + (layout.tree_header.h - metrics.cw) / 2,
-        layout.mode_button.x - metrics.pad * 2,
-        &summary,
-        MUTED,
-    );
-    button(
-        canvas,
-        layout.mode_button,
-        metrics,
-        mode_label(model.mode),
-        true,
-    );
-    canvas.rect(
-        0,
-        layout.tree_header.y + layout.tree_header.h - 1,
-        layout.tree_header.w,
-        1,
-        LINE,
-    );
+/// Move the keyboard selection and keep it on screen, using the viewport the
+/// table reported last frame.
+fn keyboard_navigate(
+    table: &mut TableState,
+    keys: &[String],
+    visible_rows: i32,
+    row_height: i32,
+    pressed: &[KeyInput],
+) -> bool {
+    if !navigate(table, keys, visible_rows.max(1), pressed) {
+        return false;
+    }
+    if let Some(index) = table.selected_index(keys) {
+        table.scroll.reveal(
+            index as i32 * row_height,
+            row_height,
+            visible_rows.max(1) * row_height,
+            keys.len() as i32 * row_height,
+        );
+    }
+    true
+}
 
-    let selected_key = model.selected().map(|record| record.key.clone());
-    let tree_content = {
-        let mut pane = Pane::new(canvas, layout.tree_list, metrics, view.tree_scroll);
-        if rows.is_empty() {
-            let active = model.active_tab.and_then(|index| model.tabs.get(index));
-            pane.line(
-                match active {
-                    None => "no workspace open",
-                    Some(tab) if tab.error.is_some() => "load failed",
-                    Some(tab) if tab.snapshot.is_none() => "loading...",
-                    Some(_) => "no records match",
-                },
-                MUTED,
-            );
-        }
-        for (depth, key) in &rows {
-            let record = model.snapshot().and_then(|snapshot| snapshot.record(key));
-            let line = record.map_or_else(
-                || key.clone(),
-                |record| format!("{} {}", record.kind, record.title),
-            );
-            let selected = selected_key.as_deref() == Some(key.as_str());
-            pane.selectable(depth * metrics.cw, &line, selected);
-        }
-        pane.content_height()
-    };
-    scrollbar(
-        canvas,
-        layout.tree_list,
-        metrics,
-        view.tree_scroll,
-        tree_content,
+fn render_left(
+    ui: &mut Ui,
+    state: &mut FrameState,
+    area: Rect,
+    pressed: &[KeyInput],
+    nav_active: bool,
+) {
+    ui.painter.fill_rect(area, ui.theme.panel);
+    ui.painter.fill_rect(
+        Rect::new(area.right() - 1, area.y, 1, area.h),
+        ui.theme.panel_edge,
     );
-
-    // Splitter handle.
-    canvas.rect(
-        layout.splitter.x,
-        layout.splitter.y,
-        layout.splitter.w,
-        layout.splitter.h,
-        LINE,
+    let pad = ui.px(12);
+    let rows = tree_rows(state.model);
+    let head = Rect::new(area.x + pad, area.y + ui.px(6), area.w - pad * 2, ui.px(36));
+    ui.label(
+        Rect::new(head.x, head.y, head.w - ui.px(130), head.h),
+        &format!("{} records", rows.len()),
+        ui.theme.text_dim,
+        Align::Left,
     );
-    canvas.rect(
-        layout.splitter.x,
-        layout.splitter.y + layout.splitter.h / 2 - metrics.row,
-        layout.splitter.w,
-        metrics.row * 2,
-        THUMB,
+    let mode_rect = Rect::new(head.right() - ui.px(120), head.y, ui.px(120), head.h);
+    if ui.button(mode_rect, mode_label(state.model.mode)) {
+        state.model.mode = match state.model.mode {
+            TreeMode::Planning => TreeMode::Knowledge,
+            TreeMode::Knowledge => TreeMode::Planning,
+        };
+        *state.tree_table = TableState::new();
+    }
+    let table_area = Rect::new(
+        area.x + ui.px(4),
+        head.bottom() + ui.px(4),
+        area.w - ui.px(8),
+        (area.bottom() - ui.px(4)) - (head.bottom() + ui.px(4)),
     );
-
-    let panel_content = {
-        let mut pane = Pane::new(canvas, layout.panel, metrics, view.panel_scroll);
-        let loading = model
+    if rows.is_empty() {
+        let reason = match state
+            .model
             .active_tab
-            .and_then(|index| model.tabs.get(index))
-            .filter(|tab| tab.snapshot.is_none() && tab.error.is_none());
-        match loading {
-            // A load in flight owns the panel: none of the other views have
-            // anything to say until it lands.
-            Some(tab) => render_loading(&mut pane, tab, elapsed, tick),
-            None => match model.panel {
-                Panel::Dashboard => render_dashboard(&mut pane, model),
-                Panel::Relations => render_relations(&mut pane, model),
-                Panel::Git => render_git(&mut pane, model),
-                Panel::Tree | Panel::Inspector => render_inspector(&mut pane, model),
-            },
+            .and_then(|index| state.model.tabs.get(index))
+        {
+            None => "no workspace open",
+            Some(tab) if tab.error.is_some() => "load failed",
+            Some(tab) if tab.snapshot.is_none() => "loading...",
+            Some(_) => "no records match",
+        };
+        ui.label(table_area, reason, ui.theme.text_dim, Align::Left);
+        return;
+    }
+    let keys: Vec<String> = rows.iter().map(|(_, key)| key.clone()).collect();
+    state
+        .tree_table
+        .select(state.model.selected().map(|record| record.key.clone()));
+    if nav_active
+        && keyboard_navigate(
+            state.tree_table,
+            &keys,
+            *state.tree_visible_rows,
+            ui.theme.row_height,
+            pressed,
+        )
+        && let Some(selected) = state.tree_table.selected()
+    {
+        let selected = selected.to_owned();
+        state.model.select_quiet(selected);
+    }
+    if let Some(geom) = table_thumb(
+        table_area,
+        ui.theme.row_height,
+        keys.len(),
+        state.tree_table.scroll.offset(),
+    ) {
+        drag_thumb(
+            ui.input,
+            state.scroll_drag,
+            ScrollTarget::Tree,
+            &mut state.tree_table.scroll,
+            &geom,
+        );
+    }
+    let snapshot = state.model.snapshot();
+    let columns = [Column::flex("RECORD", 1, Align::Left)];
+    let outcome: TableOutcome = ui.table(state.tree_table, table_area, &columns, &keys, |index| {
+        let (depth, key) = &rows[index];
+        let indent = "  ".repeat((*depth as usize).min(8));
+        let text = match snapshot.and_then(|snapshot| snapshot.record(key)) {
+            Some(record) => format!("{indent}{}  {}", record.kind, record.title),
+            None => format!("{indent}{key}"),
+        };
+        Row {
+            cells: vec![Cell::new(text)],
         }
-        pane.content_height()
-    };
-    scrollbar(
-        canvas,
-        layout.panel,
-        metrics,
-        view.panel_scroll,
-        panel_content,
-    );
+    });
+    *state.tree_visible_rows = outcome.visible_rows.max(1);
+    if let Some(key) = outcome.activated {
+        state.model.select(key);
+        *state.panel_scroll = ScrollState::new();
+    }
+}
 
-    // Footer: the last status message, or key hints, plus the zoom level.
-    canvas.rect(0, layout.footer.y, width, layout.footer.h, SURFACE);
-    canvas.rect(0, layout.footer.y, width, 1, LINE);
-    let hints = if view.path_editing {
-        "type a project directory   Enter open   Esc cancel   or drop a folder on the window"
-    } else {
-        "O open   W close   Tab switch   / filter   P/K tree   D I L G panels   R reload   +/- zoom"
-    };
-    let loading_line = model
+/// Draws the no-workspace and load-error states shared by every panel.
+/// Returns true when it drew something terminal and the panel should stop.
+fn render_terminal(ui: &mut Ui, state: &mut FrameState, area: Rect) -> bool {
+    let pad = ui.px(12);
+    let inner = Rect::new(
+        area.x + pad,
+        area.y + pad,
+        area.w - pad * 2,
+        area.h - pad * 2,
+    );
+    let Some(tab) = state
+        .model
         .active_tab
-        .and_then(|index| model.tabs.get(index))
+        .and_then(|index| state.model.tabs.get(index))
+    else {
+        let mut lines = Vec::new();
+        lines.push(Line {
+            text: "No workspace open.".to_owned(),
+            colour: ui.theme.text,
+        });
+        lines.push(Line {
+            text: String::new(),
+            colour: ui.theme.text_dim,
+        });
+        wrapped_lines(
+            ui,
+            "Press O and type a project directory, or click + Open in the title bar. \
+             A path inside a project resolves to the directory holding its .akr folder.",
+            inner.w,
+            ui.theme.text_dim,
+            &mut lines,
+        );
+        scroll_lines(ui, state.panel_scroll, state.scroll_drag, inner, &lines);
+        return true;
+    };
+    let Some(error) = tab.error.clone() else {
+        return false;
+    };
+    let mut lines = vec![Line {
+        text: "LOAD FAILED".to_owned(),
+        colour: ui.theme.alarm,
+    }];
+    lines.push(Line {
+        text: String::new(),
+        colour: ui.theme.text_dim,
+    });
+    wrapped_lines(ui, &error, inner.w, ui.theme.text, &mut lines);
+    scroll_lines(ui, state.panel_scroll, state.scroll_drag, inner, &lines);
+    true
+}
+
+fn render_loading(ui: &mut Ui, state: &mut FrameState, area: Rect, elapsed: f32) {
+    const MARKERS: [&str; 4] = ["|", "/", "-", "\\"];
+    let marker = MARKERS[(state.tick / 8) as usize % MARKERS.len()];
+    let pad = ui.px(12);
+    let mut y = area.y + pad;
+    let full = Rect::new(area.x + pad, y, area.w - pad * 2, ui.px(34));
+    ui.heading(full, &format!("{marker} Loading workspace"));
+    y = full.bottom() + ui.px(8);
+    let (path, step, total, label) = match state
+        .model
+        .active_tab
+        .and_then(|index| state.model.tabs.get(index))
+    {
+        Some(tab) => {
+            let (step, total, label) = match &tab.phase {
+                Some(phase) => (phase.step, phase.total, phase.label.clone()),
+                None => (0, 5, "starting".to_owned()),
+            };
+            (tab.workspace.display().to_string(), step, total, label)
+        }
+        None => (String::new(), 0, 5, "starting".to_owned()),
+    };
+    let row = Rect::new(area.x + pad, y, area.w - pad * 2, ui.px(24));
+    ui.label(row, &path, ui.theme.text_dim, Align::Left);
+    y = row.bottom() + ui.px(12);
+    let step_row = Rect::new(area.x + pad, y, area.w - pad * 2, ui.px(24));
+    ui.label(
+        step_row,
+        &format!("step {step} of {total}: {label}"),
+        ui.theme.text,
+        Align::Left,
+    );
+    y = step_row.bottom() + ui.px(8);
+    let bar = Rect::new(
+        area.x + pad,
+        y,
+        (area.w - pad * 2).min(ui.px(480)),
+        ui.px(12),
+    );
+    let fraction = if total == 0 {
+        0.0
+    } else {
+        step.min(total) as f64 / total as f64
+    };
+    ui.bar(bar, fraction, ui.theme.accent);
+    y = bar.bottom() + ui.px(8);
+    let elapsed_row = Rect::new(area.x + pad, y, area.w - pad * 2, ui.px(24));
+    ui.label(
+        elapsed_row,
+        &format!("{elapsed:.1}s elapsed"),
+        ui.theme.text_dim,
+        Align::Left,
+    );
+    y = elapsed_row.bottom() + ui.px(12);
+    let mut lines = Vec::new();
+    wrapped_lines(
+        ui,
+        "Most of this is git: freshness asks the repository which commits touched \
+         each watched path. Large histories take longer, and the answer is cached \
+         for the rest of the load.",
+        area.w - pad * 2,
+        ui.theme.text_dim,
+        &mut lines,
+    );
+    scroll_lines(
+        ui,
+        state.panel_scroll,
+        state.scroll_drag,
+        Rect::new(area.x + pad, y, area.w - pad * 2, area.bottom() - pad - y),
+        &lines,
+    );
+}
+
+fn render_dashboard(ui: &mut Ui, state: &mut FrameState, area: Rect) {
+    if render_terminal(ui, state, area) {
+        return;
+    }
+    let pad = ui.px(12);
+    let mut y = area.y + pad;
+    let row = |y: i32, height: i32| Rect::new(area.x + pad, y, area.w - pad * 2, height);
+    let Some(snapshot) = state.model.snapshot() else {
+        ui.label(
+            row(y, ui.px(24)),
+            "Loading review snapshot...",
+            ui.theme.text_dim,
+            Align::Left,
+        );
+        return;
+    };
+    let project = snapshot.project.clone();
+    let counts = snapshot.counts;
+    let outstanding = snapshot.outstanding_count();
+    let source_graph = snapshot.source_graph.clone();
+    let head = snapshot.head.clone();
+    let diagnostics = snapshot.diagnostics.clone();
+    ui.heading(row(y, ui.px(34)), &project);
+    y += ui.px(34) + ui.px(8);
+    ui.label(
+        row(y, ui.px(24)),
+        &format!(
+            "{} records / {} revisions",
+            counts.records, counts.revisions
+        ),
+        ui.theme.text,
+        Align::Left,
+    );
+    y += ui.px(24);
+    let jump = Rect::new(
+        area.x + pad,
+        y + ui.px(4),
+        (area.w - pad * 2).min(ui.px(460)),
+        ui.px(36),
+    );
+    if ui.button(jump, &format!("{outstanding} outstanding — review them")) {
+        state.model.panel = Panel::Outstanding;
+        *state.panel_scroll = ScrollState::new();
+    }
+    y = jump.bottom() + ui.px(8);
+    ui.label(
+        row(y, ui.px(24)),
+        &format!(
+            "{} live planning / {} open questions",
+            counts.live_planning, counts.open_questions
+        ),
+        ui.theme.text,
+        Align::Left,
+    );
+    y += ui.px(24);
+    let bad = counts.stale + counts.at_risk + counts.diagnostics > 0;
+    ui.label(
+        row(y, ui.px(24)),
+        &format!(
+            "{} stale / {} at risk / {} diagnostics",
+            counts.stale, counts.at_risk, counts.diagnostics
+        ),
+        if bad {
+            ui.theme.alarm
+        } else {
+            ui.theme.text_dim
+        },
+        Align::Left,
+    );
+    y += ui.px(24) + ui.px(12);
+    ui.label(
+        row(y, ui.px(24)),
+        &format!("source graph  {source_graph}"),
+        ui.theme.text_dim,
+        Align::Left,
+    );
+    y += ui.px(24);
+    if let Some(head) = head {
+        ui.label(
+            row(y, ui.px(24)),
+            &format!("git HEAD      {head}"),
+            ui.theme.text_dim,
+            Align::Left,
+        );
+        y += ui.px(24);
+    }
+    y += ui.px(8);
+    ui.label(
+        row(y, ui.px(28)),
+        "DIAGNOSTICS",
+        ui.theme.accent,
+        Align::Left,
+    );
+    y += ui.px(28);
+    let mut lines = Vec::new();
+    if diagnostics.is_empty() {
+        lines.push(Line {
+            text: "none".to_owned(),
+            colour: ui.theme.text_dim,
+        });
+    }
+    for diagnostic in &diagnostics {
+        wrapped_lines(
+            ui,
+            &format!(
+                "{} {}  {}",
+                diagnostic.severity, diagnostic.code, diagnostic.message
+            ),
+            area.w - pad * 2,
+            if diagnostic.severity == "error" {
+                ui.theme.alarm
+            } else {
+                ui.theme.text_dim
+            },
+            &mut lines,
+        );
+    }
+    scroll_lines(
+        ui,
+        state.panel_scroll,
+        state.scroll_drag,
+        Rect::new(
+            area.x + pad,
+            y,
+            area.w - pad * 2,
+            (area.bottom() - pad - y).max(0),
+        ),
+        &lines,
+    );
+}
+
+fn render_outstanding(
+    ui: &mut Ui,
+    state: &mut FrameState,
+    area: Rect,
+    pressed: &[KeyInput],
+    nav_active: bool,
+) {
+    if render_terminal(ui, state, area) {
+        return;
+    }
+    let pad = ui.px(12);
+    let keys = state.model.outstanding_keys();
+    let title = Rect::new(area.x + pad, area.y + pad, area.w - pad * 2, ui.px(28));
+    if keys.is_empty() {
+        ui.label(
+            title,
+            "Nothing outstanding — no proposed records.",
+            ui.theme.good,
+            Align::Left,
+        );
+        let mut lines = Vec::new();
+        wrapped_lines(
+            ui,
+            "Every entry in this project has been accepted, completed, or withdrawn. \
+             The filter above still applies: clear it if you expected to see more.",
+            area.w - pad * 2,
+            ui.theme.text_dim,
+            &mut lines,
+        );
+        scroll_lines(
+            ui,
+            state.panel_scroll,
+            state.scroll_drag,
+            Rect::new(
+                area.x + pad,
+                title.bottom() + ui.px(8),
+                area.w - pad * 2,
+                (area.bottom() - pad - (title.bottom() + ui.px(8))).max(0),
+            ),
+            &lines,
+        );
+        return;
+    }
+    ui.label(
+        title,
+        &format!(
+            "{} outstanding — proposed, awaiting review. Click one to inspect it.",
+            keys.len()
+        ),
+        ui.theme.text,
+        Align::Left,
+    );
+    let table_area = Rect::new(
+        area.x + pad,
+        title.bottom() + ui.px(8),
+        area.w - pad * 2,
+        (area.bottom() - pad - (title.bottom() + ui.px(8))).max(0),
+    );
+    state
+        .out_table
+        .select(state.model.selected().map(|record| record.key.clone()));
+    if nav_active
+        && keyboard_navigate(
+            state.out_table,
+            &keys,
+            *state.out_visible_rows,
+            ui.theme.row_height,
+            pressed,
+        )
+        && let Some(selected) = state.out_table.selected()
+    {
+        let selected = selected.to_owned();
+        state.model.select_quiet(selected);
+    }
+    if let Some(geom) = table_thumb(
+        table_area,
+        ui.theme.row_height,
+        keys.len(),
+        state.out_table.scroll.offset(),
+    ) {
+        drag_thumb(
+            ui.input,
+            state.scroll_drag,
+            ScrollTarget::Outstanding,
+            &mut state.out_table.scroll,
+            &geom,
+        );
+    }
+    let snapshot = state.model.snapshot();
+    let columns = [
+        Column::fixed("KIND", ui.px(110), Align::Left),
+        Column::flex("KEY", 2, Align::Left),
+        Column::flex("TITLE", 3, Align::Left),
+        Column::fixed("FRESHNESS", ui.px(120), Align::Left),
+    ];
+    let theme = ui.theme;
+    let outcome: TableOutcome = ui.table(state.out_table, table_area, &columns, &keys, |index| {
+        let key = &keys[index];
+        let record = snapshot.and_then(|snapshot| snapshot.record(key));
+        let (kind, title, freshness) = match record {
+            Some(record) => (
+                record.kind.as_str(),
+                record.title.as_str(),
+                record.freshness.as_str(),
+            ),
+            None => ("", key.as_str(), ""),
+        };
+        let fresh_cell = match freshness {
+            "current" => Cell::badge(freshness, theme.good, theme.good_soft, theme.good),
+            "stale" | "at risk" | "at-risk" => {
+                Cell::badge(freshness, theme.alarm, theme.alarm_soft, theme.alarm)
+            }
+            _ => Cell::new(freshness),
+        };
+        Row {
+            cells: vec![
+                Cell::coloured(kind, theme.text_dim),
+                Cell::new(key.as_str()),
+                Cell::new(title),
+                fresh_cell,
+            ],
+        }
+    });
+    *state.out_visible_rows = outcome.visible_rows.max(1);
+    if let Some(key) = outcome.activated {
+        state.model.select(key);
+        *state.panel_scroll = ScrollState::new();
+    }
+}
+
+fn render_inspector(ui: &mut Ui, state: &mut FrameState, area: Rect) {
+    if render_terminal(ui, state, area) {
+        return;
+    }
+    let pad = ui.px(12);
+    let inner = Rect::new(
+        area.x + pad,
+        area.y + pad,
+        area.w - pad * 2,
+        area.h - pad * 2,
+    );
+    let Some(record) = state.model.selected().cloned() else {
+        ui.label(
+            inner,
+            "Select a record to inspect",
+            ui.theme.text_dim,
+            Align::Left,
+        );
+        return;
+    };
+    let accent = ui.theme.accent;
+    let text = ui.theme.text;
+    let dim = ui.theme.text_dim;
+    let alarm = ui.theme.alarm;
+    let mut lines = vec![
+        Line {
+            text: record.key.clone(),
+            colour: accent,
+        },
+        Line {
+            text: format!(
+                "{} / {} / r{} / freshness: {}",
+                record.kind, record.state, record.revision, record.freshness
+            ),
+            colour: text,
+        },
+        Line {
+            text: String::new(),
+            colour: dim,
+        },
+    ];
+    wrapped_lines(ui, &record.title, inner.w, text, &mut lines);
+    lines.push(Line {
+        text: String::new(),
+        colour: dim,
+    });
+    wrapped_lines(ui, &record.body, inner.w, dim, &mut lines);
+    lines.push(Line {
+        text: String::new(),
+        colour: dim,
+    });
+    lines.push(Line {
+        text: "ACCEPTANCE".to_owned(),
+        colour: accent,
+    });
+    if record.acceptance.is_empty() {
+        lines.push(Line {
+            text: "none".to_owned(),
+            colour: dim,
+        });
+    }
+    for check in &record.acceptance {
+        let colour = if check.verdict.starts_with("satisfied") {
+            dim
+        } else {
+            alarm
+        };
+        wrapped_lines(
+            ui,
+            &format!("{}  {}  {}", check.id, check.verdict, check.statement),
+            inner.w,
+            colour,
+            &mut lines,
+        );
+    }
+    lines.push(Line {
+        text: String::new(),
+        colour: dim,
+    });
+    lines.push(Line {
+        text: "REVISION HISTORY".to_owned(),
+        colour: accent,
+    });
+    if record.history.is_empty() {
+        lines.push(Line {
+            text: "none".to_owned(),
+            colour: dim,
+        });
+    }
+    for revision in &record.history {
+        lines.push(Line {
+            text: revision.clone(),
+            colour: dim,
+        });
+    }
+    scroll_lines(ui, state.panel_scroll, state.scroll_drag, inner, &lines);
+}
+
+enum RelationRow {
+    Header(String),
+    Outbound {
+        kind: String,
+        target: String,
+    },
+    Edge {
+        from: String,
+        kind: String,
+        to: String,
+    },
+}
+
+fn render_relations(ui: &mut Ui, state: &mut FrameState, area: Rect) {
+    if render_terminal(ui, state, area) {
+        return;
+    }
+    let pad = ui.px(12);
+    let inner = Rect::new(
+        area.x + pad,
+        area.y + pad,
+        area.w - pad * 2,
+        area.h - pad * 2,
+    );
+    let Some(record) = state.model.selected().cloned() else {
+        ui.label(
+            inner,
+            "Select a record to inspect relations",
+            ui.theme.text_dim,
+            Align::Left,
+        );
+        return;
+    };
+    let current = record.key.clone();
+    let mut rows = vec![RelationRow::Header(current.clone())];
+    rows.push(RelationRow::Header("OUTBOUND RELATIONS".to_owned()));
+    for relation in &record.relations {
+        rows.push(RelationRow::Outbound {
+            kind: relation.kind.clone(),
+            target: relation.target.clone(),
+        });
+    }
+    rows.push(RelationRow::Header(
+        "LOCAL NEIGHBORHOOD (2 HOPS / 12 NODES)".to_owned(),
+    ));
+    let neighbors = state
+        .model
+        .snapshot()
+        .map(|snapshot| snapshot.neighborhood(&current, 2, 12))
+        .unwrap_or_default();
+    for edge in &neighbors {
+        rows.push(RelationRow::Edge {
+            from: edge.from.clone(),
+            kind: edge.kind.clone(),
+            to: edge.to.clone(),
+        });
+    }
+    let row_height = ui.theme.row_height + ui.px(6);
+    let heights = vec![row_height; rows.len()];
+    let content: i32 = heights.iter().sum();
+    if let Some(geom) = list_thumb(
+        inner,
+        ui.px(LIST_GUTTER),
+        ui.px(2),
+        ui.px(18),
+        content,
+        state.panel_scroll.offset(),
+    ) {
+        drag_thumb(
+            ui.input,
+            state.scroll_drag,
+            ScrollTarget::Panel,
+            state.panel_scroll,
+            &geom,
+        );
+    }
+    let mut goto: Option<String> = None;
+    ui.scroll_list(
+        state.panel_scroll,
+        inner,
+        &heights,
+        |ui, index, rect| match &rows[index] {
+            RelationRow::Header(text) => {
+                ui.label(rect, text, ui.theme.accent, Align::Left);
+            }
+            RelationRow::Outbound { kind, target } => {
+                if ui.button(rect, &format!("{kind} -> {target}")) {
+                    goto = Some(target.clone());
+                }
+            }
+            RelationRow::Edge { from, kind, to } => {
+                if ui.button(rect, &format!("{from} -{kind}-> {to}")) {
+                    goto = Some(if from == &current {
+                        to.clone()
+                    } else {
+                        from.clone()
+                    });
+                }
+            }
+        },
+    );
+    if let Some(key) = goto {
+        let known = state
+            .model
+            .snapshot()
+            .and_then(|snapshot| snapshot.record(&key))
+            .is_some();
+        if known {
+            state.model.select(key);
+            *state.panel_scroll = ScrollState::new();
+        } else {
+            *state.status = Some(format!("no such record in this workspace: {key}"));
+        }
+    }
+}
+
+fn render_git(ui: &mut Ui, state: &mut FrameState, area: Rect) {
+    if render_terminal(ui, state, area) {
+        return;
+    }
+    let pad = ui.px(12);
+    let inner = Rect::new(
+        area.x + pad,
+        area.y + pad,
+        area.w - pad * 2,
+        area.h - pad * 2,
+    );
+    let Some(record) = state.model.selected().cloned() else {
+        ui.label(
+            inner,
+            "Select a record to inspect provenance",
+            ui.theme.text_dim,
+            Align::Left,
+        );
+        return;
+    };
+    let accent = ui.theme.accent;
+    let text = ui.theme.text;
+    let dim = ui.theme.text_dim;
+    let mut lines = vec![
+        Line {
+            text: record.key.clone(),
+            colour: accent,
+        },
+        Line {
+            text: "GIT".to_owned(),
+            colour: accent,
+        },
+        Line {
+            text: format!(
+                "defined at   {}",
+                record.git.defined_at.as_deref().unwrap_or("uncommitted")
+            ),
+            colour: text,
+        },
+        Line {
+            text: format!(
+                "observed at  {}",
+                record.git.observed_at.as_deref().unwrap_or("not empirical")
+            ),
+            colour: text,
+        },
+        Line {
+            text: format!(
+                "stale cause  {}",
+                record.git.stale_cause.as_deref().unwrap_or("none")
+            ),
+            colour: text,
+        },
+        Line {
+            text: String::new(),
+            colour: dim,
+        },
+        Line {
+            text: "PROVENANCE".to_owned(),
+            colour: accent,
+        },
+    ];
+    if record.provenance.is_empty() {
+        lines.push(Line {
+            text: "none".to_owned(),
+            colour: dim,
+        });
+    }
+    for value in &record.provenance {
+        wrapped_lines(ui, value, inner.w, dim, &mut lines);
+    }
+    scroll_lines(ui, state.panel_scroll, state.scroll_drag, inner, &lines);
+}
+
+fn render_footer(ui: &mut Ui, state: &mut FrameState, area: Rect, elapsed: f32) {
+    ui.painter.fill_rect(area, ui.theme.panel);
+    ui.painter
+        .fill_rect(Rect::new(area.x, area.y, area.w, 1), ui.theme.panel_edge);
+    let pad = ui.px(12);
+    let zoom = format!("zoom {}%", (*state.zoom * 100.0).round() as i32);
+    let zoom_w = ui.px(130);
+    ui.label(
+        Rect::new(area.right() - zoom_w - pad, area.y, zoom_w, area.h),
+        &zoom,
+        ui.theme.text_dim,
+        Align::Right,
+    );
+    let hints = "O open   W close   Tab switch   / filter   P/K tree   D U I L G panels   R reload   +/- zoom";
+    let loading_line = state
+        .model
+        .active_tab
+        .and_then(|index| state.model.tabs.get(index))
         .filter(|tab| tab.snapshot.is_none() && tab.error.is_none())
         .map(|tab| match &tab.phase {
             Some(phase) => format!(
@@ -1510,459 +1793,656 @@ fn render_app(
             ),
             None => format!("loading  {elapsed:.1}s"),
         });
-    let footer_text = match (&loading_line, status) {
-        (Some(line), _) if !view.path_editing => line.as_str(),
-        (None, Some(status)) if !view.path_editing => status,
-        _ => hints,
+    let (text, colour) = if let Some(line) = loading_line {
+        (line, ui.theme.text)
+    } else if let Some(status) = state.status.clone() {
+        (status, ui.theme.text)
+    } else {
+        (hints.to_owned(), ui.theme.text_dim)
     };
-    canvas.text_clipped(
-        metrics.pad,
-        layout.footer.y + (layout.footer.h - metrics.cw) / 2,
-        width - metrics.pad * 2 - metrics.width_of("zoom x0") - metrics.pad,
-        footer_text,
-        if loading_line.is_some() || (status.is_some() && !view.path_editing) {
-            TEXT
-        } else {
-            MUTED
-        },
+    ui.label(
+        Rect::new(area.x + pad, area.y, area.w - pad * 3 - zoom_w, area.h),
+        &text,
+        colour,
+        Align::Left,
     );
-    let zoom = format!("zoom x{}", view.scale);
-    canvas.text(
-        width - metrics.width_of(&zoom) - metrics.pad,
-        layout.footer.y + (layout.footer.h - metrics.cw) / 2,
-        &zoom,
-        MUTED,
-    );
-    (tree_content, panel_content)
 }
 
-/// Draws the load progress for a tab that has no snapshot yet.
-///
-/// The bar is determinate over the phase list, and the elapsed seconds keep
-/// climbing inside a phase, so a long git wait still looks alive rather than
-/// hung. `frame` animates the marker.
-fn render_loading(
-    pane: &mut Pane<'_>,
-    tab: &akr_gui::model::WorkspaceTab,
+const DIALOG_W: i32 = 620;
+const DIALOG_H: i32 = 460;
+
+fn render_open_dialog(ui: &mut Ui, state: &mut FrameState, pressed: &[KeyInput]) {
+    let full = Rect::new(0, 0, ui.painter.width(), ui.painter.height());
+    let dialog = Rect::new(
+        full.x + (full.w - ui.px(DIALOG_W)) / 2,
+        full.y + (full.h - ui.px(DIALOG_H)) / 2,
+        ui.px(DIALOG_W).min(full.w - ui.px(32)),
+        ui.px(DIALOG_H).min(full.h - ui.px(32)),
+    );
+    // A shadow, then the dialog, so it reads as above the workbench.
+    ui.painter.fill_rect(
+        Rect::new(dialog.x + ui.px(6), dialog.y + ui.px(6), dialog.w, dialog.h),
+        0x0000_0000,
+    );
+    ui.painter.rounded_rect(
+        dialog,
+        ui.theme.corner_radius,
+        ui.theme.border_width,
+        ui.theme.panel,
+        ui.theme.accent,
+    );
+    let pad = ui.px(16);
+    let mut y = dialog.y + pad;
+    ui.heading(
+        Rect::new(dialog.x + pad, y, dialog.w - pad * 2, ui.px(30)),
+        "Open project",
+    );
+    y += ui.px(30) + ui.px(8);
+    // The bottom block has a fixed height; the project list takes the rest.
+    let bottom_h = ui.px(22) + ui.px(8) + ui.px(40) + ui.px(8) + ui.px(24) + ui.px(8) + ui.px(36);
+    let list_label = Rect::new(dialog.x + pad, y, dialog.w - pad * 2, ui.px(22));
+    y += ui.px(22) + ui.px(4);
+    let list_area = Rect::new(
+        dialog.x + pad,
+        y,
+        dialog.w - pad * 2,
+        (dialog.bottom() - pad - bottom_h - y).max(ui.px(60)),
+    );
+    y = list_area.bottom() + ui.px(8);
+    let field_label = Rect::new(dialog.x + pad, y, dialog.w - pad * 2, ui.px(22));
+    y += ui.px(22) + ui.px(8);
+    let field = Rect::new(dialog.x + pad, y, dialog.w - pad * 2, ui.px(40));
+    y = field.bottom() + ui.px(8);
+    let hint = Rect::new(dialog.x + pad, y, dialog.w - pad * 2, ui.px(24));
+    let cancel = Rect::new(
+        dialog.right() - pad - ui.px(110),
+        dialog.bottom() - pad - ui.px(36),
+        ui.px(110),
+        ui.px(36),
+    );
+    let open = Rect::new(
+        cancel.x - ui.px(8) - ui.px(110),
+        cancel.y,
+        ui.px(110),
+        ui.px(36),
+    );
+
+    if state.projects.is_empty() {
+        ui.label(
+            list_label,
+            "No AKR projects beside this one — type any path below.",
+            ui.theme.text_dim,
+            Align::Left,
+        );
+    } else {
+        ui.label(
+            list_label,
+            "AKR projects next to this one — click one to open it.",
+            ui.theme.text_dim,
+            Align::Left,
+        );
+        let keys: Vec<String> = state
+            .projects
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect();
+        if let Some(geom) = table_thumb(
+            list_area,
+            ui.theme.row_height,
+            keys.len(),
+            state.project_table.scroll.offset(),
+        ) {
+            drag_thumb(
+                ui.input,
+                state.scroll_drag,
+                ScrollTarget::Projects,
+                &mut state.project_table.scroll,
+                &geom,
+            );
+        }
+        let open_workspaces: Vec<PathBuf> = state
+            .model
+            .tabs
+            .iter()
+            .map(|tab| tab.workspace.clone())
+            .collect();
+        let projects = state.projects.clone();
+        let columns = [
+            Column::flex("PROJECT", 1, Align::Left),
+            Column::flex("LOCATION", 2, Align::Left),
+        ];
+        let theme = ui.theme;
+        let outcome = ui.table(state.project_table, list_area, &columns, &keys, |index| {
+            let path = &projects[index];
+            let name = workspace_label(path);
+            let is_open = open_workspaces.iter().any(|open| open == path);
+            Row {
+                cells: vec![
+                    if is_open {
+                        Cell::coloured(format!("{name}  (open)"), theme.good)
+                    } else {
+                        Cell::new(name)
+                    },
+                    Cell::coloured(path.to_string_lossy(), theme.text_dim),
+                ],
+            }
+        });
+        if let Some(key) = outcome.activated {
+            state.deferred.open_path = Some(PathBuf::from(key));
+        }
+    }
+
+    ui.label(
+        field_label,
+        "Or open any path:",
+        ui.theme.text_dim,
+        Align::Left,
+    );
+    state.path_field.apply(pressed);
+    ui.text_field(state.path_field, field, "project directory", true, false);
+    ui.label(
+        hint,
+        "Click a project to open it · Enter opens the typed path · Esc cancels",
+        ui.theme.text_dim,
+        Align::Left,
+    );
+    if ui.button(open, "Open") {
+        state.deferred.submit_modal = true;
+    }
+    if ui.button(cancel, "Cancel") {
+        state.deferred.cancel_modal = true;
+    }
+    for key in pressed {
+        match key {
+            KeyInput::Enter => state.deferred.submit_modal = true,
+            KeyInput::Escape => state.deferred.cancel_modal = true,
+            _ => {}
+        }
+    }
+}
+
+/// Single-letter shortcuts. Runs only when no field owns the keyboard and no
+/// dialog is open.
+fn shortcuts(state: &mut FrameState, pressed: &[KeyInput]) {
+    for key in pressed {
+        match key {
+            KeyInput::Character(value) if *value == '/' => *state.filter_focused = true,
+            KeyInput::Character(value) if value.eq_ignore_ascii_case(&'o') => {
+                state.deferred.open_dialog = true;
+            }
+            KeyInput::Character(value) if value.eq_ignore_ascii_case(&'w') => {
+                state.deferred.close_tab = true;
+            }
+            KeyInput::Character(value) if value.eq_ignore_ascii_case(&'r') => {
+                state.deferred.reload_tab = true;
+            }
+            KeyInput::Character(value) if value.eq_ignore_ascii_case(&'p') => {
+                state.model.mode = TreeMode::Planning;
+                *state.tree_table = TableState::new();
+            }
+            KeyInput::Character(value) if value.eq_ignore_ascii_case(&'k') => {
+                state.model.mode = TreeMode::Knowledge;
+                *state.tree_table = TableState::new();
+            }
+            KeyInput::Character(value) if value.eq_ignore_ascii_case(&'d') => {
+                state.model.panel = Panel::Dashboard;
+                *state.panel_scroll = ScrollState::new();
+            }
+            KeyInput::Character(value) if value.eq_ignore_ascii_case(&'u') => {
+                state.model.panel = Panel::Outstanding;
+                *state.panel_scroll = ScrollState::new();
+            }
+            KeyInput::Character(value) if value.eq_ignore_ascii_case(&'i') => {
+                state.model.panel = Panel::Inspector;
+                *state.panel_scroll = ScrollState::new();
+            }
+            KeyInput::Character(value) if value.eq_ignore_ascii_case(&'l') => {
+                state.model.panel = Panel::Relations;
+                *state.panel_scroll = ScrollState::new();
+            }
+            KeyInput::Character(value) if value.eq_ignore_ascii_case(&'g') => {
+                state.model.panel = Panel::Git;
+                *state.panel_scroll = ScrollState::new();
+            }
+            KeyInput::Character(value) if matches!(*value, '+' | '=') => {
+                *state.zoom = (*state.zoom * 1.25).clamp(0.5, 3.0);
+            }
+            KeyInput::Character(value) if matches!(*value, '-' | '_') => {
+                *state.zoom = (*state.zoom / 1.25).clamp(0.5, 3.0);
+            }
+            KeyInput::Character(value) if *value == '0' => *state.zoom = 1.0,
+            KeyInput::Tab => {
+                state.model.cycle_tab();
+                *state.tree_table = TableState::new();
+                *state.out_table = TableState::new();
+                *state.panel_scroll = ScrollState::new();
+                state.deferred.sync_title = true;
+            }
+            KeyInput::Enter if state.model.panel == Panel::Outstanding => {
+                state.model.panel = Panel::Inspector;
+                *state.panel_scroll = ScrollState::new();
+            }
+            KeyInput::Escape => *state.filter_focused = false,
+            _ => {}
+        }
+    }
+}
+
+impl ReviewApp {
+    /// One frame, headless-friendly: everything it needs is a buffer and a
+    /// scale, so tests drive the same code the window host does.
+    fn frame(&mut self, buffer: &mut WindowBuffer, host_scale: Scale) {
+        self.poll_loads();
+        self.tick += 1;
+        let scale = Scale(host_scale.0 * self.zoom);
+        let full = Rect::new(0, 0, buffer.width as i32, buffer.height as i32);
+        if self.input.modifiers().control {
+            let (_, dy) = self.input.take_scroll(full);
+            if dy != 0.0 {
+                self.zoom *= if dy > 0.0 { 1.1 } else { 1.0 / 1.1 };
+                self.zoom = self.zoom.clamp(0.5, 3.0);
+            }
+        }
+        let mut theme = self.theme;
+        theme.row_height = scale.px(theme.row_height);
+        theme.padding = scale.px(theme.padding);
+        theme.corner_radius = scale.px(theme.corner_radius);
+        let mut deferred = Deferred::default();
+        let elapsed = self
+            .load_started
+            .map_or(0.0, |start| start.elapsed().as_secs_f32());
+        {
+            let ReviewApp {
+                model,
+                text,
+                kernel,
+                input,
+                tree_table,
+                out_table,
+                panel_scroll,
+                tree_visible_rows,
+                out_visible_rows,
+                filter_field,
+                filter_focused,
+                path_field,
+                projects,
+                project_table,
+                modal_open,
+                scroll_drag,
+                zoom,
+                status,
+                tick,
+                ..
+            } = self;
+            let tick = *tick;
+            let mut ui = Ui::new(Painter::new(buffer), text, input, theme, scale, kernel);
+            ui.painter.clear(ui.theme.background);
+            let logical_w = scale.logical(ui.painter.width()) as i32;
+            let logical_h = scale.logical(ui.painter.height()) as i32;
+            let areas = layout_areas(logical_w, logical_h);
+            let physical = |rect: Rect| {
+                Rect::new(
+                    scale.px(rect.x),
+                    scale.px(rect.y),
+                    scale.px(rect.w),
+                    scale.px(rect.h),
+                )
+            };
+            let mut state = FrameState {
+                model,
+                tree_table,
+                out_table,
+                panel_scroll,
+                tree_visible_rows,
+                out_visible_rows,
+                filter_field,
+                filter_focused,
+                path_field,
+                projects,
+                project_table,
+                modal_open,
+                scroll_drag,
+                zoom,
+                status,
+                tick,
+                deferred: &mut deferred,
+            };
+            // Fresh tabs load themselves; a failed tab waits for R.
+            for (index, tab) in state.model.tabs.iter().enumerate() {
+                if tab.snapshot.is_none() && tab.error.is_none() && tab.load_generation == 0 {
+                    state.deferred.request_loads.push(index);
+                }
+            }
+            let pressed: Vec<KeyInput> = ui.input.keys().to_vec();
+            if *state.modal_open {
+                // The dialog owns the frame: nothing behind it draws, so no
+                // background widget can claim the dialog's presses.
+                render_open_dialog(&mut ui, &mut state, &pressed);
+            } else if *state.filter_focused {
+                let mut exit = false;
+                for key in &pressed {
+                    match key {
+                        KeyInput::Enter | KeyInput::Escape => exit = true,
+                        _ => {}
+                    }
+                }
+                render_header(&mut ui, &mut state, physical(areas.header));
+                render_filter_bar(&mut ui, &mut state, physical(areas.filter_bar), &pressed);
+                render_left(&mut ui, &mut state, physical(areas.left), &[], false);
+                render_right(&mut ui, &mut state, physical(areas.right), elapsed);
+                render_footer(&mut ui, &mut state, physical(areas.footer), elapsed);
+                if exit {
+                    *state.filter_focused = false;
+                }
+            } else {
+                shortcuts(&mut state, &pressed);
+                let nav_outstanding = state.model.panel == Panel::Outstanding;
+                render_header(&mut ui, &mut state, physical(areas.header));
+                render_filter_bar(&mut ui, &mut state, physical(areas.filter_bar), &[]);
+                render_left(
+                    &mut ui,
+                    &mut state,
+                    physical(areas.left),
+                    &pressed,
+                    !nav_outstanding,
+                );
+                render_right_outstanding(
+                    &mut ui,
+                    &mut state,
+                    physical(areas.right),
+                    &pressed,
+                    nav_outstanding,
+                    elapsed,
+                );
+                render_footer(&mut ui, &mut state, physical(areas.footer), elapsed);
+            }
+            ui.input.end_frame();
+        }
+        if let Some(index) = deferred.switch_tab {
+            self.switch_tab(index);
+        }
+        if deferred.close_tab {
+            self.close_active_workspace();
+        }
+        if deferred.reload_tab {
+            self.request_active_load();
+        }
+        if deferred.open_dialog {
+            self.begin_open_dialog();
+        }
+        if let Some(path) = deferred.open_path {
+            self.modal_open = false;
+            self.open_workspace(&path);
+        }
+        if deferred.submit_modal {
+            self.submit_open_prompt();
+        }
+        if deferred.cancel_modal {
+            self.modal_open = false;
+        }
+        for index in deferred.request_loads {
+            self.request_load(index);
+        }
+        if deferred.sync_title {
+            self.sync_title();
+        }
+    }
+}
+
+fn render_right(ui: &mut Ui, state: &mut FrameState, area: Rect, elapsed: f32) {
+    let loading = state
+        .model
+        .active_tab
+        .and_then(|index| state.model.tabs.get(index))
+        .is_some_and(|tab| tab.snapshot.is_none() && tab.error.is_none());
+    if loading {
+        render_loading(ui, state, area, elapsed);
+        return;
+    }
+    match state.model.panel {
+        Panel::Dashboard => render_dashboard(ui, state, area),
+        Panel::Outstanding => render_outstanding(ui, state, area, &[], false),
+        Panel::Relations => render_relations(ui, state, area),
+        Panel::Git => render_git(ui, state, area),
+        Panel::Tree | Panel::Inspector => render_inspector(ui, state, area),
+    }
+}
+
+fn render_right_outstanding(
+    ui: &mut Ui,
+    state: &mut FrameState,
+    area: Rect,
+    pressed: &[KeyInput],
+    nav_active: bool,
     elapsed: f32,
-    frame: u64,
 ) {
-    const MARKERS: [&str; 4] = ["|", "/", "-", "\\"];
-    let marker = MARKERS[(frame / 8) as usize % MARKERS.len()];
-    pane.line(&format!("{marker} Loading workspace"), ACCENT);
-    pane.gap(1);
-    pane.paragraph(&tab.workspace.display().to_string(), MUTED);
-    pane.gap(1);
-    let (step, total, label) = match &tab.phase {
-        Some(phase) => (phase.step, phase.total, phase.label.as_str()),
-        None => (0, 5, "starting"),
-    };
-    pane.line(&format!("step {step} of {total}: {label}"), TEXT);
-    pane.progress(step, total);
-    pane.line(&format!("{elapsed:.1}s elapsed"), MUTED);
-    pane.gap(1);
-    pane.paragraph(
-        "Most of this is git: freshness asks the repository which commits touched \
-         each watched path. Large histories take longer, and the answer is cached \
-         for the rest of the load.",
-        MUTED,
-    );
-}
-
-/// Renders a load error, if any, and reports whether the panel should stop.
-fn render_load_error(pane: &mut Pane<'_>, model: &AppModel) -> bool {
-    let Some(tab) = model.active_tab.and_then(|index| model.tabs.get(index)) else {
-        pane.line("No workspace open.", TEXT);
-        pane.gap(1);
-        pane.paragraph(
-            "Press O and type a project directory, click + Open in the title bar, \
-             or drag a project folder onto this window. A path inside a project \
-             resolves to the directory holding its .akr folder.",
-            MUTED,
-        );
-        return true;
-    };
-    let Some(error) = &tab.error else {
-        return false;
-    };
-    pane.line("LOAD FAILED", WARNING);
-    pane.gap(1);
-    pane.paragraph(error, TEXT);
-    true
-}
-
-fn render_dashboard(pane: &mut Pane<'_>, model: &AppModel) {
-    if render_load_error(pane, model) {
+    let loading = state
+        .model
+        .active_tab
+        .and_then(|index| state.model.tabs.get(index))
+        .is_some_and(|tab| tab.snapshot.is_none() && tab.error.is_none());
+    if loading {
+        render_loading(ui, state, area, elapsed);
         return;
     }
-    let Some(snapshot) = model.snapshot() else {
-        pane.line("Loading review snapshot...", MUTED);
-        return;
-    };
-    pane.line(&snapshot.project, ACCENT);
-    pane.gap(1);
-    pane.line(
-        &format!(
-            "{} records / {} revisions",
-            snapshot.counts.records, snapshot.counts.revisions
-        ),
-        TEXT,
-    );
-    pane.line(
-        &format!(
-            "{} live planning / {} open questions",
-            snapshot.counts.live_planning, snapshot.counts.open_questions
-        ),
-        TEXT,
-    );
-    pane.line(
-        &format!(
-            "{} stale / {} at risk / {} diagnostics",
-            snapshot.counts.stale, snapshot.counts.at_risk, snapshot.counts.diagnostics
-        ),
-        if snapshot.counts.stale + snapshot.counts.at_risk + snapshot.counts.diagnostics > 0 {
-            WARNING
+    match state.model.panel {
+        Panel::Dashboard => render_dashboard(ui, state, area),
+        Panel::Outstanding => render_outstanding(ui, state, area, pressed, nav_active),
+        Panel::Relations => render_relations(ui, state, area),
+        Panel::Git => render_git(ui, state, area),
+        Panel::Tree | Panel::Inspector => render_inspector(ui, state, area),
+    }
+}
+
+impl PixelApp for ReviewApp {
+    fn render(&mut self, buffer: &mut WindowBuffer, scale: Scale) {
+        self.frame(buffer, scale);
+    }
+
+    fn attach(&mut self, waker: Waker) {
+        self.waker = Some(waker);
+    }
+
+    fn animation_interval(&self) -> Option<Duration> {
+        // Tick while anything is in flight: a fresh tab with no snapshot, or
+        // a reload behind an old one.
+        if self.is_loading() || self.load_started.is_some() {
+            Some(Duration::from_millis(120))
         } else {
-            MUTED
-        },
-    );
-    pane.gap(1);
-    pane.line(&format!("source graph  {}", snapshot.source_graph), MUTED);
-    if let Some(head) = &snapshot.head {
-        pane.line(&format!("git HEAD      {head}"), MUTED);
+            None
+        }
     }
-    pane.heading("DIAGNOSTICS");
-    if snapshot.diagnostics.is_empty() {
-        pane.line("none", MUTED);
-    }
-    for diagnostic in &snapshot.diagnostics {
-        pane.paragraph(
-            &format!(
-                "{} {}  {}",
-                diagnostic.severity, diagnostic.code, diagnostic.message
-            ),
-            if diagnostic.severity == "error" {
-                WARNING
-            } else {
-                MUTED
-            },
-        );
-    }
-}
 
-fn render_inspector(pane: &mut Pane<'_>, model: &AppModel) {
-    if render_load_error(pane, model) {
-        return;
+    fn tick(&mut self) {
+        self.poll_loads();
     }
-    let Some(record) = model.selected() else {
-        pane.line("Select a record to inspect", MUTED);
-        return;
-    };
-    pane.line(&record.key, ACCENT);
-    pane.line(
-        &format!(
-            "{} / {} / r{} / freshness: {}",
-            record.kind, record.state, record.revision, record.freshness
-        ),
-        TEXT,
-    );
-    pane.gap(1);
-    pane.paragraph(&record.title, TEXT);
-    pane.gap(1);
-    pane.paragraph(&record.body, MUTED);
-    pane.heading("ACCEPTANCE");
-    if record.acceptance.is_empty() {
-        pane.line("none", MUTED);
-    }
-    for check in &record.acceptance {
-        pane.paragraph(
-            &format!("{}  {}  {}", check.id, check.verdict, check.statement),
-            if check.verdict.starts_with("satisfied") {
-                MUTED
-            } else {
-                WARNING
-            },
-        );
-    }
-    pane.heading("REVISION HISTORY");
-    if record.history.is_empty() {
-        pane.line("none", MUTED);
-    }
-    for revision in &record.history {
-        pane.line(revision, MUTED);
-    }
-}
 
-fn render_relations(pane: &mut Pane<'_>, model: &AppModel) {
-    if render_load_error(pane, model) {
-        return;
+    fn poll_title(&mut self) -> Option<String> {
+        self.pending_title.take()
     }
-    let Some(record) = model.selected() else {
-        pane.line("Select a record to inspect relations", MUTED);
-        return;
-    };
-    pane.line(&record.key, ACCENT);
-    pane.heading("OUTBOUND RELATIONS");
-    if record.relations.is_empty() {
-        pane.line("none", MUTED);
-    }
-    for relation in &record.relations {
-        pane.line(&format!("{} -> {}", relation.kind, relation.target), TEXT);
-    }
-    pane.heading("LOCAL NEIGHBORHOOD (2 HOPS / 12 NODES)");
-    let neighbors = model
-        .snapshot()
-        .map(|snapshot| snapshot.neighborhood(&record.key, 2, 12))
-        .unwrap_or_default();
-    if neighbors.is_empty() {
-        pane.line("none", MUTED);
-    }
-    for edge in &neighbors {
-        pane.line(
-            &format!("{} -{}-> {}", edge.from, edge.kind, edge.to),
-            MUTED,
-        );
-    }
-}
 
-fn render_git(pane: &mut Pane<'_>, model: &AppModel) {
-    if render_load_error(pane, model) {
-        return;
+    fn on_key(&mut self, key: &KeyInput) {
+        self.input.key(key.clone());
     }
-    let Some(record) = model.selected() else {
-        pane.line("Select a record to inspect provenance", MUTED);
-        return;
-    };
-    pane.line(&record.key, ACCENT);
-    pane.heading("GIT");
-    let values = [
-        (
-            "defined at",
-            record.git.defined_at.as_deref().unwrap_or("uncommitted"),
-        ),
-        (
-            "observed at",
-            record.git.observed_at.as_deref().unwrap_or("not empirical"),
-        ),
-        (
-            "stale cause",
-            record.git.stale_cause.as_deref().unwrap_or("none"),
-        ),
-    ];
-    for (label, value) in values {
-        pane.line(&format!("{label:12} {value}"), TEXT);
-    }
-    pane.heading("PROVENANCE");
-    if record.provenance.is_empty() {
-        pane.line("none", MUTED);
-    }
-    for value in &record.provenance {
-        pane.paragraph(value, MUTED);
-    }
-}
 
-/// Picks an initial glyph scale from the display DPI and window size, so the
-/// shell is readable before the user touches the zoom keys.
-fn default_scale(scale_factor: f64, width: u32, height: u32) -> i32 {
-    let dpi = scale_factor.round().max(1.0) as i32;
-    let roomy = width >= 1800 && height >= 1100;
-    (MIN_SCALE.max(dpi) + i32::from(roomy)).clamp(MIN_SCALE, MAX_SCALE)
-}
+    fn on_modifiers(&mut self, modifiers: Modifiers) {
+        self.input.modifiers_changed(modifiers);
+    }
 
-fn tree_rows(model: &AppModel) -> Vec<(i32, String)> {
-    let Some(snapshot) = model.snapshot() else {
-        return Vec::new();
-    };
-    let allowed = model
-        .filtered_keys()
-        .into_iter()
-        .collect::<std::collections::BTreeSet<_>>();
-    match model.mode {
-        TreeMode::Planning => {
-            fn visit(
-                node: &akr_gui::model::TreeNode,
-                depth: i32,
-                allowed: &std::collections::BTreeSet<String>,
-                out: &mut Vec<(i32, String)>,
-            ) {
-                if allowed.contains(&node.key) {
-                    out.push((depth, node.key.clone()));
-                }
-                for child in &node.children {
-                    visit(child, depth + 1, allowed, out);
-                }
+    fn on_cursor(&mut self, x: f32, y: f32) {
+        self.input.cursor_moved(x, y);
+    }
+
+    fn on_cursor_left(&mut self) {
+        self.input.cursor_left();
+    }
+
+    fn on_mouse(&mut self, button: MouseButton, pressed: bool) {
+        self.input.mouse(button, pressed);
+    }
+
+    fn on_scroll(&mut self, dx: f32, dy: f32) {
+        self.input.scrolled(dx, dy);
+    }
+
+    fn on_ime(&mut self, ime: &ImeEvent) {
+        if let ImeEvent::Commit(text) = ime {
+            if self.modal_open {
+                self.path_field.insert_str(text);
+            } else if self.filter_focused {
+                self.filter_field.insert_str(text);
+                self.model.filter.query = self.filter_field.text().to_owned();
             }
-            let mut out = Vec::new();
-            for root in snapshot.planning_roots() {
-                visit(&root, 0, &allowed, &mut out);
-            }
-            out
         }
-        TreeMode::Knowledge => snapshot
-            .knowledge_groups()
-            .into_values()
-            .flatten()
-            .filter(|key| allowed.contains(key))
-            .map(|key| (0, key))
-            .collect(),
     }
 }
 
-fn wrap(text: &str, width: usize) -> Vec<String> {
-    let mut lines = Vec::new();
-    let mut line = String::new();
-    for word in text.split_whitespace() {
-        if !line.is_empty() && line.len() + word.len() + 1 > width {
-            lines.push(std::mem::take(&mut line));
-        }
-        if !line.is_empty() {
-            line.push(' ');
-        }
-        line.push_str(word);
-    }
-    if !line.is_empty() {
-        lines.push(line);
-    }
-    lines
-}
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() {
     let workspaces = std::env::args_os().skip(1).map(PathBuf::from).collect();
-    let event_loop = EventLoop::new()?;
-    let mut app = NativeApp::new(workspaces);
-    event_loop.run_app(&mut app)?;
-    Ok(())
+    let mut app = ReviewApp::new(workspaces);
+    app.sync_title();
+    run_app(
+        app,
+        WindowConfig::new("AKR Review", 1280.0, 800.0).min_size(640.0, 420.0),
+    )
+    .expect("run the AKR review workbench");
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn wrapping_is_deterministic() {
-        assert_eq!(wrap("one two three", 7), ["one two", "three"]);
+    use akr_gui::model::demo_snapshot;
+
+    fn demo_app() -> ReviewApp {
+        let mut app = ReviewApp::new(vec![PathBuf::from("/demo")]);
+        app.model.set_snapshot(0, demo_snapshot("/demo"));
+        app
     }
-    fn demo_model() -> AppModel {
-        let mut model = AppModel::default();
-        let tab = model.add_tab("/demo".into());
-        model.set_snapshot(tab, akr_gui::model::demo_snapshot("/demo"));
-        model
+
+    fn frame(app: &mut ReviewApp) -> WindowBuffer {
+        let mut buffer = WindowBuffer::new(1280, 800);
+        app.frame(&mut buffer, Scale::new(1.0));
+        buffer
     }
+
+    fn click(app: &mut ReviewApp, x: f32, y: f32) {
+        app.input.cursor_moved(x, y);
+        app.input.mouse(MouseButton::Left, true);
+        frame(app);
+        app.input.mouse(MouseButton::Left, false);
+        frame(app);
+    }
+
     #[test]
-    fn panes_tile_the_window_without_overlap_at_every_scale() {
-        let model = demo_model();
-        for scale in MIN_SCALE..=MAX_SCALE {
-            for (width, height) in [(640, 420), (1280, 800), (2560, 1440)] {
-                let view = ViewState {
-                    scale,
-                    ..ViewState::default()
-                };
-                let layout = layout(width, height, &model, view);
-                assert_eq!(layout.header.h + layout.filter_bar.h, layout.tree_header.y);
-                assert_eq!(
-                    layout.tree_header.y + layout.tree_header.h,
-                    layout.tree_list.y
-                );
-                assert_eq!(layout.tree_list.y + layout.tree_list.h, layout.footer.y);
-                assert!(layout.panel.x >= layout.splitter.x + layout.splitter.w);
-                assert_eq!(layout.panel.x + layout.panel.w, width);
-                assert!(layout.panel.w > 0 && layout.tree_list.w > 0);
-                assert!(layout.mode_button.x >= 0);
-                for (rect, ..) in &layout.buttons {
-                    assert!(rect.x >= layout.filter_box.x + layout.filter_box.w);
-                    assert!(rect.x + rect.w <= width);
-                }
-            }
+    fn layout_tiles_the_window_without_overlap() {
+        for (width, height) in [(640, 420), (1280, 800), (2560, 1440)] {
+            let areas = layout_areas(width, height);
+            assert_eq!(areas.header.h, HEADER_H);
+            assert_eq!(areas.filter_bar.y, HEADER_H);
+            assert_eq!(areas.left.y, HEADER_H + FILTER_H);
+            assert_eq!(areas.left.y + areas.left.h, height - FOOTER_H);
+            assert_eq!(areas.right.y, areas.left.y);
+            assert_eq!(areas.right.h, areas.left.h);
+            assert_eq!(areas.footer.y + areas.footer.h, height);
+            assert_eq!(areas.left.x + areas.left.w + SPLIT_GAP, areas.right.x);
+            assert_eq!(areas.right.x + areas.right.w, width);
+            assert!(areas.left.w > 0 && areas.right.w > 0);
         }
     }
+
     #[test]
-    fn the_split_is_clamped_so_both_panes_stay_usable() {
-        let model = demo_model();
-        let narrow = layout(
-            900,
-            600,
-            &model,
-            ViewState {
-                split: 0.99,
-                ..ViewState::default()
-            },
+    fn embedded_font_covers_everything_the_chrome_uses() {
+        assert_eq!(font_set().len(), 1);
+        for character in ['A', 'g', '0', '/', '—', '·', '|'] {
+            assert!(
+                latin_face().covers(character),
+                "the embedded face must cover {character:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn shortcut_keys_reach_the_outstanding_panel_and_the_filter() {
+        let mut app = demo_app();
+        app.input.key(KeyInput::Character('u'));
+        frame(&mut app);
+        assert_eq!(app.model.panel, Panel::Outstanding);
+        app.input.key(KeyInput::Character('/'));
+        frame(&mut app);
+        assert!(app.filter_focused);
+        app.input.key(KeyInput::Escape);
+        frame(&mut app);
+        assert!(!app.filter_focused);
+    }
+
+    #[test]
+    fn clicking_the_dashboard_outstanding_button_jumps_to_outstanding() {
+        let mut app = demo_app();
+        assert_eq!(app.model.panel, Panel::Dashboard);
+        // The jump button in render_dashboard at 1280x800, scale 1:
+        // right.x + 12, right.y + 12 + 34 + 8 + 24 + 4, 460 wide, 36 tall.
+        let areas = layout_areas(1280, 800);
+        let x = (areas.right.x + 12 + 230) as f32;
+        let y = (areas.right.y + 12 + 34 + 8 + 24 + 4 + 18) as f32;
+        click(&mut app, x, y);
+        assert_eq!(app.model.panel, Panel::Outstanding);
+    }
+
+    #[test]
+    fn clicking_an_outstanding_row_opens_it_in_the_inspector() {
+        let mut app = demo_app();
+        app.model.panel = Panel::Outstanding;
+        app.model.select_quiet("akr.work.review-snapshot");
+        // The first table row in render_outstanding at 1280x800, scale 1:
+        // title (28) + gap (8) + table header (30), then row 0 (30 tall).
+        let areas = layout_areas(1280, 800);
+        let x = (areas.right.x + 12 + 60) as f32;
+        let y = (areas.right.y + 12 + 28 + 8 + 30 + 15) as f32;
+        click(&mut app, x, y);
+        assert_eq!(app.model.panel, Panel::Inspector);
+        assert_eq!(
+            app.model.selected().map(|record| record.key.as_str()),
+            Some("akr.milestone.human-record-review")
         );
-        assert!(narrow.panel.w >= narrow.metrics.cw * 20);
-        let wide = layout(
-            900,
-            600,
-            &model,
-            ViewState {
-                split: 0.01,
-                ..ViewState::default()
-            },
+    }
+
+    #[test]
+    fn outstanding_screen_paints_real_content_headless() {
+        let mut app = demo_app();
+        app.model.panel = Panel::Outstanding;
+        let buffer = frame(&mut app);
+        let background = theme().background;
+        let ink = buffer
+            .pixels
+            .iter()
+            .filter(|pixel| **pixel != background)
+            .count();
+        assert!(
+            ink > 50_000,
+            "the outstanding screen should paint real content, got {ink} non-background pixels"
         );
-        assert!(wide.tree_list.w >= wide.metrics.cw * 12);
+        if let Ok(dir) = std::env::var("AKR_GUI_PNG_DIR") {
+            pixelkit_raster::png::write(format!("{dir}/akr-gui-outstanding.png"), &buffer)
+                .expect("write the outstanding screen");
+            app.model.panel = Panel::Dashboard;
+            let buffer = frame(&mut app);
+            pixelkit_raster::png::write(format!("{dir}/akr-gui-dashboard.png"), &buffer)
+                .expect("write the dashboard screen");
+            app.projects = [
+                "/home/dk/rust-projects/AKR",
+                "/home/dk/rust-projects/pixelkit",
+                "/home/dk/rust-projects/Kitchen-Concept",
+            ]
+            .into_iter()
+            .map(PathBuf::from)
+            .collect();
+            app.modal_open = true;
+            let buffer = frame(&mut app);
+            pixelkit_raster::png::write(format!("{dir}/akr-gui-dialog.png"), &buffer)
+                .expect("write the dialog screen");
+        }
     }
-    #[test]
-    fn a_frame_reports_content_height_and_stays_inside_the_surface() {
-        let model = demo_model();
-        let mut canvas = Canvas::new(900, 600);
-        canvas.set_scale(3);
-        let view = ViewState {
-            scale: 3,
-            ..ViewState::default()
-        };
-        let (tree, panel) = render_app(&mut canvas, &model, view, "", None, 0.0, 0);
-        assert!(tree > 0 && panel > 0);
-        assert_eq!(canvas.pixels.len(), 900 * 600);
-        // Scrolling far past the end must not panic or paint outside the pane.
-        let scrolled = ViewState {
-            tree_scroll: 100_000,
-            panel_scroll: 100_000,
-            ..view
-        };
-        let (tree_again, _) = render_app(&mut canvas, &model, scrolled, "", Some("opened"), 0.0, 0);
-        assert_eq!(tree, tree_again);
-        // The open prompt replaces the filter row without disturbing the panes.
-        let prompting = ViewState {
-            path_editing: true,
-            ..view
-        };
-        let (tree_prompt, _) = render_app(
-            &mut canvas,
-            &model,
-            prompting,
-            r"D:\some\very\long\path\that\overflows\the\prompt\box",
-            None,
-            0.0,
-            0,
-        );
-        assert_eq!(tree, tree_prompt);
-    }
-    #[test]
-    fn a_tab_without_a_snapshot_shows_progress_rather_than_an_empty_panel() {
-        let mut model = AppModel::default();
-        model.add_tab("/loading".into());
-        let mut canvas = Canvas::new(900, 600);
-        canvas.set_scale(MIN_SCALE);
-        let (_, before) = render_app(&mut canvas, &model, ViewState::default(), "", None, 0.4, 0);
-        assert!(before > 0, "an in-flight load must render something");
-        // A reported phase adds the step line without changing the panel shape.
-        model.tabs[0].phase = Some(akr_gui::model::LoadPhase {
-            label: "checking git freshness".into(),
-            step: 3,
-            total: 5,
-        });
-        let (_, during) = render_app(&mut canvas, &model, ViewState::default(), "", None, 9.6, 24);
-        assert_eq!(before, during);
-        // Once the snapshot lands the panel is the normal view again.
-        model.set_snapshot(0, akr_gui::model::demo_snapshot("/loading"));
-        let (_, after) = render_app(&mut canvas, &model, ViewState::default(), "", None, 0.0, 0);
-        assert_ne!(before, after);
-    }
-    #[test]
-    fn an_empty_shell_renders_its_own_instructions() {
-        let model = AppModel::default();
-        let mut canvas = Canvas::new(900, 600);
-        canvas.set_scale(MIN_SCALE);
-        let (_, panel) = render_app(&mut canvas, &model, ViewState::default(), "", None, 0.0, 0);
-        assert!(panel > 0, "the no-workspace state must still say something");
-    }
+
     #[test]
     fn a_path_resolves_to_the_directory_holding_the_ledger() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1979,18 +2459,166 @@ mod tests {
         assert!(!from_file.to_string_lossy().starts_with(r"\\?\"));
         assert!(workspace_root(Path::new("no/such/place/anywhere")).is_err());
     }
+
     #[test]
-    fn default_scale_grows_with_dpi_and_window_size() {
-        assert_eq!(default_scale(1.0, 1280, 800), MIN_SCALE);
-        assert_eq!(default_scale(2.0, 1280, 800), 2);
-        assert_eq!(default_scale(2.0, 1920, 1200), 3);
-        assert_eq!(default_scale(9.0, 3840, 2160), MAX_SCALE);
+    fn table_thumb_matches_the_indicator_geometry() {
+        let area = Rect::new(0, 0, 300, 330);
+        let geom = table_thumb(area, 30, 20, 0).expect("a scrollbar");
+        assert_eq!(geom.thumb, Rect::new(293, 30, 4, 150));
+        assert_eq!((geom.max, geom.travel), (300, 150));
+        let moved = table_thumb(area, 30, 20, 150).expect("a scrollbar");
+        assert_eq!(moved.thumb.y, 105);
+        assert!(
+            table_thumb(area, 30, 5, 0).is_none(),
+            "a list that fits has no thumb"
+        );
     }
+
+    #[test]
+    fn dragging_the_outstanding_thumb_scrolls_without_selecting() {
+        let mut app = demo_app();
+        let mut snapshot = demo_snapshot("/demo");
+        for index in 0..60 {
+            snapshot.records.push(Record {
+                key: format!("akr.work.load-{index:03}"),
+                title: format!("Load record {index}"),
+                kind: "work".into(),
+                state: "proposed".into(),
+                ..Record::default()
+            });
+        }
+        app.model.set_snapshot(0, snapshot);
+        app.model.panel = Panel::Outstanding;
+        let areas = layout_areas(1280, 800);
+        let table = Rect::new(
+            areas.right.x + 12,
+            areas.right.y + 12 + 28 + 8,
+            areas.right.w - 24,
+            areas.right.bottom() - 12 - (areas.right.y + 12 + 28 + 8),
+        );
+        let keys = app.model.outstanding_keys();
+        assert_eq!(keys.len(), 63);
+        let geom = table_thumb(table, 30, keys.len(), 0).expect("a scrollbar for 63 rows");
+        let thumb = geom.thumb;
+        let cx = (thumb.x + thumb.w / 2) as f32;
+        let cy = (thumb.y + thumb.h / 2) as f32;
+        app.input.cursor_moved(cx, cy);
+        app.input.mouse(MouseButton::Left, true);
+        frame(&mut app);
+        assert!(
+            app.scroll_drag.is_some(),
+            "pressing the thumb starts a drag"
+        );
+        assert_eq!(
+            app.model.panel,
+            Panel::Outstanding,
+            "the drag must not activate the row beneath"
+        );
+        app.input.cursor_moved(cx, cy + 120.0);
+        frame(&mut app);
+        let offset = app.out_table.scroll.offset();
+        assert!(
+            offset > 100,
+            "the thumb drag should scroll, got offset {offset}"
+        );
+        app.input.mouse(MouseButton::Left, false);
+        frame(&mut app);
+        assert!(app.scroll_drag.is_none(), "releasing ends the drag");
+    }
+
+    #[test]
+    fn discover_projects_lists_sibling_ledgers() {
+        let root = std::env::temp_dir().join(format!("akr-gui-projects-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let alpha = root.join("alpha");
+        let beta = root.join("beta");
+        std::fs::create_dir_all(alpha.join(".akr")).unwrap();
+        std::fs::create_dir_all(beta.join(".akr")).unwrap();
+        std::fs::create_dir_all(root.join("gamma-no-ledger")).unwrap();
+        let found = discover_projects(&alpha);
+        assert_eq!(found, vec![alpha.clone(), beta.clone()]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn clicking_a_project_row_switches_to_it() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("workspace root")
+            .canonicalize()
+            .expect("canonical workspace root");
+        let mut app = demo_app();
+        let other = app.model.add_tab(repo.clone());
+        // A seeded error keeps the frame from spawning a real load for it.
+        app.model.fail_load(other, "seeded");
+        app.model.active_tab = Some(0);
+        app.projects = vec![repo.clone()];
+        app.modal_open = true;
+        // The dialog's first project row at 1280x800, scale 1.
+        let dialog_x = (1280 - DIALOG_W) / 2;
+        let dialog_y = (800 - DIALOG_H) / 2;
+        let table_y = dialog_y + 16 + 30 + 8 + 22 + 4;
+        click(
+            &mut app,
+            (dialog_x + 16 + 60) as f32,
+            (table_y + 30 + 15) as f32,
+        );
+        assert!(!app.modal_open, "opening a project closes the dialog");
+        assert_eq!(app.model.active_tab, Some(other));
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .starts_with("already open"),
+            "unexpected status: {:?}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn the_dialogs_open_button_opens_the_typed_path() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("workspace root")
+            .canonicalize()
+            .expect("canonical workspace root");
+        let mut app = demo_app();
+        let other = app.model.add_tab(repo.clone());
+        app.model.fail_load(other, "seeded");
+        app.model.active_tab = Some(0);
+        app.projects = Vec::new();
+        app.path_field = TextFieldState::with_text(repo.to_string_lossy());
+        app.modal_open = true;
+        let dialog_x = (1280 - DIALOG_W) / 2;
+        let dialog_y = (800 - DIALOG_H) / 2;
+        let open_x = dialog_x + DIALOG_W - 16 - 110 - 8 - 110;
+        let open_y = dialog_y + DIALOG_H - 16 - 36;
+        click(&mut app, (open_x + 55) as f32, (open_y + 18) as f32);
+        assert!(!app.modal_open);
+        assert_eq!(app.model.active_tab, Some(other));
+    }
+
+    #[test]
+    fn clicks_behind_the_open_dialog_do_nothing() {
+        let mut app = demo_app();
+        app.modal_open = true;
+        app.projects = Vec::new();
+        // Where the dashboard's jump button would be, behind the dialog.
+        let areas = layout_areas(1280, 800);
+        let x = (areas.right.x + 12 + 230) as f32;
+        let y = (areas.right.y + 12 + 34 + 8 + 24 + 4 + 18) as f32;
+        click(&mut app, x, y);
+        assert_eq!(app.model.panel, Panel::Dashboard);
+        assert!(app.modal_open, "the dialog stays open");
+    }
+
     #[test]
     fn planning_rows_follow_the_relation_hierarchy() {
         let mut model = AppModel::default();
         let tab = model.add_tab("/demo".into());
-        model.set_snapshot(tab, akr_gui::model::demo_snapshot("/demo"));
+        model.set_snapshot(tab, demo_snapshot("/demo"));
         assert_eq!(
             tree_rows(&model)
                 .iter()
