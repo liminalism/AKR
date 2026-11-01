@@ -45,8 +45,8 @@ mod stage;
 use crate::diagnostics::codes::cli;
 use crate::diagnostics::{Code, Diagnostic, Label, RuleId, Severity, Subject, codes};
 use crate::model::{
-    Class, Disposition, Kind, LogicalKey, Outcome as DispositionOutcome, Record, Reference,
-    Relation, RevisionId, State,
+    Class, ContentSlot, ContentValue, Disposition, Kind, Ledger, LogicalKey,
+    Outcome as DispositionOutcome, Record, Reference, Relation, RevisionId, State,
 };
 use crate::syntax::{cst, emit};
 use crate::validate;
@@ -650,6 +650,372 @@ fn follow_pin(reference: &mut Reference, key: &LogicalKey, old: u32, new: u32) -
     } else {
         false
     }
+}
+
+/// Appended to an evidence summary when a scratch citation is dropped.
+///
+/// The claim stays in `command`, `summary` and `observed_at`. This sentence says why the
+/// `artifact` slot no longer names the file.
+const SCRATCH_CITATION_NOTE: &str =
+    "The scratch artefact is no longer cited; it was removed with the disposable scratch entry.";
+
+/// One live evidence head `detach_scratch_citations` will retire.
+///
+/// Dry-run reporting uses this so it cannot drift from the write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScratchDetach {
+    /// The evidence key.
+    pub key: LogicalKey,
+    /// The live revision being superseded.
+    pub from_revision: u32,
+    /// The revision the write creates.
+    pub to_revision: u32,
+    /// Artifact paths removed from the slot, in the order they were written.
+    pub dropped: Vec<String>,
+}
+
+/// Which scratch citations a prune should retire, without writing.
+///
+/// A path is dropped when it names an unkept scratch entry that `doomed` is about to
+/// delete, or when that path is already absent. A kept entry is left alone even if the
+/// file is gone. A scratch path whose file is still there, and which this prune is not
+/// deleting, is left alone so the author can still move it. A slot that would still cite
+/// such a path is skipped entirely: the successor would be a new `AKR-T023`, and D-039
+/// would refuse the write.
+///
+/// `workspace` is the repository root, the parent of `.akr`. Relative artifact paths are
+/// resolved against it. Absolute paths are checked as written.
+#[must_use]
+pub fn plan_scratch_detaches(
+    ledger: &Ledger,
+    workspace: &Path,
+    doomed: &BTreeSet<String>,
+) -> Vec<ScratchDetach> {
+    let kept = &ledger.facts.scratch_kept;
+    let mut heads: Vec<&Record> = ledger
+        .records()
+        .iter()
+        .filter(|record| record.kind == Kind::Evidence && record.is_live())
+        .collect();
+    heads.sort_by(|left, right| left.id.cmp(&right.id));
+    heads
+        .into_iter()
+        .filter_map(|head| {
+            let edit = scratch_citation_edit(head, workspace, doomed, kept)?;
+            Some(ScratchDetach {
+                key: head.id.key.clone(),
+                from_revision: head.id.revision,
+                to_revision: head.id.revision + 1,
+                dropped: edit.dropped,
+            })
+        })
+        .collect()
+}
+
+/// Retires every live evidence head [`plan_scratch_detaches`] names, in one write.
+///
+/// Each successor keeps `result`, `method`, `command` and `observed_at`, drops the doomed
+/// or already-absent scratch paths from `artifact`, and supersedes the head. The summary
+/// gains one sentence recording that the file is no longer cited. When nothing matches,
+/// this returns an empty [`Applied`] and writes nothing.
+///
+/// Live `supported_by`, `depends_on` and the other non-historical pins of those heads
+/// move onto the successor in the same write. `verified_by` does not. A pinned acceptance
+/// check keeps citing the revision that was observed, and V-006 already allows that pin
+/// to name a superseded revision. Moving it would be a content change of the planning
+/// record, and on a record that is later completed V-020 would treat every check as
+/// predating that edit. An unpinned `verified_by` follows the successor on its own. That
+/// is still the same observation: V-020's co-commit shortcut follows `supersedes` while
+/// `observed_at` is unchanged.
+///
+/// # Errors
+/// Refuses when the resulting ledger would not validate for a reason this write
+/// introduced (D-039). Nothing is written in that case.
+pub fn detach_scratch_citations(context: &WriteContext, doomed: &BTreeSet<String>) -> WriteResult {
+    let (mut staged, _write_lock) = load_locked(context, Operation::Revise)?;
+    let workspace = context
+        .akr_dir
+        .parent()
+        .unwrap_or(context.akr_dir.as_path());
+    let plan = plan_scratch_detaches(&staged.ledger, workspace, doomed);
+    if plan.is_empty() {
+        return Ok(Applied {
+            operation: Operation::Revise,
+            changes: Vec::new(),
+            files: Vec::new(),
+            diagnostics: Vec::new(),
+            notes: Vec::new(),
+            lock_stale: false,
+        });
+    }
+
+    let mut moved: BTreeMap<(LogicalKey, u32), u32> = BTreeMap::new();
+    let mut successors = Vec::new();
+    for item in &plan {
+        let head = head_of(&staged, &item.key, Operation::Revise)?.clone();
+        let file = file_of(&staged, &head.id, Operation::Revise)?;
+        let Some(edit) =
+            scratch_citation_edit(&head, workspace, doomed, &staged.ledger.facts.scratch_kept)
+        else {
+            continue;
+        };
+        let mut successor = head.clone();
+        successor.id = RevisionId::new(item.key.clone(), item.to_revision);
+        successor.state = head.state;
+        apply_scratch_citation_edit(&mut successor, &edit);
+        annotate_detached_summary(&mut successor);
+        successor.relations.insert(
+            Relation::Supersedes,
+            supersedes_targets(&staged, &item.key, head.id.revision),
+        );
+        if successor.author.is_none() {
+            successor.author.clone_from(&context.author);
+        }
+        moved.insert((item.key.clone(), item.from_revision), item.to_revision);
+        successors.push((file, head, successor));
+    }
+    if successors.is_empty() {
+        return Ok(Applied {
+            operation: Operation::Revise,
+            changes: Vec::new(),
+            files: Vec::new(),
+            diagnostics: Vec::new(),
+            notes: Vec::new(),
+            lock_stale: false,
+        });
+    }
+
+    for (_, _, successor) in &mut successors {
+        follow_detach_pins(successor, &moved);
+    }
+
+    let replaced: BTreeSet<LogicalKey> = moved.keys().map(|(key, _)| key.clone()).collect();
+    let mut edits = Vec::new();
+    for (file, head, successor) in successors {
+        let from = head.state;
+        let mut retired = head;
+        retired.state = State::Superseded;
+        edits.push((
+            file.clone(),
+            retired,
+            ChangeKind::StateChanged {
+                from,
+                to: State::Superseded,
+            },
+        ));
+        edits.push((file, successor, ChangeKind::Created));
+    }
+    let followed = referrers_following(&staged, &replaced, &moved, Operation::Revise)?;
+    let followed_count = followed.len();
+    edits.extend(followed);
+    edits.sort_by(|left, right| left.1.id.cmp(&right.1.id));
+
+    let detached = moved.len();
+    let mut applied = apply_many(context, &mut staged, Operation::Revise, &edits)?;
+    applied.notes.insert(
+        0,
+        format!(
+            "detached {detached} scratch citation{}",
+            if detached == 1 { "" } else { "s" }
+        ),
+    );
+    if followed_count > 0 {
+        applied.notes.insert(
+            1,
+            format!(
+                "repointed {followed_count} live pin{} onto the citation that no longer names scratch",
+                if followed_count == 1 { "" } else { "s" }
+            ),
+        );
+    }
+    Ok(applied)
+}
+
+/// Paths removed from one artifact slot, and what stays.
+struct ScratchCitationEdit {
+    dropped: Vec<String>,
+    retained: Vec<String>,
+}
+
+fn scratch_citation_edit(
+    record: &Record,
+    workspace: &Path,
+    doomed: &BTreeSet<String>,
+    kept: &BTreeSet<String>,
+) -> Option<ScratchCitationEdit> {
+    let ContentValue::Text(artifact) = record.get(ContentSlot::Artifact)? else {
+        return None;
+    };
+    let mut dropped = Vec::new();
+    let mut retained = Vec::new();
+    for path in artifact_paths(artifact) {
+        if scratch_path_is_doomed(&path, workspace, doomed, kept) {
+            dropped.push(path);
+        } else {
+            retained.push(path);
+        }
+    }
+    if dropped.is_empty()
+        || retained
+            .iter()
+            .any(|path| scratch_citation_is_illegal(path, kept))
+    {
+        return None;
+    }
+    Some(ScratchCitationEdit { dropped, retained })
+}
+
+fn artifact_paths(text: &str) -> Vec<String> {
+    text.split(';')
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// An unkept scratch path this operation may stop citing.
+///
+/// `doomed` is the set of top-level entries the caller is about to delete. A path that is
+/// already absent is dropped even when its entry is not in that set: the file cannot be
+/// moved anywhere durable. A kept entry is never dropped. The scratch directory itself,
+/// cited with nothing beneath it, is dropped only when that path is already absent —
+/// prune does not delete the directory.
+fn scratch_path_is_doomed(
+    path: &str,
+    workspace: &Path,
+    doomed: &BTreeSet<String>,
+    kept: &BTreeSet<String>,
+) -> bool {
+    let Some(entry) = crate::scratch::cited_entry(path) else {
+        return false;
+    };
+    if !entry.is_empty() && kept.contains(&entry) {
+        return false;
+    }
+    if entry.is_empty() {
+        return !cited_path_exists(workspace, path);
+    }
+    doomed.contains(&entry) || !cited_path_exists(workspace, path)
+}
+
+/// Whether V-025 would still flag `path` on a live evidence record.
+fn scratch_citation_is_illegal(path: &str, kept: &BTreeSet<String>) -> bool {
+    match crate::scratch::cited_entry(path) {
+        Some(entry) if entry.is_empty() => true,
+        Some(entry) => !kept.contains(&entry),
+        None => false,
+    }
+}
+
+fn cited_path_exists(workspace: &Path, cited: &str) -> bool {
+    let normalised = cited.replace('\\', "/");
+    let path = Path::new(&normalised);
+    if path.is_absolute() {
+        path.exists()
+    } else {
+        workspace.join(path).exists()
+    }
+}
+
+fn apply_scratch_citation_edit(record: &mut Record, edit: &ScratchCitationEdit) {
+    if edit.retained.is_empty() {
+        record.content.remove(&ContentSlot::Artifact);
+    } else {
+        record.content.insert(
+            ContentSlot::Artifact,
+            ContentValue::Text(edit.retained.join("; ")),
+        );
+    }
+}
+
+fn annotate_detached_summary(record: &mut Record) {
+    match record.get(ContentSlot::Summary).cloned() {
+        Some(ContentValue::Text(text)) if text.contains("no longer cited") => {}
+        Some(ContentValue::Prose(text)) if text.contains("no longer cited") => {}
+        Some(ContentValue::Text(text)) => {
+            let mut next = text;
+            if !next.is_empty() {
+                next.push(' ');
+            }
+            next.push_str(SCRATCH_CITATION_NOTE);
+            record
+                .content
+                .insert(ContentSlot::Summary, ContentValue::Text(next));
+        }
+        Some(ContentValue::Prose(text)) => {
+            let mut next = text;
+            if !next.is_empty() && !next.ends_with('\n') {
+                next.push('\n');
+            }
+            next.push_str(SCRATCH_CITATION_NOTE);
+            record
+                .content
+                .insert(ContentSlot::Summary, ContentValue::Prose(next));
+        }
+        Some(_) => {}
+        None => {
+            record.content.insert(
+                ContentSlot::Summary,
+                ContentValue::Text(SCRATCH_CITATION_NOTE.to_owned()),
+            );
+        }
+    }
+}
+
+/// Moves live non-historical pins, other than `verified_by`, onto the detached successor.
+///
+/// `verified_by` stays. See [`detach_scratch_citations`].
+fn follow_detach_pins(record: &mut Record, moved: &BTreeMap<(LogicalKey, u32), u32>) -> bool {
+    let mut changed = false;
+    for (relation, targets) in &mut record.relations {
+        if relation.is_historical()
+            || *relation == Relation::PartOf
+            || *relation == Relation::VerifiedBy
+        {
+            continue;
+        }
+        for target in targets.iter_mut() {
+            changed |= retarget_detached(target, moved);
+        }
+    }
+    for claim in &mut record.claims {
+        for target in &mut claim.supported_by {
+            changed |= retarget_detached(target, moved);
+        }
+    }
+    changed
+}
+
+fn retarget_detached(reference: &mut Reference, moved: &BTreeMap<(LogicalKey, u32), u32>) -> bool {
+    let Some(revision) = reference.revision else {
+        return false;
+    };
+    let Some(&next) = moved.get(&(reference.key.clone(), revision)) else {
+        return false;
+    };
+    reference.revision = Some(next);
+    true
+}
+
+fn referrers_following(
+    staged: &Staged,
+    replaced: &BTreeSet<LogicalKey>,
+    moved: &BTreeMap<(LogicalKey, u32), u32>,
+    operation: Operation,
+) -> Result<Vec<(PathBuf, Record, ChangeKind)>, Refused> {
+    let mut edits = Vec::new();
+    for candidate in staged.ledger.records() {
+        if !candidate.is_live() || replaced.contains(&candidate.id.key) {
+            continue;
+        }
+        let mut updated = candidate.clone();
+        if !follow_detach_pins(&mut updated, moved) {
+            continue;
+        }
+        let file = file_of(staged, &updated.id, operation)?;
+        edits.push((file, updated, ChangeKind::Edited));
+    }
+    Ok(edits)
 }
 
 /// Creates a revision superseding the head, moving the old head to `superseded`.

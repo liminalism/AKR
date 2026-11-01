@@ -338,8 +338,9 @@ Three rules about this layout:
 - **`.agent/scratch/` is the one disposable location nothing empties on its own.** The OS
   clears its temp directory and `target/` is deleted without ceremony; this is gitignored
   but lives inside the repository, so it survives every session. `akr scratch prune` is how
-  it goes, `akr scratch keep` is how one entry stays, and `akr check` reports the total as a
-  build fact (D-036).
+  it goes, and the same command drops live evidence citations of the entries it removes and
+  of scratch paths that are already gone. `akr scratch keep` is how one entry stays, and
+  `akr check` reports the total as a build fact (D-036).
 
 ## 7. Trust model
 

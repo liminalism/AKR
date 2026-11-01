@@ -6,8 +6,8 @@
 use crate::diagnostics::codes as c;
 use crate::diagnostics::{Diagnostic, Label, RuleId, SlotRef, Subject};
 use crate::model::{
-    Class, ContentSlot, ContentValue, EvidenceResult, HeadError, Kind, Ledger, LogicalKey, Range,
-    Record, Reference, Relation, RevisionId, ScopeTerm, SourceKind, State, scopes_overlap,
+    Class, Commit, ContentSlot, ContentValue, EvidenceResult, HeadError, Kind, Ledger, LogicalKey,
+    Range, Record, Reference, Relation, RevisionId, ScopeTerm, SourceKind, State, scopes_overlap,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -1433,9 +1433,11 @@ fn commit_order(ledger: &Ledger, record: &Record, evidence: &Record) -> CommitOr
     let Some(last_change) = ledger.facts.last_change.get(&record.id) else {
         return CommitOrder::Descends;
     };
-    if ledger.facts.last_change.get(&evidence.id) == Some(last_change) {
+    if co_committed_observation(ledger, evidence, last_change) {
         // Evidence and the verified record were authored in the same prepared change.
         // Their commit could not be named by `observed_at` before Git created it.
+        // A successor that keeps that `observed_at` is the same observation: dropping a
+        // scratch citation moves the revision's own last change without making a new run.
         return CommitOrder::Descends;
     }
     let Some(observed) = observed else {
@@ -1453,6 +1455,43 @@ fn commit_order(ledger: &Ledger, record: &Record, evidence: &Record) -> CommitOr
             _ => CommitOrder::Divergent,
         },
     }
+}
+
+/// The co-commit shortcut, including a successor that keeps the same observation.
+///
+/// Equal last-change commits mean this evidence and the verified record landed together.
+/// Superseding that evidence gives the successor a new revision and, when its summary or
+/// artifact changes, a new last change. The observation did not move, so a predecessor
+/// with the same `observed_at` that still shares the verified record's last change is the
+/// same co-commit. A later redefinition of the verified record still fails, because that
+/// predecessor no longer shares its last change, and a successor with a different
+/// `observed_at` is a new run and is not walked.
+fn co_committed_observation(ledger: &Ledger, evidence: &Record, last_change: &Commit) -> bool {
+    let observed = evidence
+        .get(ContentSlot::ObservedAt)
+        .and_then(ContentValue::as_commit);
+    let mut pending = vec![evidence];
+    let mut seen = BTreeSet::new();
+    while let Some(current) = pending.pop() {
+        if !seen.insert(current.id.clone()) {
+            continue;
+        }
+        if ledger.facts.last_change.get(&current.id) == Some(last_change) {
+            return true;
+        }
+        for reference in current.targets(Relation::Supersedes) {
+            let Some(predecessor) = target_of(ledger, reference) else {
+                continue;
+            };
+            let predecessor_observed = predecessor
+                .get(ContentSlot::ObservedAt)
+                .and_then(ContentValue::as_commit);
+            if predecessor_observed == observed {
+                pending.push(predecessor);
+            }
+        }
+    }
+    false
 }
 
 // ---------------------------------------------------------------------------------
@@ -1799,16 +1838,20 @@ pub fn v025_evidence_artifact_durable(ledger: &Ledger) -> Vec<Diagnostic> {
         // has taken it the citation cannot be honoured at all, and the only honest repair
         // left is to stop making it: `command`, `summary` and `observed_at` carry the
         // claim without it. A help line that names only the impossible repairs is what
-        // sent one agent looking for a way out and finding none.
+        // sent one agent looking for a way out and finding none. The prune command itself
+        // does that repair, in one write, for every citation of an entry it deletes and
+        // every scratch path that is already gone.
         let help = if entry.is_empty() {
             "move the artefact somewhere durable and cite that path, or drop the `artifact` \
-             slot if it is already gone"
+             slot if it is already gone. `akr scratch prune` drops citations of scratch \
+             paths that are already gone"
                 .to_owned()
         } else {
             format!(
                 "move the artefact somewhere durable and cite that path, keep it with \
                  `akr scratch keep {entry}` first, or drop the `artifact` slot if it is \
-                 already gone"
+                 already gone. `akr scratch prune` drops citations of entries it removes \
+                 and of scratch paths that are already gone"
             )
         };
         out.push(

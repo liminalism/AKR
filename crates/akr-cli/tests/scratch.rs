@@ -119,6 +119,154 @@ fn a_kept_entry_survives_a_prune_that_covers_everything() {
     assert!(!example.root().join(".agent/scratch/needed.txt").exists());
 }
 
+/// Plants one verified evidence record whose artifact is `artifact`.
+///
+/// The write pipeline refuses a new scratch citation, so the repair tests have to look
+/// the way a ledger authored before that refusal does: the record is already in the file.
+fn plant_scratch_evidence(example: &Example, key: &str, artifact: &str) {
+    let relative = ".akr/records/sys/evidence.akr";
+    let mut text = example.read_file(relative);
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push_str(&format!(
+        "record {key}/1 : evidence {{\n    \
+         title \"A capture\"\n    \
+         state verified\n    \
+         result pass\n    \
+         method command\n    \
+         observed_at git:e806b3f54a2d7091c5e13b8a26f490dc7b135e64\n    \
+         command \"cargo test\"\n    \
+         summary \"the run finished\"\n    \
+         artifact \"{artifact}\"\n}}\n"
+    ));
+    example.write_file(relative, &text);
+}
+
+fn evidence_record(text: &str, id: &str) -> String {
+    let marker = format!("record {id} ");
+    let start = text.find(&marker).unwrap_or_else(|| panic!("missing {id}"));
+    let rest = &text[start..];
+    let end = rest
+        .find("\n}")
+        .unwrap_or_else(|| panic!("{id} has no end"));
+    rest[..=end + 1].to_owned()
+}
+
+#[test]
+fn prune_detaches_the_citation_of_an_entry_it_deletes() {
+    let example = Example::materialise("scratch-prune-detach");
+    scratch_file(&example, "spent/log.txt", 40);
+    plant_scratch_evidence(
+        &example,
+        "sys.evidence.spent",
+        ".agent/scratch/spent/log.txt",
+    );
+
+    let rehearsed = example.run(&["scratch", "prune", "--older-than", "0", "--dry-run"]);
+    assert_eq!(rehearsed.code, 0, "{}", rehearsed.output());
+    assert!(
+        rehearsed.stdout.contains("would remove"),
+        "{}",
+        rehearsed.stdout
+    );
+    assert!(
+        rehearsed.stdout.contains("would detach 1 scratch citation"),
+        "{}",
+        rehearsed.stdout
+    );
+    assert!(
+        rehearsed.stdout.contains("sys.evidence.spent/1 -> /2"),
+        "{}",
+        rehearsed.stdout
+    );
+    assert!(example.root().join(".agent/scratch/spent/log.txt").exists());
+    let before = example.read_file(".akr/records/sys/evidence.akr");
+    assert!(before.contains("artifact \".agent/scratch/spent/log.txt\""));
+    assert!(!before.contains("sys.evidence.spent/2"));
+
+    let pruned = example.run(&["scratch", "prune", "--older-than", "0"]);
+    assert_eq!(pruned.code, 0, "{}", pruned.output());
+    assert!(!example.root().join(".agent/scratch/spent/log.txt").exists());
+    let after = example.read_file(".akr/records/sys/evidence.akr");
+    let retired = evidence_record(&after, "sys.evidence.spent/1");
+    assert!(retired.contains("state superseded"), "{retired}");
+    assert!(
+        retired.contains(".agent/scratch/spent/log.txt"),
+        "history keeps the path: {retired}"
+    );
+    let head = evidence_record(&after, "sys.evidence.spent/2");
+    assert!(!head.contains("artifact"), "{head}");
+    assert!(head.contains("no longer cited"), "{head}");
+    assert!(head.contains("the run finished"), "{head}");
+}
+
+#[test]
+fn prune_of_a_fresh_file_does_not_detach_its_citation() {
+    let example = Example::materialise("scratch-prune-fresh-citation");
+    scratch_file(&example, "fresh/log.txt", 40);
+    plant_scratch_evidence(
+        &example,
+        "sys.evidence.fresh",
+        ".agent/scratch/fresh/log.txt",
+    );
+
+    let spared = example.run(&["scratch", "prune"]);
+    assert_eq!(spared.code, 0, "{}", spared.output());
+    assert!(
+        spared.stdout.contains("nothing to prune"),
+        "{}",
+        spared.output()
+    );
+    assert!(example.root().join(".agent/scratch/fresh/log.txt").exists());
+    let text = example.read_file(".akr/records/sys/evidence.akr");
+    assert!(text.contains("artifact \".agent/scratch/fresh/log.txt\""));
+    assert!(!text.contains("sys.evidence.fresh/2"));
+}
+
+#[test]
+fn prune_detaches_a_citation_whose_file_is_already_gone() {
+    let example = Example::materialise("scratch-prune-absent");
+    plant_scratch_evidence(&example, "sys.evidence.gone", ".agent/scratch/gone/log.txt");
+
+    let pruned = example.run(&["scratch", "prune"]);
+    assert_eq!(pruned.code, 0, "{}", pruned.output());
+    assert!(
+        pruned.stdout.contains("detached 1 scratch citation"),
+        "{}",
+        pruned.stdout
+    );
+    let after = example.read_file(".akr/records/sys/evidence.akr");
+    let head = evidence_record(&after, "sys.evidence.gone/2");
+    assert!(!head.contains("artifact"), "{head}");
+    assert!(head.contains("no longer cited"), "{head}");
+}
+
+#[test]
+fn prune_does_not_detach_a_kept_citation_whose_file_is_gone() {
+    let example = Example::materialise("scratch-prune-kept-citation");
+    example.write_file(
+        ".agent/scratch/KEEP",
+        "kept-log the next session still reads it\n",
+    );
+    plant_scratch_evidence(
+        &example,
+        "sys.evidence.kept-log",
+        ".agent/scratch/kept-log/log.txt",
+    );
+
+    let pruned = example.run(&["scratch", "prune", "--older-than", "0"]);
+    assert_eq!(pruned.code, 0, "{}", pruned.output());
+    assert!(
+        pruned.stdout.contains("nothing to prune"),
+        "{}",
+        pruned.output()
+    );
+    let text = example.read_file(".akr/records/sys/evidence.akr");
+    assert!(text.contains("artifact \".agent/scratch/kept-log/log.txt\""));
+    assert!(!text.contains("sys.evidence.kept-log/2"));
+}
+
 #[test]
 fn keep_insists_on_a_reason_and_on_the_entry_existing() {
     let example = Example::materialise("scratch-keep-refusals");

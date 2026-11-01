@@ -8,10 +8,11 @@ mod ops_support;
 
 use akr_core::model::{
     Class, Commit, ContentSlot, ContentValue, Kind, Outcome as DispositionOutcome, Record,
-    RecordBuilder, Reference, Relation, Segment, State, key,
+    RecordBuilder, Reference, Relation, RevisionId, Segment, State, key,
 };
 use akr_core::ops::{self, DispositionRequest, Edits, ReviseMode, WriteContext, conventional_file};
 use ops_support::Sandbox;
+use std::collections::BTreeSet;
 
 fn term(key_text: &str, title: &str) -> Record {
     let mut record = RecordBuilder::new(key_text, 1, Kind::Term)
@@ -1278,6 +1279,241 @@ fn one_of_two_inherited_faults_can_be_repaired_at_a_time() {
     assert!(
         note.contains("1 diagnostic"),
         "and the count has come down by one: {note}"
+    );
+    sandbox.assert_canonical();
+}
+
+fn scratch_artifact(slug: &str, artifact: &str) -> String {
+    format!(
+        "\nrecord sys.evidence.{slug}/1 : evidence {{\n    \
+         title \"A capture that scratch no longer holds\"\n    \
+         state verified\n    \
+         result pass\n    \
+         method command\n    \
+         observed_at git:e806b3f54a2d7091c5e13b8a26f490dc7b135e64\n    \
+         command \"cargo test\"\n    \
+         summary \"the run finished\"\n    \
+         artifact \"{artifact}\"\n}}\n"
+    )
+}
+
+fn plant_evidence(sandbox: &Sandbox, body: &str) {
+    let path = sandbox.akr_dir().join("records/sys/evidence.akr");
+    let mut text = std::fs::read_to_string(&path).expect("the evidence file is readable");
+    text.push_str(body);
+    std::fs::write(&path, text).expect("the evidence file is writable");
+}
+
+fn workspace(sandbox: &Sandbox) -> std::path::PathBuf {
+    sandbox
+        .akr_dir()
+        .parent()
+        .expect("the sandbox root")
+        .to_path_buf()
+}
+
+#[test]
+fn detach_scratch_citations_repairs_two_absent_paths_in_one_write() {
+    let sandbox = Sandbox::save_your_skin();
+    plant_evidence(
+        &sandbox,
+        &format!(
+            "{}{}",
+            scratch_artifact("pruned-one", ".agent/scratch/pruned-one/log.txt"),
+            scratch_artifact("pruned-two", ".agent/scratch/pruned-two/log.txt"),
+        ),
+    );
+    let context = WriteContext::new(sandbox.akr_dir()).with_author("tester");
+    let doomed = BTreeSet::new();
+
+    let applied = ops::detach_scratch_citations(&context, &doomed)
+        .expect("two dangling citations retire together");
+    assert!(
+        applied.notes.iter().any(|note| note.contains("detached 2")),
+        "{:?}",
+        applied.notes
+    );
+
+    let ledger = sandbox.ledger();
+    for slug in ["pruned-one", "pruned-two"] {
+        let key = key(&format!("sys.evidence.{slug}"));
+        let head = ledger.head(&key).expect("head");
+        assert_eq!(head.id.revision, 2, "{slug}");
+        assert!(head.get(ContentSlot::Artifact).is_none(), "{slug}");
+        assert_eq!(head.state, State::Verified);
+        let summary = head.get(ContentSlot::Summary).expect("summary");
+        let ContentValue::Text(text) = summary else {
+            panic!("{slug} summary is not text: {summary:?}");
+        };
+        assert!(text.contains("the run finished"), "{text}");
+        assert_eq!(text.matches("no longer cited").count(), 1, "{text}");
+        let retired = ledger
+            .get(&RevisionId::new(key, 1))
+            .expect("the old revision stays");
+        assert_eq!(retired.state, State::Superseded);
+        assert!(
+            matches!(retired.get(ContentSlot::Artifact), Some(ContentValue::Text(path)) if path.contains(".agent/scratch")),
+            "history keeps the path it cited"
+        );
+    }
+    sandbox.assert_canonical();
+
+    let again = ops::detach_scratch_citations(&context, &doomed).expect("a second pass is a no-op");
+    assert!(again.changes.is_empty(), "nothing left to detach");
+}
+
+#[test]
+fn detach_leaves_a_still_present_scratch_file_and_drops_a_doomed_one() {
+    let sandbox = Sandbox::save_your_skin();
+    let root = workspace(&sandbox);
+    std::fs::create_dir_all(root.join(".agent/scratch/fresh")).expect("scratch dir");
+    std::fs::write(root.join(".agent/scratch/fresh/log.txt"), "still here").expect("file");
+    plant_evidence(
+        &sandbox,
+        &scratch_artifact("fresh", ".agent/scratch/fresh/log.txt"),
+    );
+    let context = WriteContext::new(sandbox.akr_dir()).with_author("tester");
+    let before = sandbox.snapshot();
+
+    let spared = ops::detach_scratch_citations(&context, &BTreeSet::new())
+        .expect("a file this prune is not deleting stays cited");
+    assert!(spared.changes.is_empty());
+    assert_eq!(before, sandbox.snapshot());
+    assert!(root.join(".agent/scratch/fresh/log.txt").exists());
+
+    let mut doomed = BTreeSet::new();
+    doomed.insert("fresh".to_owned());
+    ops::detach_scratch_citations(&context, &doomed)
+        .expect("naming the entry detaches the citation before the file is deleted");
+    let ledger = sandbox.ledger();
+    let head = ledger.head(&key("sys.evidence.fresh")).expect("head");
+    assert!(head.get(ContentSlot::Artifact).is_none());
+    assert!(
+        root.join(".agent/scratch/fresh/log.txt").exists(),
+        "the ledger write does not delete the file"
+    );
+}
+
+#[test]
+fn detach_keeps_a_marked_entry_and_a_durable_path_in_the_same_slot() {
+    let sandbox = Sandbox::save_your_skin();
+    let root = workspace(&sandbox);
+    std::fs::create_dir_all(root.join(".agent/scratch")).expect("scratch dir");
+    std::fs::write(
+        root.join(".agent/scratch/KEEP"),
+        "kept-log the next session still reads it\n",
+    )
+    .expect("keep index");
+    plant_evidence(
+        &sandbox,
+        &format!(
+            "{}{}",
+            scratch_artifact("kept-log", ".agent/scratch/kept-log/log.txt"),
+            scratch_artifact(
+                "mixed",
+                ".agent/scratch/gone/log.txt; docs/measurements/mixed.txt",
+            ),
+        ),
+    );
+    let context = WriteContext::new(sandbox.akr_dir()).with_author("tester");
+    ops::detach_scratch_citations(&context, &BTreeSet::new()).expect("the mixed slot is repaired");
+
+    let ledger = sandbox.ledger();
+    let kept = ledger
+        .head(&key("sys.evidence.kept-log"))
+        .expect("kept head");
+    assert_eq!(kept.id.revision, 1, "a kept citation is not detached");
+    let mixed = ledger.head(&key("sys.evidence.mixed")).expect("mixed head");
+    assert_eq!(mixed.id.revision, 2);
+    match mixed.get(ContentSlot::Artifact) {
+        Some(ContentValue::Text(path)) => {
+            assert_eq!(path, "docs/measurements/mixed.txt");
+            assert!(!path.contains(".agent/scratch"));
+        }
+        other => panic!("durable path should remain: {other:?}"),
+    }
+    sandbox.assert_canonical();
+}
+
+#[test]
+fn detach_skips_a_slot_that_would_still_cite_scratch_and_follows_supported_by_only() {
+    let sandbox = Sandbox::save_your_skin();
+    let root = workspace(&sandbox);
+    std::fs::create_dir_all(root.join(".agent/scratch/staying")).expect("scratch dir");
+    std::fs::write(root.join(".agent/scratch/staying/log.txt"), "move me").expect("file");
+    plant_evidence(
+        &sandbox,
+        &format!(
+            "{}{}",
+            scratch_artifact("gone", ".agent/scratch/gone/log.txt"),
+            scratch_artifact(
+                "half",
+                ".agent/scratch/gone/other.txt; .agent/scratch/staying/log.txt",
+            ),
+        ),
+    );
+    let context = WriteContext::new(sandbox.akr_dir()).with_author("tester");
+    let decision = RecordBuilder::new("sys.decision.cites-the-log", 1, Kind::Decision)
+        .title("The measurement stands")
+        .filled()
+        .prose(
+            ContentSlot::Decision,
+            "The measurement stands without the file.",
+        )
+        .rel(Relation::SupportedBy, "@sys.evidence.gone/1")
+        .build();
+    let work = RecordBuilder::new("sys.work.reads-the-log", 1, Kind::Work)
+        .title("Read the log")
+        .filled()
+        .prose(ContentSlot::Intent, "The log was read.")
+        .rel(Relation::VerifiedBy, "@sys.evidence.gone/1")
+        .build();
+    ops::propose(
+        &context,
+        &key("sys.decision.cites-the-log"),
+        Kind::Decision,
+        "The measurement stands",
+        Some(decision),
+    )
+    .expect("citing the live evidence is legal");
+    ops::propose(
+        &context,
+        &key("sys.work.reads-the-log"),
+        Kind::Work,
+        "Read the log",
+        Some(work),
+    )
+    .expect("verified_by of the live evidence is legal");
+
+    let half_before = sandbox.read(std::path::Path::new("records/sys/evidence.akr"));
+    ops::detach_scratch_citations(&context, &BTreeSet::new()).expect("the clean citation retires");
+
+    let ledger = sandbox.ledger();
+    assert_eq!(
+        ledger
+            .head(&key("sys.evidence.half"))
+            .expect("half")
+            .id
+            .revision,
+        1,
+        "a successor that would still cite scratch is not written"
+    );
+    assert!(
+        half_before.contains(".agent/scratch/staying/log.txt"),
+        "the skipped citation is the one that was planted"
+    );
+    let decision = ledger
+        .head(&key("sys.decision.cites-the-log"))
+        .expect("decision");
+    assert_eq!(
+        decision.targets(Relation::SupportedBy),
+        &[Reference::pinned(key("sys.evidence.gone"), 2)]
+    );
+    let work = ledger.head(&key("sys.work.reads-the-log")).expect("work");
+    assert_eq!(
+        work.targets(Relation::VerifiedBy),
+        &[Reference::pinned(key("sys.evidence.gone"), 1)],
+        "verified_by stays on the revision that was observed"
     );
     sandbox.assert_canonical();
 }

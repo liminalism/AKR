@@ -1042,6 +1042,134 @@ fn v020_accepts_evidence_co_committed_with_the_verified_record() {
     assert_clean(&validate::v020_acceptance_satisfied(&ledger));
 }
 
+#[test]
+fn v020_keeps_a_co_commit_when_a_successor_preserves_observed_at() {
+    use akr_core::model::{Ancestry, Commit, Relation};
+    let observed = Commit::new("3f0a1c9d5b7e2648a0d4f1b8c36e9752ad014b6f").expect("commit");
+    let landed = Commit::new("7c41d0ba92e6f37518a3cd406b5e2f91d8074a63").expect("commit");
+    let repair = Commit::new("9aa1e3c04d5b6e7f8091a2b3c4d5e6f708192a3b").expect("commit");
+
+    // `/2` is what `akr scratch prune` writes: same observation, a new summary, a new
+    // last change. The unpinned check follows `/2`. The co-commit lives on `/1`.
+    let mut ledger = ledger(vec![
+        rec("fx.evidence.green", 1, Kind::Evidence)
+            .state(State::Superseded)
+            .build(),
+        rec("fx.evidence.green", 2, Kind::Evidence)
+            .rel(Relation::Supersedes, "@fx.evidence.green/1")
+            .prose(
+                ContentSlot::Summary,
+                "The scratch artefact is no longer cited.",
+            )
+            .build(),
+        RecordBuilder::new("fx.milestone.claimed", 1, Kind::Milestone)
+            .state(State::Completed)
+            .check("the-check", CheckMethod::Command, &["@fx.evidence.green"])
+            .filled()
+            .build(),
+    ]);
+    ledger.facts.last_change.insert(
+        RevisionId::new(key("fx.milestone.claimed"), 1),
+        landed.clone(),
+    );
+    ledger
+        .facts
+        .last_change
+        .insert(RevisionId::new(key("fx.evidence.green"), 1), landed.clone());
+    ledger
+        .facts
+        .last_change
+        .insert(RevisionId::new(key("fx.evidence.green"), 2), repair.clone());
+    ledger.facts.ancestry = Ancestry::from_pairs([(repair, landed.clone()), (landed, observed)]);
+
+    assert_clean(&validate::v020_acceptance_satisfied(&ledger));
+}
+
+#[test]
+fn v020_does_not_inherit_a_co_commit_across_a_new_observation() {
+    use akr_core::model::{Ancestry, Commit, Relation};
+    let older = Commit::new("1111111111111111111111111111111111111111").expect("commit");
+    let observed = Commit::new("3f0a1c9d5b7e2648a0d4f1b8c36e9752ad014b6f").expect("commit");
+    let landed = Commit::new("7c41d0ba92e6f37518a3cd406b5e2f91d8074a63").expect("commit");
+    let repair = Commit::new("9aa1e3c04d5b6e7f8091a2b3c4d5e6f708192a3b").expect("commit");
+
+    let mut ledger = ledger(vec![
+        rec("fx.evidence.green", 1, Kind::Evidence)
+            .state(State::Superseded)
+            .build(),
+        rec("fx.evidence.green", 2, Kind::Evidence)
+            .rel(Relation::Supersedes, "@fx.evidence.green/1")
+            .commit(ContentSlot::ObservedAt, older.as_str())
+            .build(),
+        RecordBuilder::new("fx.milestone.claimed", 1, Kind::Milestone)
+            .state(State::Completed)
+            .check("the-check", CheckMethod::Command, &["@fx.evidence.green"])
+            .filled()
+            .build(),
+    ]);
+    ledger.facts.last_change.insert(
+        RevisionId::new(key("fx.milestone.claimed"), 1),
+        landed.clone(),
+    );
+    ledger
+        .facts
+        .last_change
+        .insert(RevisionId::new(key("fx.evidence.green"), 1), landed.clone());
+    ledger
+        .facts
+        .last_change
+        .insert(RevisionId::new(key("fx.evidence.green"), 2), repair.clone());
+    ledger.facts.ancestry = Ancestry::from_pairs([
+        (repair, landed.clone()),
+        (landed, observed.clone()),
+        (observed, older),
+    ]);
+
+    assert_raises(&validate::v020_acceptance_satisfied(&ledger), c::R022);
+}
+
+#[test]
+fn v020_does_not_inherit_a_co_commit_after_the_work_is_redefined() {
+    use akr_core::model::{Ancestry, Commit, Relation};
+    let observed = Commit::new("3f0a1c9d5b7e2648a0d4f1b8c36e9752ad014b6f").expect("commit");
+    let landed = Commit::new("7c41d0ba92e6f37518a3cd406b5e2f91d8074a63").expect("commit");
+    let redefined = Commit::new("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").expect("commit");
+    let repair = Commit::new("9aa1e3c04d5b6e7f8091a2b3c4d5e6f708192a3b").expect("commit");
+
+    let mut ledger = ledger(vec![
+        rec("fx.evidence.green", 1, Kind::Evidence)
+            .state(State::Superseded)
+            .build(),
+        rec("fx.evidence.green", 2, Kind::Evidence)
+            .rel(Relation::Supersedes, "@fx.evidence.green/1")
+            .build(),
+        RecordBuilder::new("fx.milestone.claimed", 1, Kind::Milestone)
+            .state(State::Completed)
+            .check("the-check", CheckMethod::Command, &["@fx.evidence.green"])
+            .filled()
+            .build(),
+    ]);
+    ledger.facts.last_change.insert(
+        RevisionId::new(key("fx.milestone.claimed"), 1),
+        redefined.clone(),
+    );
+    ledger
+        .facts
+        .last_change
+        .insert(RevisionId::new(key("fx.evidence.green"), 1), landed.clone());
+    ledger
+        .facts
+        .last_change
+        .insert(RevisionId::new(key("fx.evidence.green"), 2), repair.clone());
+    ledger.facts.ancestry = Ancestry::from_pairs([
+        (repair, redefined.clone()),
+        (redefined, landed.clone()),
+        (landed, observed),
+    ]);
+
+    assert_raises(&validate::v020_acceptance_satisfied(&ledger), c::R022);
+}
+
 // ---------------------------------------------------------------------------------
 // D-028: legacy-sourced completion is exempt from the descendant-commit gate
 // ---------------------------------------------------------------------------------

@@ -1023,6 +1023,20 @@ would throw away live work. `--dry-run` prints what would go and removes nothing
 that cannot be removed is reported and the rest still go, so the command is worth running
 again rather than being all-or-nothing.
 
+The same command repairs the ledger. In one write it supersedes every live evidence head
+whose `artifact` cites an entry this prune is about to delete, or a scratch path that is
+already gone, and the successor omits those paths. `command`, `summary` and `observed_at`
+stay; the summary gains one sentence saying the file is no longer cited. A kept entry is
+never dropped, even when the file is missing. A scratch file this invocation is not
+deleting stays cited, so it can still be moved somewhere durable. The citations are
+detached before any file is deleted, and a refused write deletes nothing. `--dry-run`
+names both the files and the records. An empty scratch directory whose citations are
+already dangling is still that repair: the command does not answer "nothing to prune"
+while live evidence still names a missing scratch path. `verified_by` pins stay on the
+revision that was observed. An unpinned `verified_by` follows the successor, and V-020
+still counts the original co-commit because `observed_at` did not change. Other live
+non-historical pins of that revision move onto the successor in the same write.
+
 `keep` records that an entry is still needed, in `.agent/scratch/KEEP` — one
 `<name> <reason>` per line, `#` for comments, editable by hand. **A kept entry is never
 pruned, at any age.** That is the point: an agent tidying up at the end of a session must
@@ -1170,7 +1184,8 @@ documented as disposable and `akr scratch prune` deletes from it on an ordinary 
 (D-036), so an artefact cited from there is a verified claim whose backing some later
 session removes without knowing it was cited — and nothing notices, because a path is not
 a reference the ledger resolves. Move the artefact somewhere durable and cite that, or
-`akr scratch keep <entry>` first and cite it where it is.
+`akr scratch keep <entry>` first and cite it where it is. A citation that is already
+dangling is repaired by `akr scratch prune`, which drops the slot in one write.
 
 The refusal is a validation rule rather than a check on this flag, because evidence
 reaches the ledger by four routes — this command, `akr evidence add-many --from`,

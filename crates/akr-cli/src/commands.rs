@@ -690,6 +690,12 @@ fn scratch_list(session: &mut Session) -> Result<Output, EnvError> {
 /// threshold. Everything named in `KEEP` survives regardless, which is the whole point of
 /// the marker — an agent running this at the end of a session must not be able to delete
 /// the thing the next session was told to expect.
+///
+/// The same command retires live evidence citations of those entries, and of scratch
+/// paths that are already gone, in one ledger write. The citation is detached before any
+/// file is deleted: a refused write leaves the files where they are. `--dry-run` reports
+/// both and writes nothing. An empty scratch directory whose citations are already
+/// dangling is still a repair, not "nothing to prune".
 fn scratch_prune(
     session: &mut Session,
     older_than: u64,
@@ -698,16 +704,75 @@ fn scratch_prune(
     use akr_core::scratch::human_bytes;
     let scratch = akr_core::scratch::scan(&session.root, std::time::SystemTime::now());
     let doomed: Vec<_> = scratch.prunable(older_than).cloned().collect();
-    if doomed.is_empty() {
+    let doomed_names: BTreeSet<String> = doomed.iter().map(|entry| entry.name.clone()).collect();
+    let plan = akr_core::ops::plan_scratch_detaches(&session.ledger, &session.root, &doomed_names);
+    if doomed.is_empty() && plan.is_empty() {
         return Ok(Output::plain(
             format!("nothing to prune: no unkept entry is {older_than} days old or more\n"),
             Value::object(vec![
                 ("pruned", Value::integer(0)),
                 ("bytes", Value::integer(0)),
+                ("detached", Value::integer(0)),
                 ("dry_run", Value::bool(dry_run)),
             ]),
         ));
     }
+
+    if dry_run {
+        let mut text = String::new();
+        let mut bytes = 0u64;
+        for entry in &doomed {
+            text.push_str(&format!(
+                "would remove  {:>9}  {:>4}d  {}\n",
+                human_bytes(entry.bytes),
+                entry.age_days,
+                entry.name
+            ));
+            bytes += entry.bytes;
+        }
+        if !doomed.is_empty() {
+            text.push_str(&format!(
+                "would free {} in {} entries\n",
+                human_bytes(bytes),
+                doomed.len()
+            ));
+        }
+        if !plan.is_empty() {
+            text.push_str(&format!(
+                "would detach {} scratch citation{}\n",
+                plan.len(),
+                if plan.len() == 1 { "" } else { "s" }
+            ));
+            for item in &plan {
+                text.push_str(&format!(
+                    "  {}/{} -> /{}\n",
+                    item.key, item.from_revision, item.to_revision
+                ));
+            }
+        }
+        return Ok(Output::plain(
+            text,
+            Value::object(vec![
+                (
+                    "pruned",
+                    Value::integer(i64::try_from(doomed.len()).unwrap_or(0)),
+                ),
+                ("bytes", Value::integer(i64::try_from(bytes).unwrap_or(0))),
+                (
+                    "detached",
+                    Value::integer(i64::try_from(plan.len()).unwrap_or(0)),
+                ),
+                ("dry_run", Value::bool(true)),
+            ]),
+        ));
+    }
+
+    // Detach first. Deleting first is how a ledger ends up citing files that are gone.
+    let context = crate::write::context_of(session);
+    let applied = match akr_core::ops::detach_scratch_citations(&context, &doomed_names) {
+        Ok(applied) => applied,
+        Err(refused) => return crate::write::render(session, Err(refused)),
+    };
 
     let root = akr_core::scratch::dir(&session.root);
     let mut text = String::new();
@@ -715,17 +780,6 @@ fn scratch_prune(
     let mut bytes = 0u64;
     for entry in &doomed {
         let path = root.join(&entry.name);
-        if dry_run {
-            text.push_str(&format!(
-                "would remove  {:>9}  {:>4}d  {}\n",
-                human_bytes(entry.bytes),
-                entry.age_days,
-                entry.name
-            ));
-            removed += 1;
-            bytes += entry.bytes;
-            continue;
-        }
         let outcome = if entry.is_dir {
             std::fs::remove_dir_all(&path)
         } else {
@@ -742,28 +796,23 @@ fn scratch_prune(
                 bytes += entry.bytes;
             }
             // One locked file must not abandon the rest: report it and carry on, so the
-            // command is worth running again rather than being all-or-nothing.
+            // command is worth running again rather than being all-or-nothing. The
+            // citation is already detached, which is the state a later retry expects.
             Err(error) => text.push_str(&format!("kept  {}: {error}\n", entry.name)),
         }
     }
-    text.push_str(&format!(
-        "{} {} in {} entries\n",
-        if dry_run { "would free" } else { "freed" },
-        human_bytes(bytes),
-        removed
-    ));
+    if removed > 0 {
+        text.push_str(&format!(
+            "freed {} in {removed} entries\n",
+            human_bytes(bytes)
+        ));
+    }
 
-    Ok(Output::plain(
-        text,
-        Value::object(vec![
-            (
-                "pruned",
-                Value::integer(i64::try_from(removed).unwrap_or(0)),
-            ),
-            ("bytes", Value::integer(i64::try_from(bytes).unwrap_or(0))),
-            ("dry_run", Value::bool(dry_run)),
-        ]),
-    ))
+    let mut rendered = crate::write::render(session, Ok(applied))?;
+    if !text.is_empty() {
+        rendered.text.insert_str(0, &text);
+    }
+    Ok(rendered)
 }
 
 /// `akr scratch keep <name> --reason <text>` / `--forget`

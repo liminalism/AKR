@@ -658,7 +658,12 @@ completion is not itself the change that strands the evidence.
 The co-commit case is the staged-tree workflow: tests run before the future commit hash
 exists, then the evidence and verified record land together. Equal last-change commits
 identify that case without allowing evidence from an older commit to verify a later
-redefinition.
+redefinition. A later revision of that evidence keeps the co-commit when its
+`observed_at` is unchanged. Superseding a record to drop a scratch citation gives the
+successor a new last change without making a new observation, so the shortcut follows
+`supersedes` for as long as the observation commit stays the same. A fresh run is judged
+on its own commit, and a redefinition of the verified record still strands the old
+observation.
 
 **A branch is not an age.** Three different facts can leave a check unsatisfied on its
 commit, and the message says which. Evidence *predates* the last definitional change only
@@ -859,7 +864,9 @@ An artifact under `.agent/scratch/<entry>/...` also passes when `<entry>` is nam
 **Fix.** Move the artefact somewhere durable and cite that path, or `akr scratch keep
 <entry>` first and cite it where it is. Once the entry has already been pruned neither is
 possible, and the repair is to drop the `artifact` slot: `command`, `summary` and
-`observed_at` carry the claim without it. The help line names all three, because a help
+`observed_at` carry the claim without it. `akr scratch prune` does that repair itself,
+in one write, for every live citation of an entry it is about to delete and every scratch
+path that is already gone. The help line names the manual repairs as well, because a help
 line offering only the impossible ones is what sent one reader looking for an escape that
 was not there.
 

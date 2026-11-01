@@ -90,7 +90,9 @@ Consult AKR at task and state-transition boundaries, not after every edit.
   be a path under `.agent/scratch` (`AKR-T023`, V-025 — on every route that writes an
   evidence record, not just `evidence_add`): scratch is pruned on an ordinary handoff,
   so a citation into it is a verified claim that quietly loses its backing. Move the
-  artefact somewhere durable, or `akr scratch keep <entry>` first.
+  artefact somewhere durable, or `akr scratch keep <entry>` first. A citation whose
+  scratch entry is already gone is repaired by `akr scratch prune`, which drops that
+  slot in one write; do not revise the records one by one.
 - Revising a record that stays `completed` puts every one of its acceptance
   references back in question at once, because V-020 measures each against the commit
   that last changed the record. The write's `notes` list them; refresh all of them,
@@ -154,7 +156,9 @@ gigabytes and somebody deletes it by hand.
 
 Before handing work back:
 
-- `akr scratch prune` — removes unkept entries untouched for fourteen days.
+- `akr scratch prune` — removes unkept entries untouched for fourteen days, and in the
+  same command drops live evidence citations of those entries and of scratch paths that
+  are already gone.
 - `akr scratch keep <name> --reason "<why>"` — protects one the next session needs. Kept
   entries are never pruned, at any age; the reason is required because a marker with no
   reason outlives whatever made it necessary.

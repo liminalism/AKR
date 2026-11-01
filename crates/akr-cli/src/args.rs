@@ -584,10 +584,14 @@ pub enum Command {
     /// `akr scratch list`.
     ScratchList,
     /// `akr scratch prune [--older-than <days>] [--dry-run]`.
+    ///
+    /// Also retires live evidence citations of the entries it deletes, and of scratch
+    /// paths that are already gone, in one ledger write. `--dry-run` reports both and
+    /// writes nothing.
     ScratchPrune {
         /// Only remove entries untouched for at least this many days.
         older_than: u64,
-        /// Report what would go and remove nothing.
+        /// Report what would go, including ledger citations, and remove nothing.
         dry_run: bool,
     },
     /// `akr scratch keep <name> --reason <text>`.

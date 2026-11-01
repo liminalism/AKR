@@ -743,7 +743,7 @@ Open a session first (`akr handoff session begin --request-file <file>`, the fil
 
 ### Scratch
 
-`.agent/scratch/` is gitignored and never auto-deleted. Before handoff: `akr scratch prune`; `akr scratch keep <name> --reason "..."` to retain; `akr scratch list`. `akr check --scratch-clean` fails on prunable leftovers and deletes nothing. Same for any persistent scratch directory if the workspace has no AKR.
+`.agent/scratch/` is gitignored and never auto-deleted. Before handoff: `akr scratch prune` (also drops live evidence citations of entries it removes, and of scratch paths already gone); `akr scratch keep <name> --reason "..."` to retain; `akr scratch list`. `akr check --scratch-clean` fails on prunable leftovers and deletes nothing. Same for any persistent scratch directory if the workspace has no AKR.
 
 ### Cost
 
