@@ -153,18 +153,19 @@ impl Staged {
             for (index, relative) in paths.iter().enumerate() {
                 let target = self.akr_dir.join(relative);
                 if let Some(parent) = target.parent() {
-                    fs::create_dir_all(parent)?;
+                    fs::create_dir_all(parent).map_err(|e| write_error(&target, e))?;
                 }
                 let temporary =
                     target.with_extension(format!("akr.tmp{}{index}", std::process::id()));
                 let text = self.texts.get(relative).map_or("", String::as_str);
-                let mut file = fs::File::create(&temporary)?;
-                file.write_all(text.as_bytes())?;
-                file.sync_all()?;
-                temporaries.push((temporary, target));
+                let mut file = fs::File::create(&temporary).map_err(|e| write_error(&target, e))?;
+                temporaries.push((temporary, target.clone()));
+                file.write_all(text.as_bytes())
+                    .map_err(|e| write_error(&target, e))?;
+                file.sync_all().map_err(|e| write_error(&target, e))?;
             }
             for (temporary, target) in &temporaries {
-                fs::rename(temporary, target)?;
+                fs::rename(temporary, target).map_err(|e| write_error(target, e))?;
             }
             Ok(())
         })();
@@ -174,5 +175,36 @@ impl Staged {
             }
         }
         result
+    }
+}
+
+fn write_error(target: &Path, error: io::Error) -> io::Error {
+    io::Error::new(error.kind(), format!("{}: {error}", target.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn commit_error_names_the_target_and_preserves_the_error_kind() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let staged = Staged {
+            akr_dir: root.clone(),
+            project: String::new(),
+            texts: BTreeMap::new(),
+            trees: BTreeMap::new(),
+            ledger: Ledger::default(),
+            diagnostics: Vec::new(),
+        };
+        let target = PathBuf::from("Cargo.toml/records.akr");
+        let error = staged.commit(std::slice::from_ref(&target)).unwrap_err();
+        let expected = fs::create_dir_all(root.join("Cargo.toml")).unwrap_err();
+        assert_eq!(error.kind(), expected.kind());
+        assert!(
+            error
+                .to_string()
+                .contains(&root.join(target).display().to_string())
+        );
     }
 }

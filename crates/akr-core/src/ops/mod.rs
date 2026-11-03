@@ -2041,7 +2041,7 @@ fn finish_staged(
 
     staged
         .commit(&touched)
-        .map_err(|error| Refused::new(operation, cli::C031, format!("write failed: {error}")))?;
+        .map_err(|error| write_refusal(operation, error))?;
 
     changes.sort_by(|a, b| a.id.cmp(&b.id));
     let lock_stale = operation == Operation::Configure
@@ -2080,6 +2080,36 @@ fn finish_staged(
         notes,
         lock_stale,
     })
+}
+
+fn write_refusal(operation: Operation, error: std::io::Error) -> Refused {
+    let kind = error.kind();
+    let refusal = Refused::new(operation, cli::C031, format!("write failed: {error}"));
+    if matches!(
+        kind,
+        std::io::ErrorKind::ReadOnlyFilesystem | std::io::ErrorKind::PermissionDenied
+    ) {
+        refusal.with_help("ensure the ledger directory is writable, including in the sandbox or container, then retry")
+    } else {
+        refusal
+    }
+}
+
+#[cfg(test)]
+mod write_error_tests {
+    use super::*;
+
+    #[test]
+    fn read_only_write_refusal_explains_how_to_retry() {
+        let error = std::io::Error::new(
+            std::io::ErrorKind::ReadOnlyFilesystem,
+            "/workspace/.akr/records: read-only filesystem",
+        );
+        let refusal = write_refusal(Operation::Propose, error);
+        assert_eq!(refusal.code.as_str(), "AKR-C031");
+        assert!(refusal.message.contains("/workspace/.akr/records"));
+        assert!(refusal.help.unwrap().contains("sandbox"));
+    }
 }
 
 /// The errors the ledger already had, before this operation touched it.

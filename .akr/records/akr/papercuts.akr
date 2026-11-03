@@ -3848,6 +3848,18 @@ record akr.papercut.while-withdrawing-a-collated-master-through/2 : papercut {
     created_at 2026-08-23
 }
 
+record akr.papercut.write-failures-report-an-os-error-without-the/1 : papercut {
+    title "Write failures report an OS error without the affected path or guidance…"
+    state verified
+    statement """
+        Write failures report an OS error without the affected path or guidance when a sandbox mounts the ledger read-only.
+        """
+    observed_at git:ea4a192f4ff4c98aaa2e4d2b1dcd0187504fef0e
+    about "akr"
+    author "codex"
+    created_at 2026-10-31
+}
+
 record akr.papercut.writing-several-evidence-and-lifecycle-records/1 : papercut {
     title "Writing several evidence and lifecycle records repeated full…"
     state superseded

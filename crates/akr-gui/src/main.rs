@@ -18,7 +18,9 @@ use pixelkit_ui::widget::TABLE_GUTTER;
 use pixelkit_ui::{
     Cell, Column, Row, ScrollState, TableOutcome, TableState, TextFieldState, Theme, Ui, navigate,
 };
-use pixelkit_windowing::{ImeEvent, PixelApp, Waker, WindowConfig, run_app};
+use pixelkit_windowing::{
+    ImeCursorArea, ImeEvent, KeyEvent, PixelApp, Waker, WindowConfig, run_app,
+};
 
 // --- embedded type --------------------------------------------------------
 
@@ -358,6 +360,11 @@ struct ReviewApp {
     filter_field: TextFieldState,
     filter_focused: bool,
     path_field: TextFieldState,
+    /// Text already inserted from an IME commit since the last frame, and
+    /// text already queued from a key. A platform that reports one keystroke
+    /// both ways must not insert it twice.
+    ime_committed: String,
+    key_committed: String,
     projects: Vec<PathBuf>,
     project_table: TableState,
     modal_open: bool,
@@ -397,6 +404,8 @@ impl ReviewApp {
             filter_field: TextFieldState::new(),
             filter_focused: false,
             path_field: TextFieldState::new(),
+            ime_committed: String::new(),
+            key_committed: String::new(),
             projects: Vec::new(),
             project_table: TableState::new(),
             modal_open: false,
@@ -410,6 +419,37 @@ impl ReviewApp {
             loads,
             sender,
             loader: Arc::new(AkrLoader),
+        }
+    }
+
+    /// Queue printable text for the focused field. Skips a string the IME
+    /// commit path already inserted.
+    fn queue_plain_text(&mut self, text: &str) {
+        let text: String = text
+            .chars()
+            .filter(|character| !character.is_control())
+            .collect();
+        if text.is_empty() || take_duplicate(&mut self.ime_committed, &text) {
+            return;
+        }
+        self.key_committed.push_str(&text);
+        for character in text.chars() {
+            self.input.key(KeyInput::Character(character));
+        }
+    }
+
+    /// Insert an IME commit into whichever field owns the keyboard. Skips a
+    /// string the key path already queued.
+    fn commit_ime_text(&mut self, text: &str) {
+        if text.is_empty() || take_duplicate(&mut self.key_committed, text) {
+            return;
+        }
+        self.ime_committed.push_str(text);
+        if self.modal_open {
+            self.path_field.insert_str(text);
+        } else if self.filter_focused {
+            self.filter_field.insert_str(text);
+            self.model.filter.query = self.filter_field.text().to_owned();
         }
     }
 
@@ -508,6 +548,7 @@ impl ReviewApp {
         self.scroll_drag = None;
         self.modal_open = true;
         self.filter_focused = false;
+        self.input.set_composition("");
         self.status = None;
     }
 
@@ -779,7 +820,7 @@ fn render_header(ui: &mut Ui, state: &mut FrameState, area: Rect) {
     }
 }
 
-fn render_filter_bar(ui: &mut Ui, state: &mut FrameState, area: Rect, pressed: &[KeyInput]) {
+fn render_filter_bar(ui: &mut Ui, state: &mut FrameState, area: Rect) {
     ui.painter.fill_rect(area, ui.theme.panel_alt);
     ui.painter.fill_rect(
         Rect::new(area.x, area.bottom() - 1, area.w, 1),
@@ -833,10 +874,9 @@ fn render_filter_bar(ui: &mut Ui, state: &mut FrameState, area: Rect, pressed: &
     if ui.input.take_click(field) {
         *state.filter_focused = true;
     }
+    // `text_field` is the only place keys are applied. Applying them here as
+    // well inserted every character a second time.
     let mut changed = false;
-    if *state.filter_focused {
-        changed |= state.filter_field.apply(pressed);
-    }
     changed |= ui.text_field(
         state.filter_field,
         field,
@@ -1938,7 +1978,6 @@ fn render_open_dialog(ui: &mut Ui, state: &mut FrameState, pressed: &[KeyInput])
         ui.theme.text_dim,
         Align::Left,
     );
-    state.path_field.apply(pressed);
     ui.text_field(state.path_field, field, "project directory", true, false);
     ui.label(
         hint,
@@ -2127,18 +2166,24 @@ impl ReviewApp {
                     }
                 }
                 render_header(&mut ui, &mut state, physical(areas.header));
-                render_filter_bar(&mut ui, &mut state, physical(areas.filter_bar), &pressed);
+                render_filter_bar(&mut ui, &mut state, physical(areas.filter_bar));
                 render_left(&mut ui, &mut state, physical(areas.left), &[], false);
                 render_right(&mut ui, &mut state, physical(areas.right), elapsed);
                 render_footer(&mut ui, &mut state, physical(areas.footer), elapsed);
                 if exit {
                     *state.filter_focused = false;
+                    ui.input.set_composition("");
                 }
             } else {
                 shortcuts(&mut state, &pressed);
+                if *state.filter_focused {
+                    // '/' focused the field. It is the shortcut, not the query,
+                    // and the field would otherwise consume it on this frame.
+                    ui.input.consume_keys(|_| {});
+                }
                 let nav_outstanding = state.model.panel == Panel::Outstanding;
                 render_header(&mut ui, &mut state, physical(areas.header));
-                render_filter_bar(&mut ui, &mut state, physical(areas.filter_bar), &[]);
+                render_filter_bar(&mut ui, &mut state, physical(areas.filter_bar));
                 render_left(
                     &mut ui,
                     &mut state,
@@ -2172,13 +2217,16 @@ impl ReviewApp {
         }
         if let Some(path) = deferred.open_path {
             self.modal_open = false;
+            self.input.set_composition("");
             self.open_workspace(&path);
         }
         if deferred.submit_modal {
             self.submit_open_prompt();
+            self.input.set_composition("");
         }
         if deferred.cancel_modal {
             self.modal_open = false;
+            self.input.set_composition("");
         }
         for index in deferred.request_loads {
             self.request_load(index);
@@ -2186,7 +2234,22 @@ impl ReviewApp {
         if deferred.sync_title {
             self.sync_title();
         }
+        self.ime_committed.clear();
+        self.key_committed.clear();
     }
+}
+
+/// If `text` is a prefix of `seen`, drop that prefix and report that this
+/// delivery was already counted.
+fn take_duplicate(seen: &mut String, text: &str) -> bool {
+    if text.is_empty() {
+        return false;
+    }
+    let Some(rest) = seen.strip_prefix(text) else {
+        return false;
+    };
+    *seen = rest.to_owned();
+    true
 }
 
 fn render_right(ui: &mut Ui, state: &mut FrameState, area: Rect, elapsed: f32) {
@@ -2240,6 +2303,11 @@ impl PixelApp for ReviewApp {
     }
 
     fn attach(&mut self, waker: Waker) {
+        let clipboard_waker = waker.clone();
+        self.input
+            .attach_clipboard(pixelkit_shell::clipboard::ClipboardWorker::new(move || {
+                clipboard_waker.wake();
+            }));
         self.waker = Some(waker);
     }
 
@@ -2262,7 +2330,31 @@ impl PixelApp for ReviewApp {
     }
 
     fn on_key(&mut self, key: &KeyInput) {
-        self.input.key(key.clone());
+        // The host also delivers `on_key_event` for the same press. Characters
+        // go through that path so the whole committed string is inserted once;
+        // queueing the legacy first character here as well doubled every key.
+        if !matches!(key, KeyInput::Character(_)) {
+            self.input.key(key.clone());
+        }
+    }
+
+    fn on_key_event(&mut self, event: &KeyEvent) {
+        if !(event.pressed && matches!(event.key, KeyInput::Character(_))) {
+            return;
+        }
+        // Ctrl/Super letters are shortcuts (including paste), not text.
+        if event.modifiers.control || event.modifiers.logo {
+            self.input.key(event.key.clone());
+            return;
+        }
+        if !event.text.is_empty() {
+            self.queue_plain_text(&event.text);
+        } else if let KeyInput::Character(character) = event.key
+            && !character.is_control()
+        {
+            let mut encoded = [0; 4];
+            self.queue_plain_text(character.encode_utf8(&mut encoded));
+        }
     }
 
     fn on_modifiers(&mut self, modifiers: Modifiers) {
@@ -2285,15 +2377,45 @@ impl PixelApp for ReviewApp {
         self.input.scrolled(dx, dy);
     }
 
-    fn on_ime(&mut self, ime: &ImeEvent) {
-        if let ImeEvent::Commit(text) = ime {
-            if self.modal_open {
-                self.path_field.insert_str(text);
-            } else if self.filter_focused {
-                self.filter_field.insert_str(text);
-                self.model.filter.query = self.filter_field.text().to_owned();
-            }
+    fn on_focus_changed(&mut self, focused: bool) {
+        if !focused {
+            self.input.blur();
+            self.ime_committed.clear();
+            self.key_committed.clear();
         }
+    }
+
+    fn on_ime(&mut self, ime: &ImeEvent) {
+        match ime {
+            ImeEvent::Preedit(text, _) => self.input.set_composition(text),
+            ImeEvent::Commit(text) => {
+                self.input.set_composition("");
+                self.commit_ime_text(text);
+            }
+            ImeEvent::Disabled => self.input.set_composition(""),
+            ImeEvent::Enabled => {}
+        }
+    }
+
+    fn ime_allowed(&self) -> bool {
+        self.modal_open || self.filter_focused
+    }
+
+    fn ime_cursor_area(&self) -> Option<ImeCursorArea> {
+        if !self.ime_allowed() {
+            return None;
+        }
+        let area = if self.modal_open {
+            self.path_field.caret_area()?
+        } else {
+            self.filter_field.caret_area()?
+        };
+        Some(ImeCursorArea {
+            x: f64::from(area.x),
+            y: f64::from(area.y),
+            width: f64::from(area.w),
+            height: f64::from(area.h),
+        })
     }
 }
 
@@ -2361,18 +2483,167 @@ mod tests {
         }
     }
 
+    fn key_event(character: char, text: &str) -> KeyEvent {
+        KeyEvent {
+            key: KeyInput::Character(character),
+            text: text.to_owned(),
+            physical: "Key".to_owned(),
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::default(),
+        }
+    }
+
+    /// What the window host does for one press: the legacy first character,
+    /// then the full committed string.
+    fn host_press(app: &mut ReviewApp, text: &str) {
+        let Some(character) = text.chars().next() else {
+            return;
+        };
+        app.on_key(&KeyInput::Character(character));
+        app.on_key_event(&key_event(character, text));
+    }
+
     #[test]
     fn shortcut_keys_reach_the_outstanding_panel_and_the_filter() {
         let mut app = demo_app();
         app.input.key(KeyInput::Character('u'));
         frame(&mut app);
         assert_eq!(app.model.panel, Panel::Outstanding);
-        app.input.key(KeyInput::Character('/'));
+        host_press(&mut app, "/");
         frame(&mut app);
         assert!(app.filter_focused);
+        assert_eq!(app.filter_field.text(), "", "the shortcut is not the query");
         app.input.key(KeyInput::Escape);
         frame(&mut app);
         assert!(!app.filter_focused);
+    }
+
+    #[test]
+    fn typing_into_the_filter_inserts_each_character_once_and_searches() {
+        let mut app = demo_app();
+        host_press(&mut app, "/");
+        frame(&mut app);
+        for character in ['s', 'n', 'a', 'p'] {
+            host_press(&mut app, &character.to_string());
+        }
+        frame(&mut app);
+        assert_eq!(app.filter_field.text(), "snap");
+        assert_eq!(app.model.filter.query, "snap");
+        assert_eq!(
+            app.model.filtered_keys(),
+            ["akr.work.review-snapshot"],
+            "a doubled query would match nothing"
+        );
+    }
+
+    #[test]
+    fn typing_into_the_open_dialog_inserts_each_character_once() {
+        let mut app = demo_app();
+        app.modal_open = true;
+        app.path_field = TextFieldState::new();
+        // One platform event can commit more than its first character.
+        host_press(&mut app, "/tmp/akr");
+        frame(&mut app);
+        assert_eq!(app.path_field.text(), "/tmp/akr");
+    }
+
+    #[test]
+    fn an_ime_commit_and_the_same_key_text_insert_once() {
+        let mut app = demo_app();
+        app.filter_focused = true;
+        app.on_ime(&ImeEvent::Commit("é".to_owned()));
+        host_press(&mut app, "é");
+        frame(&mut app);
+        assert_eq!(app.filter_field.text(), "é");
+        assert_eq!(app.model.filter.query, "é");
+    }
+
+    #[test]
+    fn a_key_then_the_same_ime_commit_inserts_once() {
+        let mut app = demo_app();
+        app.filter_focused = true;
+        host_press(&mut app, "ab");
+        app.on_ime(&ImeEvent::Commit("ab".to_owned()));
+        frame(&mut app);
+        assert_eq!(app.filter_field.text(), "ab");
+    }
+
+    #[test]
+    fn ctrl_v_does_not_type_the_letter_v() {
+        let mut app = demo_app();
+        app.filter_focused = true;
+        app.filter_field = TextFieldState::with_text("keep");
+        let modifiers = Modifiers {
+            control: true,
+            ..Modifiers::default()
+        };
+        app.on_modifiers(modifiers);
+        app.on_key(&KeyInput::Character('v'));
+        app.on_key_event(&KeyEvent {
+            key: KeyInput::Character('v'),
+            text: "v".to_owned(),
+            physical: "KeyV".to_owned(),
+            pressed: true,
+            repeat: false,
+            modifiers,
+        });
+        frame(&mut app);
+        assert_eq!(app.filter_field.text(), "keep");
+    }
+
+    #[test]
+    fn paste_inserts_the_clipboard_text_once() {
+        let mut clipboard = pixelkit_shell::Clipboard::new();
+        let previous = clipboard.try_text().ok().flatten();
+        let marker = format!("akr-gui-paste-{}", std::process::id());
+        if clipboard.try_set_text(marker.clone()).is_err() {
+            return;
+        }
+        let mut app = demo_app();
+        app.attach(Waker::detached());
+        app.filter_focused = true;
+        let modifiers = Modifiers {
+            control: true,
+            ..Modifiers::default()
+        };
+        app.on_modifiers(modifiers);
+        app.on_key(&KeyInput::Character('v'));
+        app.on_key_event(&KeyEvent {
+            key: KeyInput::Character('v'),
+            text: "v".to_owned(),
+            physical: "KeyV".to_owned(),
+            pressed: true,
+            repeat: false,
+            modifiers,
+        });
+        let mut landed = false;
+        for _ in 0..50 {
+            frame(&mut app);
+            if app.filter_field.text() == marker {
+                landed = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        if let Some(previous) = previous {
+            let _ = clipboard.try_set_text(previous);
+        } else {
+            let _ = clipboard.try_set_text(String::new());
+        }
+        assert!(
+            landed,
+            "paste should insert {marker:?} once, field is {:?}",
+            app.filter_field.text()
+        );
+    }
+
+    #[test]
+    fn attach_installs_the_clipboard_worker() {
+        let mut app = demo_app();
+        assert!(app.input.clipboard().is_none());
+        app.attach(Waker::detached());
+        assert!(app.input.clipboard().is_some());
     }
 
     #[test]
