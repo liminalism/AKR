@@ -39,7 +39,7 @@ dependencies = [
 
 [[package]]
 name = "akr-cli"
-version = "0.7.0"
+version = "0.6.2"
 dependencies = [
  "akr-core",
  "rusqlite",
@@ -47,7 +47,7 @@ dependencies = [
 
 [[package]]
 name = "akr-core"
-version = "0.7.0"
+version = "0.6.2"
 dependencies = [
  "rusqlite",
  "serde_json",
@@ -67,7 +67,7 @@ dependencies = [
 
 [[package]]
 name = "akr-mcp"
-version = "0.7.0"
+version = "0.6.2"
 dependencies = [
  "akr-cli",
  "akr-core",

@@ -2,9 +2,10 @@ akr-lock 0.1
 project akr
 
 build {
-    tool "akr 0.7.0"
+    tool "akr 0.6.2"
     grammar "0.1"
     vocabulary "0.2"
+    commit git:843ac1081ecba686596ce856d860781d2e301113
     source_graph "sha256:c19b3cef200c3d2b6f335d77d463bcb69d9f5026dd95934e9b55093c32895c46"
 }
 
