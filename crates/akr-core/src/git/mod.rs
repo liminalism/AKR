@@ -65,6 +65,8 @@ pub mod codes {
     pub const G025: Code = Code::new("AKR-G025");
     /// `project.akr` declares a tree untracked that git in fact tracks.
     pub const G026: Code = Code::new("AKR-G026");
+    /// A watch glob that matches nothing at HEAD but does match uncommitted paths.
+    pub const G027: Code = Code::new("AKR-G027");
     /// `review_after` precedes `created_at`.
     pub const G031: Code = Code::new("AKR-G031");
     /// The review queue is not empty, under `--review-clean`.
@@ -72,8 +74,8 @@ pub mod codes {
 
     /// Every freshness code this crate can raise.
     pub const ALL: &[Code] = &[
-        G001, G002, G003, G004, G011, G012, G013, G014, G021, G022, G023, G024, G025, G026, G031,
-        G041,
+        G001, G002, G003, G004, G011, G012, G013, G014, G021, G022, G023, G024, G025, G026, G027,
+        G031, G041,
     ];
 }
 
@@ -562,7 +564,15 @@ impl Repository {
                 &["rev-parse", "--show-toplevel", "--is-shallow-repository"],
             )
         })
-        .map_err(|_| GitError::NotARepository(path.to_path_buf()))?;
+        .map_err(|error| match error {
+            // A git that cannot be started is not a missing repository. Saying it was
+            // sent a fresh Windows install looking for a `.git` that was there all along
+            // (`saveyourskin.papercut.claude-desktop-code-session-on-a-fresh-windows`).
+            GitError::CommandFailed { ref stderr, .. } if stderr.starts_with(GIT_NOT_FOUND) => {
+                error
+            }
+            _ => GitError::NotARepository(path.to_path_buf()),
+        })?;
 
         let mut lines = text.lines();
         let root = lines
@@ -2182,6 +2192,9 @@ fn describe<S: AsRef<OsStr>>(args: &[S]) -> String {
         .join(" ")
 }
 
+/// How [`run_in`] begins the error for a git it could not start at all.
+const GIT_NOT_FOUND: &str = "git is not installed or not on PATH";
+
 fn run_in<S: AsRef<OsStr>>(dir: &Path, args: &[S]) -> Result<String, GitError> {
     let output = command()
         .args(args)
@@ -2189,7 +2202,11 @@ fn run_in<S: AsRef<OsStr>>(dir: &Path, args: &[S]) -> Result<String, GitError> {
         .output()
         .map_err(|e| GitError::CommandFailed {
             subcommand: describe(args),
-            stderr: e.to_string(),
+            stderr: if e.kind() == std::io::ErrorKind::NotFound {
+                format!("{GIT_NOT_FOUND} ({e})")
+            } else {
+                e.to_string()
+            },
         })?;
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())

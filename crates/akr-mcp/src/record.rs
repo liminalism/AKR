@@ -456,7 +456,9 @@ fn slot_line(slot: ContentSlot, value: &Value) -> Result<String, ToolError> {
             let hash = text.strip_prefix("git:").unwrap_or(&text);
             format!("git:{hash}")
         }
-        ContentSlot::ReviewAfter | ContentSlot::Target => string(value, name)?,
+        ContentSlot::ReviewAfter | ContentSlot::Target | ContentSlot::ClosedAt => {
+            string(value, name)?
+        }
         // Enum members are bare words.
         ContentSlot::Method | ContentSlot::Result | ContentSlot::Confidence => string(value, name)?,
         ContentSlot::Watches | ContentSlot::Aliases | ContentSlot::Collated => {

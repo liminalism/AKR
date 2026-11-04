@@ -1072,6 +1072,19 @@ record akr.evidence.papercut-reconciliation-2026-10-28/1 : evidence {
     author "dk"
 }
 
+record akr.evidence.papercut-reconciliation-2026-11-04/1 : evidence {
+    title "Fixes for the 18 papercuts collated into akr.papercut.collated-18-papercuts-from-kitchen-concept-lege-2, plus the sister reports that --paths a,b is one glob and --paths a b drops b, verified on 2026-11-04. The named suites pass, as do cargo fmt --check and cargo clippy --all-targets (two pre-existing warnings in hash and ops). The full default-feature suite fails only build_cache cached_last_changes, differential impact, config removing_one_untracked, transcripts every_transcript, and two akr-gui tests, and all six fail identically on an unmodified HEAD worktree. Covered: akr context <key> positional, MCP closed_at as a JSON date string, X021 hint names --budget, bracketed-scope help on a fragment parse failure, the segment rule in the key error and propose --help, source add refuses PDF/zip/OLE/RTF/non-UTF-8, AKR-G027 for watches over uncommitted paths exempt from strict, start withholds recommended_context from a weak lone match, AKR-X043 for a replaced akr-mcp binary, a missing git binary reported as G002 to the change protocol, comma-split --paths and a refused stray positional."
+    state verified
+    result pass
+    method command
+    observed_at git:76c6ca5d88c4e00e155b31fc5888ef25374fcbd2
+    command "cargo test -p akr-cli --test commands; cargo test -p akr-cli --test source_library binary; cargo test -p akr-core --test freshness g02; cargo test -p akr-mcp --test writes revise_; cargo test -p akr-mcp --lib skew; cargo test -p akr-cli --no-default-features --test commands start_; cargo test -p akr-cli --no-default-features --test search_degraded"
+    summary """
+        Fixes for the 18 papercuts collated into akr.papercut.collated-18-papercuts-from-kitchen-concept-lege-2, plus the sister reports that --paths a,b is one glob and --paths a b drops b, verified on 2026-11-04. The named suites pass, as do cargo fmt --check and cargo clippy --all-targets (two pre-existing warnings in hash and ops). The full default-feature suite fails only build_cache cached_last_changes, differential impact, config removing_one_untracked, transcripts every_transcript, and two akr-gui tests, and all six fail identically on an unmodified HEAD worktree. Covered: akr context <key> positional, MCP closed_at as a JSON date string, X021 hint names --budget, bracketed-scope help on a fragment parse failure, the segment rule in the key error and propose --help, source add refuses PDF/zip/OLE/RTF/non-UTF-8, AKR-G027 for watches over uncommitted paths exempt from strict, start withholds recommended_context from a weak lone match, AKR-X043 for a replaced akr-mcp binary, a missing git binary reported as G002 to the change protocol, comma-split --paths and a refused stray positional.
+        """
+    author "dk"
+}
+
 record akr.evidence.papercut-reconciliation-classification/1 : evidence {
     title "All 18 reports were reviewed against current implementation, docs, tests, decisions, and work history; each is explicitly classified in assessment akr.assessment.papercut-reconciliation-2026-08-11/2 and every surviving cluster has a live work record."
     state verified

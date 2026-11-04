@@ -80,6 +80,24 @@ fn registering_a_source_creates_no_records() {
 }
 
 #[test]
+fn a_binary_document_is_refused_with_the_conversion_remedy() {
+    // A .docx or PDF registered as-is was stored as `.md` and searched as binary noise.
+    let example = Example::materialise("source-refuses-binary");
+    for (name, bytes) in [
+        ("brief.pdf", &b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n"[..]),
+        ("brief.docx", &b"PK\x03\x04\x14\x00\x06\x00"[..]),
+        ("brief.rtf", &br"{\rtf1\ansi Dukes table}"[..]),
+    ] {
+        std::fs::write(example.root().join(name), bytes).unwrap();
+        let add = example.run(&["source", "add", name]);
+        assert_eq!(add.code, 2, "{name}: {}", add.output());
+        assert!(add.output().contains("AKR-C004"), "{}", add.output());
+        assert!(add.output().contains("pandoc"), "{}", add.output());
+    }
+    assert!(!example.root().join("sources/external").exists());
+}
+
+#[test]
 fn editing_a_registered_source_is_an_error() {
     let example = Example::materialise("source-immutable");
     register(&example);

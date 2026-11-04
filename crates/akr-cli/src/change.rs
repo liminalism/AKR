@@ -13,12 +13,19 @@ use akr_core::model::Ledger;
 
 /// Opens the repository, or explains that this is not one.
 fn repository(session: &Session) -> Result<&Repository, EnvError> {
-    session.repository.as_ref().ok_or_else(|| {
-        EnvError::new(
-            "AKR-G001",
-            "the change protocol needs a git repository; this workspace is not inside one",
-        )
-    })
+    session
+        .repository
+        .as_ref()
+        .ok_or_else(|| match &session.git_unavailable {
+            Some(reason) => EnvError::new(
+                "AKR-G002",
+                format!("the change protocol needs git, and it could not be used: {reason}"),
+            ),
+            None => EnvError::new(
+                "AKR-G001",
+                "the change protocol needs a git repository; this workspace is not inside one",
+            ),
+        })
 }
 
 fn to_env(error: change::ChangeError) -> EnvError {

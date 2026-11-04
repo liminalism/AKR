@@ -77,6 +77,8 @@ pub struct Server {
     /// Set by `--tool-names underscore` or when `initialize` names a host that
     /// drops dotted MCP tool names (Grok Build 1.0.25).
     host_safe_tool_names: AtomicBool,
+    /// The binary this process was loaded from, to notice it being replaced.
+    executable: Option<crate::skew::Executable>,
 }
 
 /// Which half of the tool catalogue this server exposes.
@@ -123,6 +125,7 @@ impl Server {
             surface: Surface::Full,
             accounting: None,
             host_safe_tool_names: AtomicBool::new(false),
+            executable: crate::skew::Executable::current(),
         }
     }
 
@@ -377,6 +380,13 @@ impl Server {
                 // can say. Naming the skew here turns it into a one-line remedy.
                 if let Some(skew) = crate::skew::detect(&self.root) {
                     error.diagnostics.push(skew.diagnostic());
+                }
+                if let Some(replaced) = self
+                    .executable
+                    .as_ref()
+                    .and_then(crate::skew::Executable::replaced)
+                {
+                    error.diagnostics.push(replaced);
                 }
                 (None, error.to_json(), true)
             }

@@ -425,6 +425,22 @@ fn a_watch_glob_matching_nothing_is_g022() {
     assert_eq!(diagnostics[0].code, codes::G022);
 }
 
+/// A watch over new, uncommitted files is right, not rotten: it is `AKR-G027`, which
+/// strict validation does not promote, so another task's working tree cannot fail a
+/// check.
+#[test]
+fn a_watch_glob_matching_only_uncommitted_paths_is_g027() {
+    let mut repo = TempRepo::new("g027");
+    let head = repo.commit_file("a.txt", "1\n", "base");
+    repo.write("engine/new/mod.rs", "// not committed yet\n");
+    let git = Repository::open(repo.root()).expect("opens");
+    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
+    ledger.insert(observation("fx.obs.new", &head, &["engine/new/**"]));
+    let diagnostics = unmatched_watches(&ledger, &git, &commit(&head)).expect("lists");
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].code, codes::G027);
+}
+
 /// A bare directory means the directory, with or without a trailing slash. Before
 /// 2026-09-08 both matched nothing, and the author of `path "tools/"` was told the path
 /// had moved or been deleted about a directory holding twenty-five tracked files.

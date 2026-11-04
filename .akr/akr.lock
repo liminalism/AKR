@@ -5,8 +5,7 @@ build {
     tool "akr 0.6.2"
     grammar "0.1"
     vocabulary "0.2"
-    commit git:843ac1081ecba686596ce856d860781d2e301113
-    source_graph "sha256:c19b3cef200c3d2b6f335d77d463bcb69d9f5026dd95934e9b55093c32895c46"
+    source_graph "sha256:9e93593f6cb744234aec2810b1838dd39811fd184eb6e910b3e98d7fb6d7dfaf"
 }
 
 source ".akr/project.akr" {
@@ -25,8 +24,8 @@ source ".akr/records/akr/decisions.akr" {
 }
 
 source ".akr/records/akr/evidence.akr" {
-    hash "sha256:30d3f3434487e85d353505a1a253811de501242475a32a8154b7ec5a040d1359"
-    records 89
+    hash "sha256:e70d059c90ff45a9a0233ec6b2d1c7c8fe9344ddbaf5bc7093ebe4a7f18b3bdf"
+    records 90
 }
 
 source ".akr/records/akr/milestones.akr" {
@@ -40,8 +39,8 @@ source ".akr/records/akr/observations.akr" {
 }
 
 source ".akr/records/akr/papercuts.akr" {
-    hash "sha256:d21f0fe591fa8564f2e7c477db1fcec4e5700c20e94dcdd269868b17a1b2165f"
-    records 129
+    hash "sha256:564d7790ceedf387a87363a623c81af74a8544d349eab35f7f38f40df556794f"
+    records 134
 }
 
 source ".akr/records/akr/work.akr" {
@@ -924,6 +923,11 @@ seal @akr.evidence.papercut-reconciliation-2026-10-28/1 {
     hash "sha256:2f6937a38e96f9efdae86a8f801f7997cf37db915044d1eeca9b044377fd21ef"
 }
 
+seal @akr.evidence.papercut-reconciliation-2026-11-04/1 {
+    state verified
+    hash "sha256:186c5095ee51dc482cffc2b9924f7aad7175128cc350742e43213850e59b4fbe"
+}
+
 seal @akr.evidence.papercut-reconciliation-classification/1 {
     state verified
     hash "sha256:d7f0ce28c4a312df87607a8e6c61382dfe8a9441b1b39fee883cf61f46d54677"
@@ -1175,8 +1179,13 @@ seal @akr.observation.the-normative-layer-is-stuck-at-proposed/1 {
 }
 
 seal @akr.papercut.a-broad-context-bundle-exceeded-tool-output/1 {
+    state superseded
+    hash "sha256:2af3b794dbe0a99072a4651faf00481ba31b4bba3d9daef2486e25bb9faf5e17"
+}
+
+seal @akr.papercut.a-broad-context-bundle-exceeded-tool-output/2 {
     state verified
-    hash "sha256:9ed2cfec8311abdf44438347750510f72910e5623cebce2a1bb20a1c83599749"
+    hash "sha256:88ca9012cc8f5019cf3915f50b514e6ac0cb9c8d3ffaeaaa5ef902a5c4795654"
 }
 
 seal @akr.papercut.a-command-orchestration-typo-caused-a-tool-call/1 {
@@ -1414,6 +1423,16 @@ seal @akr.papercut.collated-18-papercuts-from-kitchen-concept-lege/2 {
     hash "sha256:c914a564ccec7c2e49ef21ec3c704059af337152e688543699690048c7d87cb3"
 }
 
+seal @akr.papercut.collated-18-papercuts-from-kitchen-concept-lege-2/1 {
+    state superseded
+    hash "sha256:7602092f84d818bf77da3655fa12b7061b3a21037a988d58dda54599bcf438ec"
+}
+
+seal @akr.papercut.collated-18-papercuts-from-kitchen-concept-lege-2/2 {
+    state verified
+    hash "sha256:fb8c5db1bf2efe7faf773714179bcaa2597c600bb04e6e3c39cbc50d7b15abed"
+}
+
 seal @akr.papercut.collated-19-papercuts-from-evidence-intake/1 {
     state superseded
     hash "sha256:60a1e21168e09698922340738861b47989dcc6493fc20732c6d66d941f50f8aa"
@@ -1550,8 +1569,13 @@ seal @akr.papercut.evidence-recorded-after-tests-but-before/2 {
 }
 
 seal @akr.papercut.fff-grep-accepts-query-with-inline-directory/1 {
+    state superseded
+    hash "sha256:9be0ca03621b85aebff59d3817e0a58e905b6949dc0839e9fde54e506e74422e"
+}
+
+seal @akr.papercut.fff-grep-accepts-query-with-inline-directory/2 {
     state verified
-    hash "sha256:195be620db84e1177e802115f0187c929da961aca8662a2c67fbbb58f3935795"
+    hash "sha256:92cdc64dfb2d2737b3f6cc2e187e93f399af7ff54861d1943376a06327b7d94f"
 }
 
 seal @akr.papercut.grok-build-1-0-25-mcp-client-validates/1 {
@@ -1805,8 +1829,13 @@ seal @akr.papercut.while-withdrawing-a-collated-master-through/2 {
 }
 
 seal @akr.papercut.write-failures-report-an-os-error-without-the/1 {
+    state superseded
+    hash "sha256:f2a568792e881ede378de94b079f9c79d0f6982dc4894c4a27d7fe2b0a76dec6"
+}
+
+seal @akr.papercut.write-failures-report-an-os-error-without-the/2 {
     state verified
-    hash "sha256:243e0edec88dc22a0a813b061b1df16b3fc8edbf8632167816188eedb9e984fe"
+    hash "sha256:5e18f6fb5503acbf6fda345c78b8340aefef02bc4a27d14a451b01832d8c11eb"
 }
 
 seal @akr.papercut.writing-several-evidence-and-lifecycle-records/1 {

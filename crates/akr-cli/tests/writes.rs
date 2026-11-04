@@ -439,7 +439,7 @@ fn propose_notes_a_watch_that_matches_nothing_at_head() {
     ]);
     assert_eq!(proposed.code, 0, "{}", proposed.output());
     assert!(
-        proposed.stdout.contains("warning[AKR-G022]")
+        proposed.stdout.contains("warning[AKR-G027]")
             && proposed.stdout.contains("not committed yet"),
         "{}",
         proposed.stdout

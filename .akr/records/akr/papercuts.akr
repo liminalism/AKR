@@ -3,12 +3,26 @@ project akr
 
 record akr.papercut.a-broad-context-bundle-exceeded-tool-output/1 : papercut {
     title "A broad context bundle exceeded tool output limits; budget 7000 still…"
+    state superseded
+    statement """
+        A broad context bundle exceeded tool output limits; budget 7000 still emits mandatory sections beyond the request. Captured supported context output to a temporary file and read it in sections; relevance budgeting remains tracked.
+        """
+    observed_at git:06b41720646019d351672727eed7765e3ac89c58
+    about "akr"
+    author "codex"
+    created_at 2026-10-14
+}
+
+record akr.papercut.a-broad-context-bundle-exceeded-tool-output/2 : papercut {
+    title "A broad context bundle exceeded tool output limits; budget 7000 still…"
     state verified
     statement """
         A broad context bundle exceeded tool output limits; budget 7000 still emits mandatory sections beyond the request. Captured supported context output to a temporary file and read it in sections; relevance budgeting remains tracked.
         """
     observed_at git:06b41720646019d351672727eed7765e3ac89c58
     about "akr"
+    closed_at 2026-11-04
+    supersedes [ @akr.papercut.a-broad-context-bundle-exceeded-tool-output/1 ]
     author "codex"
     created_at 2026-10-14
 }
@@ -1577,6 +1591,180 @@ record akr.papercut.collated-18-papercuts-from-kitchen-concept-lege/2 : papercut
     created_at 2026-08-07
 }
 
+record akr.papercut.collated-18-papercuts-from-kitchen-concept-lege-2/1 : papercut {
+    title "Collated 18 papercuts from Kitchen-Concept, Lege-ecosystem, SYS, liminaldoc and 1 more"
+    state superseded
+    statement """
+        Collated 18 papercuts from \\?\D:\projects on 2026-11-04 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
+
+        ## Kitchen-Concept @kitchen.papercut.the-retention-task-context-needed-3306 [about akr]
+        The retention task context needed 3306 mandatory tokens and rejected a 3000-token request. Retried with 4500 tokens.
+
+        ## Kitchen-Concept @kitchen.papercut.while-opening-the-editable-salon-price-list [about knowledge.propose]
+        While opening the editable salon price-list work item, I supplied a work slot named work; the schema correctly refused it and identified intent as the required slot. Retried using intent without any partial ledger write.
+
+        ## Kitchen-Concept @kitchen.papercut.while-recording-the-salon-vat-decision-the [about akr]
+        While recording the salon VAT decision, the first proposal rejected source role 'context'; the supported role is 'rationale', which succeeded on retry.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.a-gui-context-bundle-requested-with-2200-tokens [about akr]
+        A GUI context bundle requested with 2200 tokens failed because mandatory sections required 2744 tokens. Retried successfully at 4000; the minimum is not apparent before requesting the bundle.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.final-pdf-task-validation-reports-akr-g022-as [about akr]
+        Final PDF-task validation reports AKR-G022 as an error for the pre-existing jbig2enc-py round-trip observation: its watch targets new, uncommitted binding files outside this task. The PDF checks pass, but ledger validation requires that unrelated code to be committed before its watch matches HEAD.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.in-lege-process-akr-uses-the-parent-workspace [about akr]
+        In lege-process, AKR uses the parent workspace, which is outside the sandbox writable roots. Search returned AKR-I022 against the sandbox cache despite the full-text index; AKR writes failed until run with access to the parent workspace.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.searching-july-renderer-corpus-history-via [about akr]
+        Searching July renderer corpus history via knowledge.search (sweep-15, pdfrenderer-perf-pass2) and source_search (sweep, 19,443) found no matching registered July records despite source directories and retained dev-notes. Recovering the historical harness from non-authoritative repository source artifacts instead.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.the-running-knowledge-validate-server-rejects [about akr-mcp]
+        The running knowledge.validate server rejects OUTSTANDING-WORK.md as an unknown generated view after the updated CLI generates it successfully. The server is still on the older schema/binary; use the current CLI akr check until that MCP process is restarted.
+
+        ## SYS @saveyourskin.papercut.claude-desktop-code-session-on-a-fresh-windows [about akr-mcp]
+        Claude desktop Code session on a fresh Windows install exposed no knowledge.* MCP tools (jev server failed to connect; .mcp.json still points at /home/dk WSL paths and has no akr-mcp entry for Windows), so the whole pass went through the akr CLI; akr itself reported no git repository until git was on PATH.
+
+        ## SYS @saveyourskin.papercut.proposing-a-decision-with-two-scope-paths-scope [about akr]
+        Proposing a decision with two scope paths: `scope path a, path b` (the form `akr get` prints), two `scope` lines, and `scope path a path b` are all refused, and `akr explain scope` knows no such rule, so the record landed with one path and the second named in prose. The slot-list grammar for repeated scope entries is not discoverable from the CLI.
+
+        ## SYS @saveyourskin.papercut.proposing-a-record-whose-last-key-segment [about akr propose]
+        Proposing a record whose last key segment starts with a digit (evidence.9-20-advice-pdf-...) fails with AKR-C004 only after the slot fragment is built; the key rule (segments may not start with a digit) is not stated in akr propose --help, and each akr propose reloads the whole 3,000-record ledger (about 7 s), so a 150-record reconciliation pass needs a batch propose like evidence add-many.
+
+        ## SYS @saveyourskin.papercut.registering-a-docx-and-a-pdf-with-akr-source [about akr source add]
+        Registering a .docx and a .pdf with akr source add stored the raw zip and PDF bytes as sources/external/*.md (docs-dukes-table-recipe-and-scope-brief-docx and -pdf, docs-dukestable-rtf is raw RTF), so akr source search and get return binary noise; the add command should refuse or convert non-text input, and the catalog media_type says text/markdown regardless.
+
+        ## liminaldoc @docwrite.papercut.creating-writer-baseline-records-failed-because [about akr]
+        Creating writer baseline records failed because propose accepts claims but requirement/work additionally require statement/intent slots; retried with the required slots. The failed requirement also made the first dependent work proposal fail.
+
+        ## liminaldoc @docwrite.papercut.the-context-cli-rejected-a-positional-key-it [about akr]
+        The context CLI rejected a positional key; it requires --goal, unlike the brief mapping in the project instructions.
+
+        ## liminaldoc @docwrite.papercut.while-rereading-writer-context-tried-akr [about akr]
+        While rereading writer context, tried `akr context KEY --paths ... --budget ...` but the CLI requires --goal. Used the MCP context tool instead.
+
+        ## liminalkit @pixelkit.papercut.closing-a-papercut-through-knowledge-revise [about akr]
+        Closing a papercut through knowledge.revise with slots.closed_at = "2026-11-03" was rejected with AKR-T013 "expected a date, found \"2026-11-03\"" even though the schema advertises closed_at as date (YYYY-MM-DD); the MCP layer seems to pass the string where the parser wants a bare date literal. Left the papercut open.
+
+        ## liminalkit @pixelkit.papercut.creating-the-interaction-lifecycle-work-record [about akr]
+        Creating the interaction-lifecycle work record failed validation because work requires an intent slot; knowledge.propose exposes slots only as an untyped object. Retrying after consulting akr explain work.
+
+        ## liminalkit @pixelkit.papercut.during-an-interaction-state-audit-knowledge [about akr]
+        During an interaction-state audit, knowledge.start returned only the unrelated raster SIMD proposal and recommended it as context. That bundle had no in-scope guidance; an explicit no-relevant-plan result would avoid treating the sole candidate as meaningful.
+        """
+    observed_at git:76c6ca5d88c4e00e155b31fc5888ef25374fcbd2
+    about "akr"
+    collated [
+        "kitchen.papercut.the-retention-task-context-needed-3306",
+        "kitchen.papercut.while-opening-the-editable-salon-price-list",
+        "kitchen.papercut.while-recording-the-salon-vat-decision-the",
+        "lege-ecosystem.papercut.a-gui-context-bundle-requested-with-2200-tokens",
+        "lege-ecosystem.papercut.final-pdf-task-validation-reports-akr-g022-as",
+        "lege-ecosystem.papercut.in-lege-process-akr-uses-the-parent-workspace",
+        "lege-ecosystem.papercut.searching-july-renderer-corpus-history-via",
+        "lege-ecosystem.papercut.the-running-knowledge-validate-server-rejects",
+        "saveyourskin.papercut.claude-desktop-code-session-on-a-fresh-windows",
+        "saveyourskin.papercut.proposing-a-decision-with-two-scope-paths-scope",
+        "saveyourskin.papercut.proposing-a-record-whose-last-key-segment",
+        "saveyourskin.papercut.registering-a-docx-and-a-pdf-with-akr-source",
+        "docwrite.papercut.creating-writer-baseline-records-failed-because",
+        "docwrite.papercut.the-context-cli-rejected-a-positional-key-it",
+        "docwrite.papercut.while-rereading-writer-context-tried-akr",
+        "pixelkit.papercut.closing-a-papercut-through-knowledge-revise",
+        "pixelkit.papercut.creating-the-interaction-lifecycle-work-record",
+        "pixelkit.papercut.during-an-interaction-state-audit-knowledge"
+    ]
+    author "dk"
+    created_at 2026-11-04
+}
+
+record akr.papercut.collated-18-papercuts-from-kitchen-concept-lege-2/2 : papercut {
+    title "Collated 18 papercuts from Kitchen-Concept, Lege-ecosystem, SYS, liminaldoc and 1 more"
+    state verified
+    statement """
+        Collated 18 papercuts from \\?\D:\projects on 2026-11-04 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
+
+        ## Kitchen-Concept @kitchen.papercut.the-retention-task-context-needed-3306 [about akr]
+        The retention task context needed 3306 mandatory tokens and rejected a 3000-token request. Retried with 4500 tokens.
+
+        ## Kitchen-Concept @kitchen.papercut.while-opening-the-editable-salon-price-list [about knowledge.propose]
+        While opening the editable salon price-list work item, I supplied a work slot named work; the schema correctly refused it and identified intent as the required slot. Retried using intent without any partial ledger write.
+
+        ## Kitchen-Concept @kitchen.papercut.while-recording-the-salon-vat-decision-the [about akr]
+        While recording the salon VAT decision, the first proposal rejected source role 'context'; the supported role is 'rationale', which succeeded on retry.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.a-gui-context-bundle-requested-with-2200-tokens [about akr]
+        A GUI context bundle requested with 2200 tokens failed because mandatory sections required 2744 tokens. Retried successfully at 4000; the minimum is not apparent before requesting the bundle.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.final-pdf-task-validation-reports-akr-g022-as [about akr]
+        Final PDF-task validation reports AKR-G022 as an error for the pre-existing jbig2enc-py round-trip observation: its watch targets new, uncommitted binding files outside this task. The PDF checks pass, but ledger validation requires that unrelated code to be committed before its watch matches HEAD.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.in-lege-process-akr-uses-the-parent-workspace [about akr]
+        In lege-process, AKR uses the parent workspace, which is outside the sandbox writable roots. Search returned AKR-I022 against the sandbox cache despite the full-text index; AKR writes failed until run with access to the parent workspace.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.searching-july-renderer-corpus-history-via [about akr]
+        Searching July renderer corpus history via knowledge.search (sweep-15, pdfrenderer-perf-pass2) and source_search (sweep, 19,443) found no matching registered July records despite source directories and retained dev-notes. Recovering the historical harness from non-authoritative repository source artifacts instead.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.the-running-knowledge-validate-server-rejects [about akr-mcp]
+        The running knowledge.validate server rejects OUTSTANDING-WORK.md as an unknown generated view after the updated CLI generates it successfully. The server is still on the older schema/binary; use the current CLI akr check until that MCP process is restarted.
+
+        ## SYS @saveyourskin.papercut.claude-desktop-code-session-on-a-fresh-windows [about akr-mcp]
+        Claude desktop Code session on a fresh Windows install exposed no knowledge.* MCP tools (jev server failed to connect; .mcp.json still points at /home/dk WSL paths and has no akr-mcp entry for Windows), so the whole pass went through the akr CLI; akr itself reported no git repository until git was on PATH.
+
+        ## SYS @saveyourskin.papercut.proposing-a-decision-with-two-scope-paths-scope [about akr]
+        Proposing a decision with two scope paths: `scope path a, path b` (the form `akr get` prints), two `scope` lines, and `scope path a path b` are all refused, and `akr explain scope` knows no such rule, so the record landed with one path and the second named in prose. The slot-list grammar for repeated scope entries is not discoverable from the CLI.
+
+        ## SYS @saveyourskin.papercut.proposing-a-record-whose-last-key-segment [about akr propose]
+        Proposing a record whose last key segment starts with a digit (evidence.9-20-advice-pdf-...) fails with AKR-C004 only after the slot fragment is built; the key rule (segments may not start with a digit) is not stated in akr propose --help, and each akr propose reloads the whole 3,000-record ledger (about 7 s), so a 150-record reconciliation pass needs a batch propose like evidence add-many.
+
+        ## SYS @saveyourskin.papercut.registering-a-docx-and-a-pdf-with-akr-source [about akr source add]
+        Registering a .docx and a .pdf with akr source add stored the raw zip and PDF bytes as sources/external/*.md (docs-dukes-table-recipe-and-scope-brief-docx and -pdf, docs-dukestable-rtf is raw RTF), so akr source search and get return binary noise; the add command should refuse or convert non-text input, and the catalog media_type says text/markdown regardless.
+
+        ## liminaldoc @docwrite.papercut.creating-writer-baseline-records-failed-because [about akr]
+        Creating writer baseline records failed because propose accepts claims but requirement/work additionally require statement/intent slots; retried with the required slots. The failed requirement also made the first dependent work proposal fail.
+
+        ## liminaldoc @docwrite.papercut.the-context-cli-rejected-a-positional-key-it [about akr]
+        The context CLI rejected a positional key; it requires --goal, unlike the brief mapping in the project instructions.
+
+        ## liminaldoc @docwrite.papercut.while-rereading-writer-context-tried-akr [about akr]
+        While rereading writer context, tried `akr context KEY --paths ... --budget ...` but the CLI requires --goal. Used the MCP context tool instead.
+
+        ## liminalkit @pixelkit.papercut.closing-a-papercut-through-knowledge-revise [about akr]
+        Closing a papercut through knowledge.revise with slots.closed_at = "2026-11-03" was rejected with AKR-T013 "expected a date, found \"2026-11-03\"" even though the schema advertises closed_at as date (YYYY-MM-DD); the MCP layer seems to pass the string where the parser wants a bare date literal. Left the papercut open.
+
+        ## liminalkit @pixelkit.papercut.creating-the-interaction-lifecycle-work-record [about akr]
+        Creating the interaction-lifecycle work record failed validation because work requires an intent slot; knowledge.propose exposes slots only as an untyped object. Retrying after consulting akr explain work.
+
+        ## liminalkit @pixelkit.papercut.during-an-interaction-state-audit-knowledge [about akr]
+        During an interaction-state audit, knowledge.start returned only the unrelated raster SIMD proposal and recommended it as context. That bundle had no in-scope guidance; an explicit no-relevant-plan result would avoid treating the sole candidate as meaningful.
+        """
+    observed_at git:76c6ca5d88c4e00e155b31fc5888ef25374fcbd2
+    about "akr"
+    collated [
+        "kitchen.papercut.the-retention-task-context-needed-3306",
+        "kitchen.papercut.while-opening-the-editable-salon-price-list",
+        "kitchen.papercut.while-recording-the-salon-vat-decision-the",
+        "lege-ecosystem.papercut.a-gui-context-bundle-requested-with-2200-tokens",
+        "lege-ecosystem.papercut.final-pdf-task-validation-reports-akr-g022-as",
+        "lege-ecosystem.papercut.in-lege-process-akr-uses-the-parent-workspace",
+        "lege-ecosystem.papercut.searching-july-renderer-corpus-history-via",
+        "lege-ecosystem.papercut.the-running-knowledge-validate-server-rejects",
+        "saveyourskin.papercut.claude-desktop-code-session-on-a-fresh-windows",
+        "saveyourskin.papercut.proposing-a-decision-with-two-scope-paths-scope",
+        "saveyourskin.papercut.proposing-a-record-whose-last-key-segment",
+        "saveyourskin.papercut.registering-a-docx-and-a-pdf-with-akr-source",
+        "docwrite.papercut.creating-writer-baseline-records-failed-because",
+        "docwrite.papercut.the-context-cli-rejected-a-positional-key-it",
+        "docwrite.papercut.while-rereading-writer-context-tried-akr",
+        "pixelkit.papercut.closing-a-papercut-through-knowledge-revise",
+        "pixelkit.papercut.creating-the-interaction-lifecycle-work-record",
+        "pixelkit.papercut.during-an-interaction-state-audit-knowledge"
+    ]
+    closed_at 2026-11-04
+    supersedes [ @akr.papercut.collated-18-papercuts-from-kitchen-concept-lege-2/1 ]
+    author "dk"
+    created_at 2026-11-04
+}
+
 record akr.papercut.collated-19-papercuts-from-evidence-intake/1 : papercut {
     title "Collated 19 papercuts from Evidence-intake-project, Lege-ecosystem, SaveYourSkin, jpegXL-rs and 1 more"
     state superseded
@@ -2771,12 +2959,26 @@ record akr.papercut.evidence-recorded-after-tests-but-before/2 : papercut {
 
 record akr.papercut.fff-grep-accepts-query-with-inline-directory/1 : papercut {
     title "FFF grep accepts query with inline directory constraints; supplying…"
+    state superseded
+    statement """
+        FFF grep accepts query with inline directory constraints; supplying pattern/path fields silently fell back to an unscoped search. Inspect the tool declaration before using filters.
+        """
+    observed_at git:06b41720646019d351672727eed7765e3ac89c58
+    about "fff"
+    author "codex"
+    created_at 2026-10-14
+}
+
+record akr.papercut.fff-grep-accepts-query-with-inline-directory/2 : papercut {
+    title "FFF grep accepts query with inline directory constraints; supplying…"
     state verified
     statement """
         FFF grep accepts query with inline directory constraints; supplying pattern/path fields silently fell back to an unscoped search. Inspect the tool declaration before using filters.
         """
     observed_at git:06b41720646019d351672727eed7765e3ac89c58
     about "fff"
+    closed_at 2026-11-04
+    supersedes [ @akr.papercut.fff-grep-accepts-query-with-inline-directory/1 ]
     author "codex"
     created_at 2026-10-14
 }
@@ -3850,12 +4052,26 @@ record akr.papercut.while-withdrawing-a-collated-master-through/2 : papercut {
 
 record akr.papercut.write-failures-report-an-os-error-without-the/1 : papercut {
     title "Write failures report an OS error without the affected path or guidance…"
+    state superseded
+    statement """
+        Write failures report an OS error without the affected path or guidance when a sandbox mounts the ledger read-only.
+        """
+    observed_at git:ea4a192f4ff4c98aaa2e4d2b1dcd0187504fef0e
+    about "akr"
+    author "codex"
+    created_at 2026-10-31
+}
+
+record akr.papercut.write-failures-report-an-os-error-without-the/2 : papercut {
+    title "Write failures report an OS error without the affected path or guidance…"
     state verified
     statement """
         Write failures report an OS error without the affected path or guidance when a sandbox mounts the ledger read-only.
         """
     observed_at git:ea4a192f4ff4c98aaa2e4d2b1dcd0187504fef0e
     about "akr"
+    closed_at 2026-11-04
+    supersedes [ @akr.papercut.write-failures-report-an-os-error-without-the/1 ]
     author "codex"
     created_at 2026-10-31
 }

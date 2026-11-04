@@ -35,6 +35,7 @@ pub fn add(
 
     let bytes = std::fs::read(path)
         .map_err(|e| EnvError::new("AKR-C042", format!("cannot read {}: {e}", path.display())))?;
+    require_text(path, &bytes)?;
     let content_hash = source::hash_bytes(&bytes);
     let byte_len = bytes.len() as u64;
 
@@ -122,6 +123,7 @@ pub fn ensure_registered(
     original: &Path,
     bytes: &[u8],
 ) -> Result<(String, bool), EnvError> {
+    require_text(original, bytes)?;
     let content_hash = source::hash_bytes(bytes);
     let byte_len = bytes.len() as u64;
     let mut catalog = source::load_catalog(workspace_root).map_err(to_env)?;
@@ -620,6 +622,7 @@ pub fn supersede(
             format!("cannot read {}: {e}", new_path.display()),
         )
     })?;
+    require_text(new_path, &bytes)?;
     let content_hash = source::hash_bytes(&bytes);
     let byte_len = bytes.len() as u64;
 
@@ -693,6 +696,42 @@ fn sanitize_id(s: &str) -> String {
         out = out.replace("--", "-");
     }
     out.trim_matches('-').to_owned()
+}
+
+/// Refuses a document the library cannot search or cite.
+///
+/// Sources are stored and catalogued as Markdown, chunked as text and cited by byte
+/// range, so a `.docx` or a PDF registered as-is is binary noise to every reader
+/// (`saveyourskin.papercut.registering-a-docx-and-a-pdf-with-akr-source`). Converting
+/// would need a dependency per format; naming the format and the remedy does not.
+fn require_text(path: &Path, bytes: &[u8]) -> Result<(), EnvError> {
+    let format = if bytes.starts_with(b"%PDF") {
+        Some("a PDF")
+    } else if bytes.starts_with(b"PK\x03\x04") {
+        Some("a zip container (.docx, .odt, .epub, ...)")
+    } else if bytes.starts_with(b"\xD0\xCF\x11\xE0") {
+        Some("an OLE document (.doc, .xls, ...)")
+    } else if bytes.starts_with(br"{\rtf") {
+        Some("RTF markup")
+    } else if std::str::from_utf8(bytes).is_err() || bytes.contains(&0) {
+        Some("not UTF-8 text")
+    } else {
+        None
+    };
+    match format {
+        None => Ok(()),
+        Some(format) => Err(EnvError::new(
+            "AKR-C004",
+            format!(
+                "{} is {format}; the source library holds text",
+                path.display()
+            ),
+        )
+        .help(
+            "convert it to Markdown or plain text first (for example with pandoc or \
+             pdftotext) and register the converted file",
+        )),
+    }
 }
 
 fn derive_id(path: &Path, bytes: &[u8]) -> String {

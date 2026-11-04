@@ -848,6 +848,36 @@ record sys.papercut.collated/1 : papercut {
 }
 
 #[test]
+fn revise_closes_a_papercut_with_a_json_string_date() {
+    // JSON has no date type, so `closed_at` arrives as "2026-11-03". It used to be
+    // rendered as a quoted string and refused with AKR-T013 "expected a date".
+    let example = Example::materialise("mcp-revise-closed-at");
+    example.write_file(
+        ".akr/records/sys/papercuts.akr",
+        r#"akr 0.1
+project tandem
+
+record sys.papercut.closable/1 : papercut {
+    title "A closable report"
+    state verified
+    statement "A report that was fixed."
+    observed_at git:0123456789abcdef0123456789abcdef01234567
+}
+"#,
+    );
+
+    let (payload, is_error) = call(
+        &example,
+        "knowledge.revise",
+        r#"{"key":"sys.papercut.closable","base_rev":1,
+            "slots":{"closed_at":"2026-11-03"}}"#,
+    );
+    assert!(!is_error, "{}", error_text(&payload));
+    let written = example.read_file(".akr/records/sys/papercuts.akr");
+    assert!(written.contains("closed_at 2026-11-03"), "{written}");
+}
+
+#[test]
 fn revise_honours_an_explicit_state_on_a_sealed_head() {
     let example = Example::materialise("mcp-revise-state");
     let (payload, is_error) = call(

@@ -596,10 +596,13 @@ pub fn unmatched_watches(
                 continue; // AKR-G021 already reported it
             }
             if !listing_matches(&listing, &glob) {
+                // New, uncommitted code is its own code, because it is the one case no
+                // strict check should fail on: the watch is right, and whoever wrote the
+                // files — often another task's working tree — clears it by committing.
                 let uncommitted = changed.iter().any(|path| glob_matches(&glob, path));
                 out.push(
                     Diagnostic::warning(
-                        codes::G022,
+                        if uncommitted { codes::G027 } else { codes::G022 },
                         crate::git::V102,
                         Subject::Revision(record.id.clone()),
                         format!(
