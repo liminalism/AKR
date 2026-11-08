@@ -1542,6 +1542,54 @@ record akr.work.mcp-transport-reliability/1 : work {
     derived_from [ @akr.papercut.collated-18-papercuts-from-evidence-intake/1 ]
 }
 
+record akr.work.mcp-workspace-per-call/1 : work {
+    title "akr-mcp takes its workspace per call (D-045)"
+    state completed
+    scope [
+        path "crates/akr-cli/src/commands.rs",
+        path "crates/akr-cli/src/session.rs",
+        path "crates/akr-mcp/src/protocol.rs",
+        path "crates/akr-mcp/tests/workspace_argument.rs",
+        path "docs/07-cli.md",
+        path "docs/08-mcp.md",
+        path "docs/DECISIONS.md"
+    ]
+    intent """
+        Let akr-mcp serve a host session that starts one level above its workspaces. Every tool accepts an
+        optional `workspace` argument (the MCP spelling of `--dir`), removed before the tool runs and
+        advertised in tools/list and the handshake only when the server's own directory has no ledger;
+        AKR-C011's shared help names it beside `--dir`; `akr explain <kind>` shows how a relation is
+        written in a `--from` fragment. Recorded as D-045.
+        """
+    acceptance {
+        check rooted-server-unchanged {
+            statement """
+                A server started inside a workspace advertises exactly the input schemas `schema::input_schema` defines, and still honours an explicit `workspace`.
+                """
+            method command
+            command "cargo test -p akr-mcp --test workspace_argument"
+            verified_by [ @akr.evidence.mcp-workspace-per-call-suite/1 ]
+        }
+        check rootless-server {
+            statement """
+                A server started where there is no ledger advertises `workspace` on every tool, answers a call without it with AKR-C011 whose help names the argument and the workspaces below, and answers reads and writes that name a workspace by absolute or relative path from that workspace.
+                """
+            method command
+            command "cargo test -p akr-mcp --test workspace_argument"
+            verified_by [ @akr.evidence.mcp-workspace-per-call-suite/1 ]
+        }
+        check suite {
+            statement """
+                The workspace test suite passes apart from failures that predate the change.
+                """
+            method command
+            command "cargo test --no-fail-fast"
+            verified_by [ @akr.evidence.mcp-workspace-per-call-suite/1 ]
+        }
+    }
+    author "dk"
+}
+
 record akr.work.nested-scratch-keeps-v025/1 : work {
     title "Nested scratch keeps satisfy V-025"
     state proposed

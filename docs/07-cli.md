@@ -642,6 +642,10 @@ reproducing source.
 Needs no workspace: it reads only the compiled-in registries. Exit 0, or 2 if the
 argument is neither a registered code nor a known rule.
 
+`akr explain <kind>` prints the kind's class, lifecycle, required and optional slots, scope
+rule and relations, and a `syntax` line showing how a relation is written in a `--from`
+fragment: `<relation> [ @namespace.kind.slug/1, @namespace.kind.slug/2 ]`.
+
 ---
 
 ### `akr propose`

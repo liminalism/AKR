@@ -187,7 +187,10 @@ pub fn locate(start: &Path) -> Result<(PathBuf, PathBuf), EnvError> {
                     if more > 0 {
                         help.push_str(&format!(", and {more} more"));
                     }
-                    help.push_str(" — run `akr` from one of them, or pass `--dir`");
+                    help.push_str(
+                        " — run `akr` from one of them, or pass `--dir` (over MCP: the \
+                         `workspace` argument, D-045)",
+                    );
                     error = error.help(help);
                 }
                 return Err(error);

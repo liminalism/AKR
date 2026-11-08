@@ -689,6 +689,31 @@ record akr.decision.mcp-envelope-verified-against-real-clients/1 : decision {
         """
 }
 
+record akr.decision.mcp-takes-workspace-per-call/1 : decision {
+    title "The MCP server takes its workspace per call"
+    state active
+    scope [ path "crates/akr-mcp/**", path "docs/08-mcp.md" ]
+    decision """
+        Every akr-mcp tool accepts an optional `workspace` argument: a directory inside a workspace,
+        absolute or relative to the server's directory, resolved as `--dir` is and removed before the tool
+        runs. It is advertised (input schemas and handshake instructions) only when the server's own
+        directory is in no workspace, and honoured whenever given. Recorded as D-045.
+        """
+    context """
+        Hosts register akr-mcp once with no arguments and start it wherever a session opens. A session
+        opened in a folder of checkouts starts it above every ledger, so every call answered AKR-C011 and
+        agents fell back to the CLI (Lege-ecosystem papercut akr-mcp-resolves-its-ledger-once-from-dir-or).
+        MCP roots would report the same parent; a startup choice is what --dir already is.
+        """
+    consequences """
+        Keeps docs/08-mcp.md section 1: the argument is the MCP spelling of --dir, so `akr --dir <workspace>
+        <command>` reproduces any call, and it reaches nothing --dir could not. A server inside a workspace
+        advertises byte-identical schemas (D-034). A non-string or empty value is AKR-C004.
+        """
+    supported_by [ @akr.evidence.mcp-workspace-per-call-suite/1 ]
+    author "dk"
+}
+
 record akr.decision.one-writer-at-a-time/1 : decision {
     title "The write pipeline claims the workspace, and refuses a source that moved under it"
     state active

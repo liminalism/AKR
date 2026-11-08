@@ -3918,6 +3918,15 @@ fn explain_kind(kind: akr_core::model::Kind) -> Output {
         .map(|relation| relation.name())
         .collect::<Vec<_>>();
     text.push_str(&format!("  relations  {}\n", relations.join(", ")));
+    // How to write one. Without this line an agent learned the slot-list form by reading
+    // record files, which the workflow forbids (Lege-ecosystem papercut
+    // `akr-explain-decision-lists-relation-names`).
+    if !relations.is_empty() {
+        text.push_str(
+            "  syntax     in a `--from` fragment, `<relation> [ @namespace.kind.slug/1, \
+             @namespace.kind.slug/2 ]`; `supersedes` must name a revision (D-044)\n",
+        );
+    }
     if kind == akr_core::model::Kind::Observation {
         text.push_str(
             "  standing   verified requires provenance: `method`, a source block, or supporting evidence (V-022)\n",

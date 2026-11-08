@@ -961,6 +961,20 @@ record akr.evidence.mcp-suite-after-explain-routing-fix/1 : evidence {
     author "GitHub Uploader"
 }
 
+record akr.evidence.mcp-workspace-per-call-suite/1 : evidence {
+    title "Windows 11, Rust 1.97, uncommitted tree on 84d1359. workspace_argument: 4 passed (rootless server advertises workspace on all 39 tools; AKR-C011 help names the argument and the checkout below; absolute and relative workspace reads succeed; a papercut written through workspace lands in that ledger and nothing is written at the server root; non-string and blank values are AKR-C004; a server inside a workspace advertises schemas equal to input_schema and still honours an explicit workspace). Full suite 897 passed, 6 failed, all predating the change: knowledge_impact_and_akr_impact_agree_in_both_modes, cached_last_changes_match_the_reference_walk_across_a_rough_history and two akr-gui tests fail identically on HEAD; removing_one_untracked_declaration (compares a Windows .akr\\project.akr path to .akr/project.akr) and every_transcript_is_reproduced_by_the_binary (snapshots say tool_version 0.6.1, binary is 0.6.2) do not touch the changed code. check-design: all checks passed. Manual: akr-mcp started in D:/projects answered knowledge.search with workspace=Lege-ecosystem."
+    state verified
+    result pass
+    method command
+    observed_at git:84d13596ae22e6776e4f659685a0ae48d748907c
+    command "cargo test -p akr-mcp --test workspace_argument; cargo test --no-fail-fast; the four unexplained failures re-run on a detached worktree of HEAD 84d1359; python tools/check-design.py; manual akr-mcp from D:/projects with workspace=Lege-ecosystem"
+    artifact "crates/akr-mcp/tests/workspace_argument.rs"
+    summary """
+        Windows 11, Rust 1.97, uncommitted tree on 84d1359. workspace_argument: 4 passed (rootless server advertises workspace on all 39 tools; AKR-C011 help names the argument and the checkout below; absolute and relative workspace reads succeed; a papercut written through workspace lands in that ledger and nothing is written at the server root; non-string and blank values are AKR-C004; a server inside a workspace advertises schemas equal to input_schema and still honours an explicit workspace). Full suite 897 passed, 6 failed, all predating the change: knowledge_impact_and_akr_impact_agree_in_both_modes, cached_last_changes_match_the_reference_walk_across_a_rough_history and two akr-gui tests fail identically on HEAD; removing_one_untracked_declaration (compares a Windows .akr\project.akr path to .akr/project.akr) and every_transcript_is_reproduced_by_the_binary (snapshots say tool_version 0.6.1, binary is 0.6.2) do not touch the changed code. check-design: all checks passed. Manual: akr-mcp started in D:/projects answered knowledge.search with workspace=Lege-ecosystem.
+        """
+    author "dk"
+}
+
 record akr.evidence.non-fts-start-recovery-suite/1 : evidence {
     title "Both non-FTS knowledge.start recovery tests passed, including explicit user-supplied plan paths."
     state verified
