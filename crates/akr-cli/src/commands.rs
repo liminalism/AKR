@@ -3204,9 +3204,36 @@ fn finish_start(
                 }
             }
         }
-        if results.len() == 1
-            && let Some(goal) = results[0].get("key").and_then(Value::as_str)
-        {
+        let lone = (results.len() == 1)
+            .then(|| results[0].get("key").and_then(Value::as_str))
+            .flatten();
+        let weak = lone.is_some_and(|goal| {
+            let title = results[0]
+                .get("title")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            !names_the_task(task, &format!("{goal} {title}"))
+        });
+        if weak {
+            output.text.push_str(
+                "\nThe only candidate shares fewer than two of the task's words in its key and\n\
+                 title, so it is listed, not recommended. Confirm it governs this task before\n\
+                 reading its context; otherwise treat this as no planning match.\n",
+            );
+            fields.push((
+                "coverage".into(),
+                Value::object(vec![
+                    ("status", Value::string("weak_match")),
+                    (
+                        "message",
+                        Value::string(
+                            "The only planning candidate matched on few task words; it is not recommended as this task's context.",
+                        ),
+                    ),
+                ]),
+            ));
+        }
+        if let Some(goal) = lone.filter(|_| !weak) {
             let mut arguments = vec![("goal".into(), Value::string(goal.to_owned()))];
             if !paths.is_empty() {
                 arguments.push((
@@ -3238,6 +3265,38 @@ fn finish_start(
     }
     output.text = format!("{}{}", handoff.text, output.text);
     output
+}
+
+/// Whether a lone planning hit names the task, rather than sharing one stray word with it.
+///
+/// Search joins the task's words with OR, so a single generic word ("state", "audit")
+/// is enough to return a record, and a lone result used to be recommended as the task's
+/// context on that alone — an interaction-state audit was pointed at a raster SIMD
+/// proposal (`pixelkit.papercut.during-an-interaction-state-audit-knowledge`). Two
+/// shared words, or the only one a one-word task has, is the bar for a recommendation.
+fn names_the_task(task: &str, label: &str) -> bool {
+    const STOP: &[&str] = &["the", "and", "for", "with", "from", "into", "this", "that"];
+    let words = |text: &str| -> Vec<String> {
+        text.split(|c: char| !c.is_alphanumeric())
+            .map(str::to_lowercase)
+            .filter(|word| word.len() >= 3 && !STOP.contains(&word.as_str()))
+            .collect()
+    };
+    let mut terms = words(task);
+    terms.sort();
+    terms.dedup();
+    let label = words(label);
+    let shared = terms
+        .iter()
+        .filter(|term| {
+            label.iter().any(|word| {
+                word == *term
+                    || (word.len().min(term.len()) >= 4
+                        && (word.starts_with(term.as_str()) || term.starts_with(word.as_str())))
+            })
+        })
+        .count();
+    shared >= terms.len().min(2)
 }
 
 /// The line `akr start` prints when a handoff session is open.
@@ -3585,7 +3644,7 @@ fn context(
             akr_core::context::ContextError::BadPath { .. } => "AKR-X011",
             akr_core::context::ContextError::BudgetTooSmall { required, .. } => {
                 return EnvError::new("AKR-X021", error.to_string()).help(format!(
-                    "retry with budget_tokens >= {required}, or narrow --paths; the mandatory graph and acceptance sections cannot be truncated"
+                    "retry with --budget (budget_tokens over MCP) >= {required}, or narrow --paths; the mandatory graph and acceptance sections cannot be truncated"
                 ));
             }
         };
@@ -3859,6 +3918,15 @@ fn explain_kind(kind: akr_core::model::Kind) -> Output {
         .map(|relation| relation.name())
         .collect::<Vec<_>>();
     text.push_str(&format!("  relations  {}\n", relations.join(", ")));
+    // How to write one. Without this line an agent learned the slot-list form by reading
+    // record files, which the workflow forbids (Lege-ecosystem papercut
+    // `akr-explain-decision-lists-relation-names`).
+    if !relations.is_empty() {
+        text.push_str(
+            "  syntax     in a `--from` fragment, `<relation> [ @namespace.kind.slug/1, \
+             @namespace.kind.slug/2 ]`; `supersedes` must name a revision (D-044)\n",
+        );
+    }
     if kind == akr_core::model::Kind::Observation {
         text.push_str(
             "  standing   verified requires provenance: `method`, a source block, or supporting evidence (V-022)\n",

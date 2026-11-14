@@ -101,7 +101,9 @@ expansion, no `!` negation, no backslashes. A glob outside the subset is `AKR-G0
 Matching is literal path matching against the paths a commit touched — added, modified,
 deleted, or renamed at either end. A glob that matches no path at HEAD is `AKR-G022`, a
 warning, because a watch that can never fire is silent rot: the record looks guarded and
-is not.
+is not. When the glob does match new, uncommitted paths in the working tree it is
+`AKR-G027` instead: the watch is right and fires once they are committed, so strict
+validation does not promote it.
 
 Path scope uses the same glob subset and tracked-path check. An unmatched scope glob is
 `AKR-G023`, also a warning: it usually means a copied rendered `path ` prefix, a typo, or
@@ -456,7 +458,7 @@ that nobody is misled by a clean queue on a dirty tree.
 | Rule | Statement | Codes |
 | --- | --- | --- |
 | **V-101** | Every `observed_at` and `as_of` commit exists in the repository, and is an ancestor of the resolved commit. | `AKR-G011` (error), `AKR-G012` (warning) |
-| **V-102** | Every `watches` and path-scope glob is within the D-008 subset and matches at least one path at the resolved commit. | `AKR-G021` (error), `AKR-G022`, `AKR-G023` (warnings) |
+| **V-102** | Every `watches` and path-scope glob is within the D-008 subset and matches at least one path at the resolved commit. | `AKR-G021` (error), `AKR-G022`, `AKR-G023`, `AKR-G027` (warnings) |
 | **V-103** | `review_after` is not earlier than `created_at`. | `AKR-G031` (warning) |
 | **V-104** | Under `akr check --review-clean`, the review queue is empty. | `AKR-G041` (error) |
 

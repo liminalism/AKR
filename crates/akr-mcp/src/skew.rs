@@ -20,7 +20,8 @@
 //! behind, and saying which turns a mystifying type error into a one-line remedy.
 
 use akr_core::json::Value;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 /// The vocabulary version this binary was built against.
 pub const SERVER_VOCABULARY: &str = akr_cli::session::VOCABULARY_VERSION;
@@ -100,9 +101,88 @@ fn vocabulary_of(lock: &str) -> Option<String> {
     None
 }
 
+/// The executable this server started from, as it was when it started.
+///
+/// A vocabulary skew is only one way a running server falls behind. A release that adds
+/// a generated view without touching the vocabulary leaves the lock agreeing with a
+/// server that still rejects the new view as unknown
+/// (`lege-ecosystem.papercut.the-running-knowledge-validate-server-rejects`), so the
+/// other half of the question is asked of the binary itself: has the file this process
+/// was loaded from been replaced since?
+#[derive(Debug, Clone)]
+pub struct Executable {
+    path: PathBuf,
+    modified: Option<SystemTime>,
+}
+
+impl Executable {
+    /// The running executable, or `None` when the platform cannot say where it is.
+    #[must_use]
+    pub fn current() -> Option<Self> {
+        Self::at(std::env::current_exe().ok()?)
+    }
+
+    /// The executable at `path`, as it is now.
+    #[must_use]
+    pub fn at(path: PathBuf) -> Option<Self> {
+        let modified = std::fs::metadata(&path).ok()?.modified().ok();
+        Some(Self { path, modified })
+    }
+
+    /// The `AKR-X043` diagnostic when the file has been replaced or removed since
+    /// [`Executable::current`] looked at it.
+    #[must_use]
+    pub fn replaced(&self) -> Option<Value> {
+        let now = std::fs::metadata(&self.path)
+            .ok()
+            .and_then(|metadata| metadata.modified().ok());
+        if now.is_some() && now == self.modified {
+            return None;
+        }
+        Some(Value::object(vec![
+            ("code", Value::string("AKR-X043")),
+            ("severity", Value::string("warning")),
+            (
+                "message",
+                Value::string(format!(
+                    "{} was replaced after this akr-mcp started; this process is still the                      old binary, so a refusal here may be one the current release does not                      make. RECONNECT the MCP server, or run the same command with the akr CLI.",
+                    self.path.display()
+                )),
+            ),
+            (
+                "help",
+                Value::string("a running MCP process keeps the binary it started with"),
+            ),
+        ]))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_replaced_executable_is_reported_and_an_untouched_one_is_not() {
+        let path = std::env::temp_dir().join(format!("akr-mcp-skew-{}", std::process::id()));
+        std::fs::write(&path, b"old").unwrap();
+        let earlier = SystemTime::now() - std::time::Duration::from_secs(3600);
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(earlier)
+            .unwrap();
+        let started = Executable::at(path.clone()).unwrap();
+        assert!(started.replaced().is_none());
+        std::fs::write(&path, b"new").unwrap();
+        let diagnostic = started.replaced().expect("a rewritten binary is reported");
+        assert_eq!(
+            diagnostic.get("code").and_then(Value::as_str),
+            Some("AKR-X043")
+        );
+        std::fs::remove_file(&path).unwrap();
+        assert!(started.replaced().is_some(), "a removed binary is reported");
+    }
 
     const LOCK: &str = "akr-lock 0.1\nproject akr\n\nbuild {\n    tool \"akr 0.1.0\"\n    \
                         grammar \"0.1\"\n    vocabulary \"0.9\"\n}\n";

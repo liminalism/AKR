@@ -961,6 +961,20 @@ record akr.evidence.mcp-suite-after-explain-routing-fix/1 : evidence {
     author "GitHub Uploader"
 }
 
+record akr.evidence.mcp-workspace-per-call-suite/1 : evidence {
+    title "Windows 11, Rust 1.97, uncommitted tree on 84d1359. workspace_argument: 4 passed (rootless server advertises workspace on all 39 tools; AKR-C011 help names the argument and the checkout below; absolute and relative workspace reads succeed; a papercut written through workspace lands in that ledger and nothing is written at the server root; non-string and blank values are AKR-C004; a server inside a workspace advertises schemas equal to input_schema and still honours an explicit workspace). Full suite 897 passed, 6 failed, all predating the change: knowledge_impact_and_akr_impact_agree_in_both_modes, cached_last_changes_match_the_reference_walk_across_a_rough_history and two akr-gui tests fail identically on HEAD; removing_one_untracked_declaration (compares a Windows .akr\\project.akr path to .akr/project.akr) and every_transcript_is_reproduced_by_the_binary (snapshots say tool_version 0.6.1, binary is 0.6.2) do not touch the changed code. check-design: all checks passed. Manual: akr-mcp started in D:/projects answered knowledge.search with workspace=Lege-ecosystem."
+    state verified
+    result pass
+    method command
+    observed_at git:84d13596ae22e6776e4f659685a0ae48d748907c
+    command "cargo test -p akr-mcp --test workspace_argument; cargo test --no-fail-fast; the four unexplained failures re-run on a detached worktree of HEAD 84d1359; python tools/check-design.py; manual akr-mcp from D:/projects with workspace=Lege-ecosystem"
+    artifact "crates/akr-mcp/tests/workspace_argument.rs"
+    summary """
+        Windows 11, Rust 1.97, uncommitted tree on 84d1359. workspace_argument: 4 passed (rootless server advertises workspace on all 39 tools; AKR-C011 help names the argument and the checkout below; absolute and relative workspace reads succeed; a papercut written through workspace lands in that ledger and nothing is written at the server root; non-string and blank values are AKR-C004; a server inside a workspace advertises schemas equal to input_schema and still honours an explicit workspace). Full suite 897 passed, 6 failed, all predating the change: knowledge_impact_and_akr_impact_agree_in_both_modes, cached_last_changes_match_the_reference_walk_across_a_rough_history and two akr-gui tests fail identically on HEAD; removing_one_untracked_declaration (compares a Windows .akr\project.akr path to .akr/project.akr) and every_transcript_is_reproduced_by_the_binary (snapshots say tool_version 0.6.1, binary is 0.6.2) do not touch the changed code. check-design: all checks passed. Manual: akr-mcp started in D:/projects answered knowledge.search with workspace=Lege-ecosystem.
+        """
+    author "dk"
+}
+
 record akr.evidence.non-fts-start-recovery-suite/1 : evidence {
     title "Both non-FTS knowledge.start recovery tests passed, including explicit user-supplied plan paths."
     state verified
@@ -1068,6 +1082,19 @@ record akr.evidence.papercut-reconciliation-2026-10-28/1 : evidence {
     observed_at git:1fa96ea4a7d77fbf9f05c8b12ebad033b1ea896b
     summary """
         Fixes for the 19 papercuts collated into akr.papercut.collated-19-papercuts-from-kitchen-concept-lege verified on 2026-10-28: cargo test --no-fail-fast (default features and --no-default-features), cargo clippy --all-targets and cargo fmt --check are clean, except transcripts.rs every_transcript_is_reproduced_by_the_binary, which fails only on the eighth view OUTSTANDING-WORK.md introduced by the pre-existing uncommitted backlog view work, not by these fixes. Covered: handoff --spec and shell-substitution guidance, worktree packet fallback, MCP handoff_open briefing in structuredContent, start --task, get did-you-mean, V-105 shell-quote awareness, budgeted context bound and goal body, FTS-less index rebuild, revise commit gate, uncommitted-redefinition citation verdict, one-write supersede, relation target descriptions, claim-as-slot message, empty-repo G001 hint.
+        """
+    author "dk"
+}
+
+record akr.evidence.papercut-reconciliation-2026-11-04/1 : evidence {
+    title "Fixes for the 18 papercuts collated into akr.papercut.collated-18-papercuts-from-kitchen-concept-lege-2, plus the sister reports that --paths a,b is one glob and --paths a b drops b, verified on 2026-11-04. The named suites pass, as do cargo fmt --check and cargo clippy --all-targets (two pre-existing warnings in hash and ops). The full default-feature suite fails only build_cache cached_last_changes, differential impact, config removing_one_untracked, transcripts every_transcript, and two akr-gui tests, and all six fail identically on an unmodified HEAD worktree. Covered: akr context <key> positional, MCP closed_at as a JSON date string, X021 hint names --budget, bracketed-scope help on a fragment parse failure, the segment rule in the key error and propose --help, source add refuses PDF/zip/OLE/RTF/non-UTF-8, AKR-G027 for watches over uncommitted paths exempt from strict, start withholds recommended_context from a weak lone match, AKR-X043 for a replaced akr-mcp binary, a missing git binary reported as G002 to the change protocol, comma-split --paths and a refused stray positional."
+    state verified
+    result pass
+    method command
+    observed_at git:76c6ca5d88c4e00e155b31fc5888ef25374fcbd2
+    command "cargo test -p akr-cli --test commands; cargo test -p akr-cli --test source_library binary; cargo test -p akr-core --test freshness g02; cargo test -p akr-mcp --test writes revise_; cargo test -p akr-mcp --lib skew; cargo test -p akr-cli --no-default-features --test commands start_; cargo test -p akr-cli --no-default-features --test search_degraded"
+    summary """
+        Fixes for the 18 papercuts collated into akr.papercut.collated-18-papercuts-from-kitchen-concept-lege-2, plus the sister reports that --paths a,b is one glob and --paths a b drops b, verified on 2026-11-04. The named suites pass, as do cargo fmt --check and cargo clippy --all-targets (two pre-existing warnings in hash and ops). The full default-feature suite fails only build_cache cached_last_changes, differential impact, config removing_one_untracked, transcripts every_transcript, and two akr-gui tests, and all six fail identically on an unmodified HEAD worktree. Covered: akr context <key> positional, MCP closed_at as a JSON date string, X021 hint names --budget, bracketed-scope help on a fragment parse failure, the segment rule in the key error and propose --help, source add refuses PDF/zip/OLE/RTF/non-UTF-8, AKR-G027 for watches over uncommitted paths exempt from strict, start withholds recommended_context from a weak lone match, AKR-X043 for a replaced akr-mcp binary, a missing git binary reported as G002 to the change protocol, comma-split --paths and a refused stray positional.
         """
     author "dk"
 }

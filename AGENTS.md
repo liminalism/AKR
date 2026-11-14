@@ -18,7 +18,7 @@ shell:
 
 | MCP tool | Command line |
 | --- | --- |
-| `knowledge.context` | `akr context --goal <key> [--paths <glob>...]` |
+| `knowledge.context` | `akr context <key> [--paths <glob>...]` |
 | `knowledge.start` | `akr start "<task>" [--paths <glob>...]` |
 | `knowledge.get` / `knowledge.search` | `akr get <ref>` / `akr search <query>` |
 | `knowledge.explain` / `knowledge.impact` | `akr explain <subject>` / `akr impact <ref>` |

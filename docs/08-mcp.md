@@ -20,6 +20,19 @@ CLI uses. It runs in the workspace, over stdio, with no network and no state:
                                     └────> .akr/cache/index.sqlite (private)
 ```
 
+**Workspace (D-045).** The server opens the ledger at `--dir` or, without it, at its
+working directory, walking up as the command line does. A host session commonly starts
+one level *above* its checkouts (a folder holding several repositories), where there is
+no ledger and every call would answer `AKR-C011`. Every tool therefore accepts an
+optional `workspace` argument: a directory inside a workspace, absolute or relative to
+the server's directory. It is the MCP spelling of the command line's `--dir`, so a call
+that uses it is reproduced by `akr --dir <workspace> <command>`, and it reaches nothing
+`--dir` could not. The argument is honoured on every call, but advertised in
+`tools/list` — and named in the handshake instructions — only when the server's own
+directory has no ledger, so a server started inside a workspace publishes exactly the
+schemas it always did and pays no schema cost for a parameter it never needs (D-034). A
+non-string or empty `workspace` is `AKR-C004`. The tool never sees the argument.
+
 **Tool names.** The catalogue names in §2 (`knowledge.search`, …) are the contract.
 `tools/call` accepts those names and the underscored form (`knowledge_search`) that
 hosts whose tool-name regex forbids `.` require. Grok Build 1.0.25 is one: it

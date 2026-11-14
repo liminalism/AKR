@@ -77,6 +77,11 @@ pub struct Server {
     /// Set by `--tool-names underscore` or when `initialize` names a host that
     /// drops dotted MCP tool names (Grok Build 1.0.25).
     host_safe_tool_names: AtomicBool,
+    /// The binary this process was loaded from, to notice it being replaced.
+    executable: Option<crate::skew::Executable>,
+    /// The root is not inside any workspace (`AKR-C011`), so every tool takes and
+    /// advertises the optional `workspace` argument (D-045).
+    rootless: bool,
 }
 
 /// Which half of the tool catalogue this server exposes.
@@ -118,11 +123,18 @@ impl Server {
     /// A server for the workspace at `root`, exposing every tool.
     #[must_use]
     pub fn new(root: impl Into<PathBuf>) -> Self {
+        let root = root.into();
+        let rootless = matches!(
+            akr_cli::session::locate(&root),
+            Err(error) if error.code == "AKR-C011"
+        );
         Self {
-            root: root.into(),
+            root,
             surface: Surface::Full,
             accounting: None,
             host_safe_tool_names: AtomicBool::new(false),
+            executable: crate::skew::Executable::current(),
+            rootless,
         }
     }
 
@@ -216,6 +228,17 @@ impl Server {
         } else {
             ("knowledge.context", "knowledge.validate")
         };
+        if self.rootless {
+            return Value::string(format!(
+                "No AKR ledger at {}; the workspaces are below it. Pass `workspace` (a \
+                 workspace directory, absolute or relative to that directory) with every \
+                 call. Call {context} before touching code, and {validate} before handing \
+                 work back.",
+                std::path::absolute(&self.root)
+                    .unwrap_or_else(|_| self.root.clone())
+                    .display()
+            ));
+        }
         Value::string(format!(
             "AKR knowledge ledger at {}. Call {context} before touching \
              code, and {validate} before handing work back.",
@@ -304,10 +327,15 @@ impl Server {
                             fields.push(("title", Value::string(tool.name)));
                         }
                         fields.extend([
-                            (
-                                "inputSchema",
-                                input_schema(tool.name).unwrap_or(Value::Object(Vec::new())),
-                            ),
+                            ("inputSchema", {
+                                let schema =
+                                    input_schema(tool.name).unwrap_or(Value::Object(Vec::new()));
+                                if self.rootless {
+                                    with_workspace_argument(schema)
+                                } else {
+                                    schema
+                                }
+                            }),
                             (
                                 "outputSchema",
                                 output_schema(tool.name).unwrap_or(Value::Object(Vec::new())),
@@ -343,7 +371,15 @@ impl Server {
             .unwrap_or(Value::Object(Vec::new()));
 
         let started = std::time::Instant::now();
-        let outcome = guarded_tool_call(|| tools::call(&self.root, name, &arguments));
+        // `workspace` picks the ledger for this call (D-045), the MCP spelling of the
+        // command line's `--dir`; the tools never see it.
+        let (root, outcome) = match workspace_root(&self.root, &arguments) {
+            Ok((root, tool_arguments)) => {
+                let outcome = guarded_tool_call(|| tools::call(&root, name, &tool_arguments));
+                (root, outcome)
+            }
+            Err(error) => (self.root.clone(), Err(error)),
+        };
         let (text, structured, is_error) = match outcome {
             Ok(payload) => {
                 // Start and context assemble to their own budget. When the caller omits
@@ -375,8 +411,15 @@ impl Server {
                 // A failing call is where an agent meets a stale server, and a type error
                 // about a slot it never wrote is the least explicable thing the surface
                 // can say. Naming the skew here turns it into a one-line remedy.
-                if let Some(skew) = crate::skew::detect(&self.root) {
+                if let Some(skew) = crate::skew::detect(&root) {
                     error.diagnostics.push(skew.diagnostic());
+                }
+                if let Some(replaced) = self
+                    .executable
+                    .as_ref()
+                    .and_then(crate::skew::Executable::replaced)
+                {
+                    error.diagnostics.push(replaced);
                 }
                 (None, error.to_json(), true)
             }
@@ -644,6 +687,66 @@ fn compact(value: &Value) -> String {
         .map(str::trim_start)
         .collect::<Vec<_>>()
         .join("")
+}
+
+/// Description of the optional `workspace` argument a rootless server advertises.
+const WORKSPACE_ARGUMENT: &str = "The AKR workspace for this call: a directory containing `.akr/` \
+     (or inside one), absolute or relative to the server's directory. The MCP spelling of \
+     the command line's `--dir`; needed because this server was started outside any \
+     workspace (D-045).";
+
+/// Adds the optional `workspace` property to a tool's input schema.
+fn with_workspace_argument(schema: Value) -> Value {
+    let Value::Object(mut fields) = schema else {
+        return schema;
+    };
+    let property = Value::object(vec![
+        ("type", Value::string("string")),
+        ("description", Value::string(WORKSPACE_ARGUMENT)),
+    ]);
+    match fields.iter_mut().find(|(key, _)| key == "properties") {
+        Some((_, Value::Object(properties))) => {
+            properties.push(("workspace".to_owned(), property));
+        }
+        _ => fields.push((
+            "properties".to_owned(),
+            Value::Object(vec![("workspace".to_owned(), property)]),
+        )),
+    }
+    Value::Object(fields)
+}
+
+/// The root a call runs against and the arguments the tool sees.
+///
+/// Without `workspace`, the server's own root and the arguments unchanged. With it, that
+/// directory (relative paths resolve against the server's root) and the arguments
+/// without it. Honoured whether or not the schema advertised it, so a caller that names
+/// its workspace explicitly is never refused for doing so.
+fn workspace_root(root: &Path, arguments: &Value) -> Result<(PathBuf, Value), ToolError> {
+    let Value::Object(fields) = arguments else {
+        return Ok((root.to_path_buf(), arguments.clone()));
+    };
+    let Some((_, value)) = fields.iter().find(|(key, _)| key == "workspace") else {
+        return Ok((root.to_path_buf(), arguments.clone()));
+    };
+    let Some(path) = value.as_str().filter(|path| !path.trim().is_empty()) else {
+        return Err(ToolError::new(
+            "AKR-C004",
+            "`workspace`: expected a non-empty directory path",
+        ));
+    };
+    let path = Path::new(path);
+    let resolved = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        root.join(path)
+    };
+    let rest = fields
+        .iter()
+        .filter(|(key, _)| key != "workspace")
+        .cloned()
+        .collect();
+    Ok((resolved, Value::Object(rest)))
 }
 
 #[cfg(test)]

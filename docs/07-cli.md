@@ -535,12 +535,13 @@ words do not swamp more specific intake material.
 ### `akr context`
 
 ```
-akr context --goal <key> [--paths <glob> ...] [--budget <tokens>]
+akr context <key> | --goal <key> [--paths <glob> ...] [--budget <tokens>]
             [--format text|json]
 ```
 
 Assembles the deterministic context bundle specified in
-[`09-context-assembly.md`](09-context-assembly.md). The `--goal` must be a live
+[`09-context-assembly.md`](09-context-assembly.md). The goal — positional, or `--goal`
+as `knowledge.context` names it; both at once is `AKR-C005` — must be a live
 `milestone`, `work` or `track` record: unresolvable is `AKR-X001`, terminal is
 `AKR-X002`, wrong kind is `AKR-X003`. A pin to the current head is normalized; an older
 pin is `AKR-X004`, and an anchored reference is `AKR-X005`, both with retrieval guidance.
@@ -640,6 +641,10 @@ reproducing source.
 
 Needs no workspace: it reads only the compiled-in registries. Exit 0, or 2 if the
 argument is neither a registered code nor a known rule.
+
+`akr explain <kind>` prints the kind's class, lifecycle, required and optional slots, scope
+rule and relations, and a `syntax` line showing how a relation is written in a `--from`
+fragment: `<relation> [ @namespace.kind.slug/1, @namespace.kind.slug/2 ]`.
 
 ---
 

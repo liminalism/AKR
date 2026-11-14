@@ -679,7 +679,7 @@ pub fn note_unmatched_watches(
     };
     for diagnostic in diagnostics
         .iter()
-        .filter(|d| d.code == akr_core::git::codes::G022)
+        .filter(|d| [akr_core::git::codes::G022, akr_core::git::codes::G027].contains(&d.code))
     {
         let help = diagnostic
             .help
@@ -1346,15 +1346,24 @@ fn body_from(
     let display_path = path.to_string_lossy().into_owned();
     let file = sources.add(&display_path, &text);
     let parsed = akr_core::syntax::parse(&text, file);
+    // `akr get` prints scope as `path "a", path "b"`, and that is the form people copy;
+    // unbracketed, the parser takes one term and stops at the comma.
+    let bare_scope = text.lines().map(str::trim).any(|line| {
+        line.strip_prefix("scope")
+            .is_some_and(|rest| rest.starts_with(char::is_whitespace) && !rest.contains('['))
+    });
     let refuse = |message: String| {
         EnvError::new(
             "AKR-C031",
             format!("{} does not parse as a record: {message}", path.display()),
         )
-        .help(
+        .help(if bare_scope {
+            "scope is a bracketed list: `scope [ path \"a/**\", path \"b/**\" ]`; `akr get` \
+             prints it without the brackets"
+        } else {
             "pass an AKR slot-list (`intent \"\"\" ... \"\"\"` for work, `statement \"\"\" \
-             ... \"\"\"` for most other kinds), not YAML or Markdown",
-        )
+             ... \"\"\"` for most other kinds), not YAML or Markdown"
+        })
     };
     let Some(tree) = parsed.file else {
         let first = parsed

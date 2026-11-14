@@ -18,7 +18,11 @@ pub enum IdentError {
 impl fmt::Display for IdentError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::BadSegment(s) => write!(f, "{s:?} is not a valid segment"),
+            Self::BadSegment(s) => write!(
+                f,
+                "{s:?} is not a valid segment: it must start with a lowercase letter and \
+                 hold only lowercase letters, digits and single hyphens"
+            ),
             Self::BadKeyLength(n) => write!(f, "a key has 2 to 8 segments, found {n}"),
             Self::BadCommit(s) => write!(f, "{s:?} is not 40 lowercase hex digits"),
             Self::BadDate(s) => write!(f, "{s:?} is not a valid calendar date"),

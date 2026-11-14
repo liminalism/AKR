@@ -4,6 +4,8 @@ A `.akr/` directory is a typed ledger of what the project decided, observed, and
 
 If `knowledge.*` tools are missing from the MCP catalogue (Grok Build 1.0.25 drops dotted names and attaches with `tool_count: 0`; after akr-mcp 0.5 advertises `knowledge_search` etc. to Grok), use the CLI column — never hand-write `.akr` record bodies into scratch.
 
+Session opened above the projects (a folder of checkouts)? `knowledge.*` tools then take `workspace` — the project directory, e.g. `"workspace": "Lege-ecosystem"` — on every call (D-045); the CLI equivalent is `--dir`.
+
 ### Before a task
 
 - Known planning key: `knowledge.context` with that key and the `paths` you will touch.

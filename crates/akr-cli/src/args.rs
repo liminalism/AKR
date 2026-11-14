@@ -1171,8 +1171,26 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
         }
         "context" => {
             known_flags(&["--goal", "--paths", "--budget"])?;
-            let goal = option_value(tail, "--goal")
-                .ok_or_else(|| UsageError::new("AKR-C003", "context requires --goal <key>"))?;
+            // `akr context <key>` is what every other record command looks like, and
+            // agents reach for it first; the bare key is the goal, as `--goal` is.
+            let bare = values_skipped(tail, &["--goal", "--paths", "--budget"]);
+            refuse_stray_paths(&bare)?;
+            let goal = match (
+                option_value(tail, "--goal"),
+                bare.first().map(|s| (*s).clone()),
+            ) {
+                (Some(_), Some(_)) => {
+                    return Err(UsageError::new(
+                        "AKR-C005",
+                        "context takes either a positional <key> or --goal <key>, not both",
+                    ));
+                }
+                (Some(goal), None) | (None, Some(goal)) => goal,
+                (None, None) => {
+                    return Err(UsageError::new("AKR-C003", "context requires a goal key")
+                        .with_help("akr context <key> [--paths <glob>]... [--budget <tokens>]"));
+                }
+            };
             let budget = match option_value(tail, "--budget") {
                 Some(text) => Some(text.parse().map_err(|_| {
                     UsageError::new(
@@ -1184,10 +1202,7 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
             };
             Command::Context {
                 goal,
-                paths: repeated(tail, "--paths")
-                    .iter()
-                    .map(|p| Glob::new(p))
-                    .collect(),
+                paths: path_globs(tail).iter().map(|p| Glob::new(p)).collect(),
                 budget,
             }
         }
@@ -1206,6 +1221,7 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
             // from the tool catalogue reaches for it first. The bare positional stays the
             // documented form; a flag's value is never mistaken for it.
             let bare = values_skipped(tail, &["--paths", "--budget", "--task"]);
+            refuse_stray_paths(&bare)?;
             let task = match (
                 option_value(tail, "--task"),
                 bare.first().map(|s| (*s).clone()),
@@ -1227,7 +1243,7 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
             };
             Command::Start {
                 task,
-                paths: repeated(tail, "--paths")
+                paths: path_globs(tail)
                     .iter()
                     .map(|path| Glob::new(path))
                     .collect(),
@@ -2446,6 +2462,33 @@ fn values_skipped<'a>(tail: &'a [String], value_flags: &[&str]) -> Vec<&'a Strin
 }
 
 /// Every value of a repeatable flag, in order.
+/// `--paths a b` takes `a` and leaves `b` as a second positional, which used to be
+/// dropped without a word. One positional is the most either command takes.
+fn refuse_stray_paths(bare: &[&String]) -> Result<(), UsageError> {
+    match bare.get(1) {
+        None => Ok(()),
+        Some(extra) => Err(
+            UsageError::new("AKR-C002", format!("unexpected argument {extra:?}"))
+                .with_help("give each path its own --paths, or separate them with commas"),
+        ),
+    }
+}
+
+/// Every `--paths` value, with comma-separated lists split.
+///
+/// A comma cannot occur in a glob of the D-008 subset, so `--paths a/**,b/**` can only
+/// mean two globs; taken whole it matched nothing, and the bundle silently left both
+/// paths out.
+fn path_globs(tail: &[String]) -> Vec<String> {
+    repeated(tail, "--paths")
+        .iter()
+        .flat_map(|value| value.split(','))
+        .map(str::trim)
+        .filter(|glob| !glob.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
 fn repeated(tail: &[String], flag: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut args = tail.iter();
@@ -2729,12 +2772,13 @@ pub fn help_for(name: &str) -> Option<String> {
              \x20   --limit <n>        maximum results\n"
         }
         "context" => {
-            "akr context --goal <key> [--paths <glob> ...] [--budget <tokens>]\n\
+            "akr context <key> | --goal <key> [--paths <glob> ...] [--budget <tokens>]\n\
              \n\
              Assembles the deterministic context bundle an agent reads before working.\n\
+             <key> is a live milestone, work or track record.\n\
              \n\
              FLAGS\n\
-             \x20   --goal <key>        required; a live milestone, work or track record\n\
+             \x20   --goal <key>        the goal, as knowledge.context names it; instead of <key>\n\
              \x20   --paths <glob>      path globs the work will touch; repeatable\n\
              \x20   --budget <tokens>   approximate token ceiling for the bundle\n"
         }
@@ -2929,7 +2973,9 @@ pub fn help_for(name: &str) -> Option<String> {
              key is an error: use `akr revise`.\n\
              \n\
              <key> is dot-delimited: namespace.topic.slug — the first segment must be a\n\
-             namespace declared in .akr/project.akr.\n\
+             namespace declared in .akr/project.akr. Every segment starts with a\n\
+             lowercase letter and holds only lowercase letters, digits and single\n\
+             hyphens: `evidence.sept-20-advice`, not `evidence.9-20-advice`.\n\
              \n\
              --from accepts an AKR slot-list fragment, not YAML, Markdown, or an\n\
              unlabelled prose paragraph. A work record looks like:\n\
@@ -2937,10 +2983,12 @@ pub fn help_for(name: &str) -> Option<String> {
              \x20   intent \"\"\"\n\
              \x20       The work is to ...\n\
              \x20   \"\"\"\n\
+             \x20   scope [ path \"src/a/**\", path \"src/b/**\" ]\n\
              \n\
              Every kind requires its prose slot (`intent` for work, `statement` for\n\
              most others), so a propose without --from is refused. Run\n\
-             `akr explain <kind>` for the kind's required slots.\n\
+             `akr explain <kind>` for the kind's required slots. More than one scope\n\
+             term takes the brackets; `akr get` prints the list without them.\n\
              \n\
              FLAGS\n\
              \x20   --kind <kind>     one of the twelve kinds; optional when --from\n\

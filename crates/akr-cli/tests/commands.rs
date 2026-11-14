@@ -1275,6 +1275,71 @@ fn start_takes_the_task_as_a_flag_or_a_positional_but_not_both() {
 }
 
 #[test]
+fn start_recommends_a_lone_candidate_only_when_it_names_the_task() {
+    // Search ORs the task's words, so one stray word can return a single unrelated
+    // record; that alone used to be handed back as the task's recommended context.
+    let example = Example::materialise("start-weak-lone-match");
+    let strong = example.run(&["start", "projection", "--format", "json"]);
+    assert_eq!(strong.code, 0, "{}", strong.output());
+    assert!(
+        strong.stdout.contains("\"recommended_context\""),
+        "{}",
+        strong.stdout
+    );
+    let weak = example.run(&["start", "widget projection overhaul", "--format", "json"]);
+    assert_eq!(weak.code, 0, "{}", weak.output());
+    assert!(
+        weak.stdout.contains("rewrite-projection"),
+        "{}",
+        weak.stdout
+    );
+    assert!(
+        !weak.stdout.contains("\"recommended_context\""),
+        "{}",
+        weak.stdout
+    );
+    assert!(weak.stdout.contains("\"weak_match\""), "{}", weak.stdout);
+}
+
+#[test]
+fn context_takes_the_goal_as_a_positional_or_a_flag_but_not_both() {
+    // `akr context <key>` is the shape of every other record command, and the one
+    // agents kept reaching for before --goal.
+    let example = Example::materialise("context-goal-positional");
+    let flagged = example.run(&["context", "--goal", "sys.milestone.m3-playable-day"]);
+    assert_eq!(flagged.code, 0, "{}", flagged.output());
+    // A flag's value is never taken for the goal.
+    let positional = example.run(&[
+        "context",
+        "--paths",
+        "src/**",
+        "sys.milestone.m3-playable-day",
+    ]);
+    assert_eq!(positional.code, 0, "{}", positional.output());
+    let bare = example.run(&["context", "sys.milestone.m3-playable-day"]);
+    assert_eq!(flagged.stdout, bare.stdout);
+    let both = example.run(&["context", "--goal", "a.b.c", "d.e.f"]);
+    assert_eq!(both.code, 2, "{}", both.output());
+    assert!(both.output().contains("AKR-C005"), "{}", both.output());
+}
+
+#[test]
+fn paths_take_commas_and_refuse_a_second_bare_glob() {
+    // `--paths a b` used to keep `a` and drop `b` without a word; `--paths a,b` was one
+    // glob that matched nothing.
+    let example = Example::materialise("context-paths-lists");
+    let goal = "sys.milestone.m3-playable-day";
+    let separate = example.run(&["context", goal, "--paths", "sim/**", "--paths", "lege/**"]);
+    assert_eq!(separate.code, 0, "{}", separate.output());
+    let commas = example.run(&["context", goal, "--paths", "sim/**,lege/**"]);
+    assert_eq!(commas.code, 0, "{}", commas.output());
+    assert_eq!(separate.stdout, commas.stdout);
+    let stray = example.run(&["context", goal, "--paths", "sim/**", "lege/**"]);
+    assert_eq!(stray.code, 2, "{}", stray.output());
+    assert!(stray.output().contains("AKR-C002"), "{}", stray.output());
+}
+
+#[test]
 fn a_short_name_is_refused_with_the_key_it_ends() {
     let example = Example::materialise("get-did-you-mean");
     let unique = example.run(&["get", "term.renderer-boundary"]);

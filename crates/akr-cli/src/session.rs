@@ -114,6 +114,10 @@ pub struct Session {
     pub spans: SpanIndex,
     /// The repository, when one is available.
     pub repository: Option<Repository>,
+    /// Why there is no repository, when the answer was not simply "there is none": git
+    /// could not be started, say. Read commands carry on without one; commands that
+    /// need git say this instead of "not inside a repository".
+    pub git_unavailable: Option<String>,
     /// The commit the build resolved against.
     pub commit: Option<Commit>,
     /// The date `review_after` is compared against.
@@ -183,7 +187,10 @@ pub fn locate(start: &Path) -> Result<(PathBuf, PathBuf), EnvError> {
                     if more > 0 {
                         help.push_str(&format!(", and {more} more"));
                     }
-                    help.push_str(" — run `akr` from one of them, or pass `--dir`");
+                    help.push_str(
+                        " — run `akr` from one of them, or pass `--dir` (over MCP: the \
+                         `workspace` argument, D-045)",
+                    );
                     error = error.help(help);
                 }
                 return Err(error);
@@ -257,6 +264,7 @@ impl Session {
             sources: workspace.sources,
             spans: workspace.spans,
             repository: None,
+            git_unavailable: None,
             commit: None,
             today,
             global: global.clone(),
@@ -296,7 +304,11 @@ impl Session {
                     "use one `<old-commit> <replacement-commit>` pair per line; both must be full lowercase commit ids",
                 ));
             }
-            Err(_) => None,
+            Err(akr_core::git::GitError::NotARepository(_)) => None,
+            Err(error) => {
+                self.git_unavailable = Some(error.to_string());
+                None
+            }
         };
         let commit = match (&self.global.at, &repository) {
             (Some(at), Some(repository)) => {
@@ -571,7 +583,7 @@ pub fn is_fatal(diagnostic: &Diagnostic, profile: Profile) -> bool {
     // other line, a missing view — stays `AKR-E011`/`E012` and stays fatal.
     if matches!(
         diagnostic.code.as_str(),
-        "AKR-G004" | "AKR-G023" | "AKR-E015" | "AKR-E016"
+        "AKR-G004" | "AKR-G023" | "AKR-G027" | "AKR-E015" | "AKR-E016"
     ) {
         return false;
     }

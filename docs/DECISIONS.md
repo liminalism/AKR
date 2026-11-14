@@ -1945,3 +1945,53 @@ written. Either can occur without the other.
 **Honored by.** `crates/akr-core/src/validate/rules.rs` (V-006),
 `crates/akr-core/tests/v_rules.rs`, `docs/04-references-and-versioning.md` §4.1,
 `spec/diagnostics/codes-lang.md` (`AKR-L021`).
+
+## D-045 — The MCP server takes its workspace per call
+
+*Amendment, 2026-11-08.*
+
+**Question.** `akr-mcp` opens one ledger for its whole life: `--dir`, or the working
+directory it was started in, walked upward. Hosts register the server once, globally, with
+no arguments, and start it in whatever directory the session opened. A session opened in a
+folder that holds several checkouts — the ordinary shape of an agent session across
+projects; `D:\projects` held twenty-one workspaces when this was hit — starts the server one
+level above every `.akr/`. Every `knowledge.*` call then answers `AKR-C011`, and the agent
+falls back to the command line for the whole session. A Lege-ecosystem session did exactly
+that, and while working from the CLI read a record file to learn relation syntax, which the
+workflow forbids (Lege-ecosystem papercuts `akr-mcp-resolves-its-ledger-once-from-dir-or`
+and `akr-explain-decision-lists-relation-names`).
+
+**Resolution.** Every tool accepts an optional `workspace` argument: a directory inside a
+workspace, absolute or relative to the server's directory, resolved exactly as `--dir` is.
+The server removes it before the tool runs, so no tool implementation changes. It is
+advertised — added to every input schema, and named in the handshake instructions — only
+when the server's own directory is in no workspace (`AKR-C011` at startup). It is honoured
+whenever it is given.
+
+**Why per call, and not MCP roots or a choice at startup.** Roots would report the same
+parent directory the host started in, and cannot name one of many children per call. A
+startup choice is what `--dir` already is, and the failure is precisely that the host does
+not know which workspace a session will need. One server, many ledgers, the caller naming
+the one it means, matches how an agent actually moves between projects.
+
+**This keeps §1 of `docs/08-mcp.md`.** *One implementation*: the argument is the MCP
+spelling of `--dir`, so every call that uses it is reproduced by `akr --dir <workspace>
+<command>`. *No privileged access*: it reaches nothing `--dir` could not; the server
+already has the CLI's capabilities and runs locally over stdio. *Budgeted surface* (D-034):
+a server started inside a workspace advertises byte-for-byte the schemas it did before, so
+the ordinary session pays nothing for a parameter it never needs; only the rootless server,
+which is useless without it, carries it.
+
+**Also.** `AKR-C011`'s help, shared by both surfaces, names the argument beside `--dir`, so
+the MCP caller who meets it learns the remedy that applies to it. `akr explain <kind>`
+prints how a relation is written in a `--from` fragment.
+
+**Consequences.** A rootless server's schemas are larger by one optional property per tool.
+A caller that passes `workspace` to a server inside a workspace is answered from the
+workspace it named, not refused: being explicit is never an error. A non-string or empty
+`workspace` is `AKR-C004`.
+
+**Honored by.** `crates/akr-mcp/src/protocol.rs` (`Server::rootless`, `workspace_root`,
+`with_workspace_argument`), `crates/akr-mcp/tests/workspace_argument.rs`,
+`crates/akr-cli/src/session.rs` (`AKR-C011` help), `crates/akr-cli/src/commands.rs`
+(`explain` syntax line), `docs/08-mcp.md` §1, `docs/07-cli.md` (`akr explain`).
