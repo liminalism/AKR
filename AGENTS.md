@@ -77,6 +77,30 @@ Consult AKR at task and state-transition boundaries, not after every edit.
 - Scratch notes go in `.agent/scratch/`. Nobody reviews them and nothing depends on them
   — but **nothing empties it either**, so they are still yours. See "Scratch" below.
 
+Private filenames, paths and credentials belong in local-only secret entries. Use
+`knowledge.secret_put` with a private UTF-8 input file (`akr secret put --from <file>`),
+then embed the returned opaque `{{secret:<id>}}` citation in public text slots or claims.
+Normal outputs show `[*]`; canonical retrieval retains citation tokens. Only explicit
+`secret get` / `secret resolve --reveal` reads local values. Do not reveal credentials
+to remote agents or paste resolved values into public records, evidence, sources or
+handoffs. `.akr/secrets/` and original input files must stay private and out of Git.
+
+**What the ledger is for**
+
+Part of your job in a session is to help the next agent understand what happened in it:
+what the user asked, what you found in the code as it stood, and why that led to what you
+did. Explain in proportion to the expected impact of a change, not its line count. Never
+restate a diff — git has it.
+
+- A step of work, a reason, a dead end: `knowledge.trace` on the work record
+  (`akr trace <work> "<why>"`). One line each, about 25 words (40 is refused), appended
+  in place as you go — no revision, nothing reopened (D-047).
+- A choice that binds the project: a `decision`, whose `context` says what forced it and
+  what was rejected.
+- A finding someone will re-read — a root cause, a measurement, an assumption that
+  turned out false: an `observation`.
+- A line of code: a comment beside it, never a record.
+
 **When something becomes durable**
 - New knowledge: `knowledge.propose`. Observations need `observed_at` and, if they can
   go out of date, `watches`.
@@ -84,9 +108,11 @@ Consult AKR at task and state-transition boundaries, not after every edit.
   edit a record that is not `proposed`.
 - Replacing a plan: `knowledge.supersede`, with a disposition for every unfinished
   child. The tool will list them; answer each one.
-- Finishing work: record what you observed with `knowledge.evidence_add`, then
-  `knowledge.complete` with evidence for every acceptance check. Evidence records
-  state what was observed; they never state what they verify. An `artifact` may not
+- Finishing work: `knowledge.complete`. A `command` check you ran and saw pass records
+  itself — `"checks": {"<id>": {"passed_at": "HEAD"}}`, or `akr complete <key> --pass
+  <id>` — and needs no evidence record (D-048). Use `knowledge.evidence_add` for a
+  measurement, a failure, an artefact or a manual observation, and cite it from the
+  check. Evidence records state what was observed; they never state what they verify. An `artifact` may not
   be a path under `.agent/scratch` (`AKR-T023`, V-025 — on every route that writes an
   evidence record, not just `evidence_add`): scratch is pruned on an ordinary handoff,
   so a citation into it is a verified claim that quietly loses its backing. Move the
@@ -97,7 +123,12 @@ Consult AKR at task and state-transition boundaries, not after every edit.
   references back in question at once, because V-020 measures each against the commit
   that last changed the record. The write's `notes` list them; refresh all of them,
   not the ones you happened to rerun.
-- Unsure what a kind requires? `akr explain <kind>` prints its schema.
+- Unsure what a kind requires? `akr explain <kind>` prints its schema, and what each
+  slot is for.
+- `policy` is the one kind for a standing rule, requirement or limit. `term`,
+  `requirement`, `constraint`, `assessment` and `track` are retired (D-046): existing
+  records stay valid and revisable, no new key may take one, and one folds into its
+  replacement with `akr supersede <key> --with <new-key> --from <body>`.
 - A normative record at `proposed` means **recorded**, not pending (D-042). It is not a
   queue and there is nothing to sweep. Move a decision to `active` when the project has
   adopted it *and* you can name what it rests on — a requirement, policy, constraint,
@@ -181,6 +212,11 @@ them.
    Active work spans several commits without a new revision; that is normal.
 3. `git add` the exact code, records, lock and generated views this change is made of.
 4. `akr change prepare --staged`, then `akr git commit`.
+
+Trace entries the staged tree adds become the commit's `AKR-Why:` trailers; `--why
+"<reason>"` on `begin` appends one to the primary work record for you. The generated
+message no longer copies the work record's `intent`. `akr git install-hooks` once per
+checkout (`akr init` does it for a new workspace).
 
 Never mark work completed because code exists or a commit was made — completion needs the
 record's acceptance checks and its evidence. Never write a future commit id into the

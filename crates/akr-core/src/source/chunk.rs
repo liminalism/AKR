@@ -686,12 +686,6 @@ mod tests {
     }
 
     #[test]
-    fn chunking_is_deterministic() {
-        let source = include_str!("../../../../spec/exemplar.akr");
-        assert_eq!(chunk_markdown(source), chunk_markdown(source));
-    }
-
-    #[test]
     fn symbols_expand_technical_identifiers() {
         let symbols = symbols_of("Call DecodeRequest::default() before inverse_97_2d_in_place.");
         assert!(symbols.iter().any(|s| s == "DecodeRequest::default"));

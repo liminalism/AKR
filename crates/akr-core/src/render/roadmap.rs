@@ -46,15 +46,20 @@ pub fn render_roadmap(cx: RenderContext<'_>) -> String {
         blocks.extend(milestone_blocks(cx, milestone));
     }
 
-    blocks.push("## Tracks".to_owned());
-    blocks.push("Standing work that no milestone contains.".to_owned());
-    for track in &tracks {
-        blocks.extend(track_blocks(cx, track));
+    // D-046: `track` is retired, so the section exists only where tracks do.
+    if !tracks.is_empty() {
+        blocks.push("## Tracks".to_owned());
+        blocks.push("Standing work that no milestone contains.".to_owned());
+        for track in &tracks {
+            blocks.extend(track_blocks(cx, track));
+        }
     }
 
     blocks.push("## Summary".to_owned());
     blocks.push(milestone_summary(cx, &milestones));
-    blocks.push(track_summary(cx, &tracks));
+    if !tracks.is_empty() {
+        blocks.push(track_summary(cx, &tracks));
+    }
 
     let mut out = blocks.join("\n\n");
     out.push('\n');
@@ -310,6 +315,7 @@ fn render_verdict(verdict: &Verdict) -> String {
             "**satisfied** by `@{by}` (pass at `{}`)",
             short(observed_at.as_str())
         ),
+        Verdict::Passed { at } => format!("**satisfied** — passed at `{}`", short(at.as_str())),
         Verdict::NoEvidence => "not satisfied — no evidence".to_owned(),
         Verdict::Unresolved => "not satisfied — the cited evidence does not resolve".to_owned(),
         Verdict::Failing { by, result } => format!(

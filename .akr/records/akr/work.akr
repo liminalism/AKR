@@ -1295,6 +1295,142 @@ record akr.work.init-gitignore-is-never-reconciled/1 : work {
     }
 }
 
+record akr.work.ledger-says-why/1 : work {
+    title "AKR 0.7: the ledger says why (D-046..D-049)"
+    state superseded
+    scope [
+        path "crates/**",
+        path "docs/**",
+        path "fixtures/validate/**",
+        path "scripts/agent-section.md",
+        path "spec/**"
+    ]
+    intent """
+        Make the ledger answer why a thing was done instead of restating what a commit did, and stop the tool producing the redundancy the three-project audit measured, without changing any sealed record in an existing ledger.
+        """
+    acceptance {
+        check core-mechanics {
+            statement """
+                Retired kinds refuse new keys and fold by supersede; a trace appends in place and is lock drift; a command check records its own pass and a redefinition drops it.
+                """
+            method command
+            command "cargo test -p akr-core --test ops_write --test v_rules --test vocabulary --test fixture_corpus --test codes_registry"
+        }
+        check design-set {
+            statement """
+                The design-set coherence checker passes over docs, spec and fixtures.
+                """
+            method command
+            command "python tools/check-design.py"
+        }
+        check end-to-end {
+            statement """
+                Through the binary over a real repository: trace, AKR-Why trailers, the commit named beside each entry, completion with no evidence record, retired kinds, the evidence title, hooks from init.
+                """
+            method command
+            command "cargo test -p akr-cli --test trace_and_pass"
+        }
+        check suite {
+            statement """
+                The workspace test suite passes apart from failures that predate the change.
+                """
+            method command
+            command "cargo test --workspace --no-fail-fast"
+        }
+        check surfaces-agree {
+            statement """
+                knowledge.trace and knowledge.complete write the same ledger bytes as akr trace and akr complete --pass.
+                """
+            method command
+            command "cargo test -p akr-mcp --test trace_and_pass"
+        }
+    }
+    implements [
+        @akr.decision.command-check-records-its-own-pass,
+        @akr.decision.five-kinds-retired-not-deleted,
+        @akr.decision.one-agent-brief-states-the-purpose,
+        @akr.decision.work-carries-a-reasoning-trace
+    ]
+    author "dk"
+}
+
+record akr.work.ledger-says-why/2 : work {
+    title "AKR 0.7: the ledger says why (D-046..D-049)"
+    state completed
+    scope [
+        path "crates/**",
+        path "docs/**",
+        path "fixtures/validate/**",
+        path "scripts/agent-section.md",
+        path "spec/**"
+    ]
+    intent """
+        Make the ledger answer why a thing was done instead of restating what a commit did, and stop the tool producing the redundancy the three-project audit measured, without changing any sealed record in an existing ledger.
+        """
+    trace [
+        "retired kinds stay in the language: the kind is in the sealed hash, so deleting one breaks every seal and reference",
+        "the retired-kind refusal is a write check, not a rule: a ledger cannot tell a pre-retirement record from a new one",
+        "trace appends in place as bookkeeping: a revision per reason would reopen every acceptance check",
+        "why is never mandatory, by the owner's ruling: agents rarely use the commit flow, and a forced field gets filler",
+        "passed_at skips the descendant test: a stamp always predates its own commit, so a redefinition drops stamps instead",
+        "no persistent cache for entry-to-commit: append-only makes it a binary search over the file's history",
+        "AKR-Why trailers only, no body copy: the intent copy in the message was the redundancy being removed",
+        "the exemplar keeps the retired kinds: it must show every construct that still parses",
+        "kept the CURRENT-STATE intro and the index DDL untouched: rewording them would churn frozen example views and the schema hash for nothing",
+        "one commit, not one per phase: every phase edits kind.rs, rules.rs and ops, so they do not separate"
+    ]
+    acceptance {
+        check core-mechanics {
+            statement """
+                Retired kinds refuse new keys and fold by supersede; a trace appends in place and is lock drift; a command check records its own pass and a redefinition drops it.
+                """
+            method command
+            command "cargo test -p akr-core --test ops_write --test v_rules --test vocabulary --test fixture_corpus --test codes_registry"
+            passed_at git:bdf87fbed1dc493a87b8d95f0bd84824ca9c6117
+        }
+        check design-set {
+            statement """
+                The design-set coherence checker passes over docs, spec and fixtures.
+                """
+            method command
+            command "python tools/check-design.py"
+            passed_at git:bdf87fbed1dc493a87b8d95f0bd84824ca9c6117
+        }
+        check end-to-end {
+            statement """
+                Through the binary over a real repository: trace, AKR-Why trailers, the commit named beside each entry, completion with no evidence record, retired kinds, the evidence title, hooks from init.
+                """
+            method command
+            command "cargo test -p akr-cli --test trace_and_pass"
+            passed_at git:bdf87fbed1dc493a87b8d95f0bd84824ca9c6117
+        }
+        check suite {
+            statement """
+                The workspace test suite passes apart from failures that predate the change.
+                """
+            method command
+            command "cargo test --workspace --no-fail-fast"
+            passed_at git:bdf87fbed1dc493a87b8d95f0bd84824ca9c6117
+        }
+        check surfaces-agree {
+            statement """
+                knowledge.trace and knowledge.complete write the same ledger bytes as akr trace and akr complete --pass.
+                """
+            method command
+            command "cargo test -p akr-mcp --test trace_and_pass"
+            passed_at git:bdf87fbed1dc493a87b8d95f0bd84824ca9c6117
+        }
+    }
+    implements [
+        @akr.decision.command-check-records-its-own-pass,
+        @akr.decision.five-kinds-retired-not-deleted,
+        @akr.decision.one-agent-brief-states-the-purpose,
+        @akr.decision.work-carries-a-reasoning-trace
+    ]
+    supersedes [ @akr.work.ledger-says-why/1 ]
+    author "dk"
+}
+
 record akr.work.mcp-actionable-truncation/1 : work {
     title "Keep every budgeted MCP response usable"
     state completed
@@ -2479,6 +2615,90 @@ record akr.work.post-commit-validation/2 : work {
     }
     implements [ @akr.decision.post-commit-validation ]
     supersedes [ @akr.work.post-commit-validation/1 ]
+}
+
+record akr.work.private-secret-citations/1 : work {
+    title "Keep developer secrets local and cite them safely from the public ledger"
+    state superseded
+    scope [
+        path ".gitignore",
+        path "AGENTS.md",
+        path "Cargo.lock",
+        path "Cargo.toml",
+        path "crates/**",
+        path "docs/**",
+        path "spec/**"
+    ]
+    intent """
+        Add a private secrets category outside the canonical public ledger, opaque citations with [*] fallback, explicit local resolution, Git/publication safeguards, agent MCP guidance, and version 0.6.5.
+        """
+    acceptance {
+        check citation-workflow {
+            statement """
+                CLI and MCP can write local secrets, cite them and explicitly resolve locally; public readers get [*]; agent instructions teach the boundary.
+                """
+            method command
+        }
+        check private-boundary {
+            statement """
+                Secret values stay outside public ledger, generated views, caches, handoffs and Git; missing local data does not invalidate public records.
+                """
+            method command
+        }
+        check release {
+            statement """
+                Workspace is version 0.6.5 and relevant automated checks pass.
+                """
+            method command
+        }
+    }
+    author "dk"
+}
+
+record akr.work.private-secret-citations/2 : work {
+    title "Keep developer secrets local and cite them safely from the public ledger"
+    state completed
+    scope [
+        path ".gitignore",
+        path "AGENTS.md",
+        path "Cargo.lock",
+        path "Cargo.toml",
+        path "README.md",
+        path "crates/**",
+        path "docs/**",
+        path "examples/save-your-skin/transcripts/**",
+        path "scripts/**",
+        path "spec/**"
+    ]
+    intent """
+        Add a private secrets category outside the canonical public ledger, opaque citations with [*] fallback, explicit local resolution, Git/publication safeguards, agent MCP guidance, and version 0.6.5.
+        """
+    acceptance {
+        check citation-workflow {
+            statement """
+                CLI and MCP can write local secrets, cite them and explicitly resolve locally; public readers get [*]; agent instructions teach the boundary.
+                """
+            method command
+            verified_by [ @akr.evidence.private-secret-interface-suite/1 ]
+        }
+        check private-boundary {
+            statement """
+                Secret values stay outside public ledger, generated views, caches, handoffs and Git; missing local data does not invalidate public records.
+                """
+            method command
+            verified_by [ @akr.evidence.private-secret-interface-suite/1 ]
+        }
+        check release {
+            statement """
+                Workspace is version 0.6.5 and relevant automated checks pass.
+                """
+            method command
+            verified_by [ @akr.evidence.private-secret-release-checks/1 ]
+        }
+    }
+    implements [ @akr.requirement.developer-information-stays-private/1 ]
+    supersedes [ @akr.work.private-secret-citations/1 ]
+    author "dk"
 }
 
 record akr.work.propose-dry-run-introspection/1 : work {

@@ -6,7 +6,7 @@
 //! rather than in `akr-core` — the claim under test is that *the command* produces a cache
 //! that agrees with the sources, not that a function can fill a table.
 
-mod support;
+use crate::support;
 
 use std::path::Path;
 use std::process::Command;

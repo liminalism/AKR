@@ -3,6 +3,11 @@
 The complete `akr` command surface: invocation model, global flags, exit codes, the
 write pipeline, per-command reference, JSON output, and CI recipes.
 
+Since 0.6.5, `akr secret put --from <private-file>` stores a local-only secret entry and
+returns an opaque inline citation. `akr secret get <citation>` and `akr secret resolve
+--from <document>` redact as `[*]` unless `--reveal` is explicit. See
+[local-only secrets](18-private-secrets.md) for the privacy boundary and full workflow.
+
 Normative for command names, flag names, exit codes, the write pipeline's atomicity
 guarantee, and the JSON envelope. Output text shown below is illustrative in wording and
 normative in *content*: every field shown is present, and no command prints information
@@ -240,12 +245,17 @@ Rules for JSON output, which exist so that a script can rely on it:
 ### `akr init`
 
 ```
-akr init [--dir <path>] [--project <name>] [--namespace <name> ...]
+akr init [--dir <path>] [--project <name>] [--namespace <name> ...] [--no-hooks]
 ```
 
-Creates `.akr/project.akr`, `.akr/records/`, `.akr/archive/`, an `AGENTS.md` stub
-([`08-mcp.md`](08-mcp.md) §8), and `.gitignore` entries for `.akr/cache/` and
-`.agent/scratch/`.
+Creates `.akr/project.akr`, `.akr/records/`, `.akr/archive/`, the agent brief in
+`AGENTS.md` between its `AKR_START` / `AKR_END` markers ([`08-mcp.md`](08-mcp.md) §8), and
+`.gitignore` entries for `.akr/cache/`, `.agent/scratch/`, `.agent/handoffs/` and
+`.akr/secrets/`.
+
+In a git repository it also installs the `pre-commit` and `commit-msg` hooks
+([`16-change-protocol.md`](16-change-protocol.md) §9), unless `--no-hooks` is given
+(D-049). A hook that already exists and is not AKR's is kept, and the output says so.
 
 An existing `.akr/` is `AKR-C013`; `akr init` never overwrites. A project name outside
 key-segment form is `AKR-C023`.
@@ -429,6 +439,10 @@ akr get <ref> [--rev <n>] [--history] [--relations] [--format text|json]
 Retrieves one record. `<ref>` is any of the four forms of D-009. With no revision, the
 current head. `--history` lists every revision with its state and supersession edges;
 `--relations` adds inbound edges, which are not visible in the source text.
+
+A work record's `trace` is part of the body, each entry beside the first eight digits of
+the commit that introduced it, or `(new)` for an entry not yet committed. The commit is
+derived from the file's history and is never stored (D-047).
 
 A planning record's `acceptance` block is part of the body, with each check's statement,
 method, command, citations and current verdict. `akr complete` demands a mapping for every
@@ -692,6 +706,23 @@ nothing written
 
 ---
 
+### `akr propose-many`
+
+```
+akr propose-many --from <file>
+```
+
+Creates revision 1 of several new keys in one atomic pipeline pass — the general
+counterpart to `akr evidence add-many --from`. The file is an ordinary AKR fragment
+holding one or more `record <key>/1 : <kind> { ... }` blocks (the `akr 0.1` /
+`project` header may be omitted). All records are parsed, lowered, and validated
+together before anything touches disk, so connected records (such as a `track` and
+ordered `milestone`s connected by `part_of`, `after`, `depends_on`, `plan_of_record`,
+or `implements`) resolve references within the batch without sequential calls. Either
+every record lands or none does.
+
+---
+
 ### `akr revise`
 
 ```
@@ -844,13 +875,25 @@ Exit 1, working tree untouched.
 ### `akr complete`
 
 ```
-akr complete <key> [--check <id>=<evidence-ref> ...]
+akr complete <key> [--pass <id>[=<commit>] ...] [--check <id>=<evidence-ref> ...]
 ```
 
 Moves a `milestone` or `work` record to `completed`. Every acceptance check must be
-satisfied by evidence with `result pass` whose `observed_at` commit descends from the
-last commit that changed the record's content (D-016). An unsatisfied check is
+satisfied, in one of two ways (`02-data-model.md` §9.1). An unsatisfied check is
 `AKR-R022` (V-020) and nothing is written.
+
+`--pass <id>` is for a `method command` check whose command was run and passed: the check
+records the commit itself — `HEAD`, or the full commit given after `=` — and no evidence
+record is written (D-048). It is refused for a check that does not exist (`AKR-L012`) or
+whose method is not `command` (`AKR-T013`).
+
+`--check <id>=<evidence-ref>` cites an evidence record with `result pass` whose
+`observed_at` commit descends from the last commit that changed the record's content
+(D-016). Use it for a measurement, a captured artefact, or anything a later reader will
+want to read.
+
+Completing a `work` record whose `trace` is empty succeeds with a note. Nothing requires a
+trace (D-047).
 
 ```
 $ akr complete sys.milestone.m3-playable-day
@@ -887,6 +930,32 @@ milestone. This is the rule doing its job rather than getting in the way: a plan
 statement about work that is still to be done, and a plan of record for a finished
 milestone is a claim that has stopped being true. The tool makes you say which — the plan
 was completed, or it was abandoned — at the moment you know.
+
+---
+
+### `akr trace`
+
+```
+akr trace <work-key> "<why>" ["<why>" ...]
+```
+
+Appends reasoning steps to a work record's `trace`, in place (D-047,
+`02-data-model.md` §4.10). The head revision is edited whether or not it is sealed; no
+revision is minted and no acceptance check is put back in question. `akr.lock` is stale
+afterwards, and `akr check` reports the appended trace as `AKR-R052` until `akr build`.
+
+One argument is one entry. An entry over 25 words draws a note; an entry over 40 words is
+`AKR-T024` and nothing is written. A key that is not a `work` record is `AKR-T002`.
+Repeating the entry the trace already ends with is refused, so a retried call adds
+nothing.
+
+```
+$ akr trace lege.work.extract-render-graph \
+    "split the graph out first: the viewer cannot be tested while it owns the passes"
+edited lege.work.extract-render-graph/1
+wrote .akr/records/lege/work.akr
+akr.lock is now stale; run `akr build` to refresh it
+```
 
 ---
 
@@ -1167,11 +1236,18 @@ it names the packet to open instead.
 akr evidence add <key> --result pass|fail|inconclusive
                        --method manual|command|observation
                        [--command <text>] [--artifact <path>] [--capture <path>]
-                       [--summary <text>]
+                       [--summary <text>] [--title <text>]
                        [--observed-at <commit>]
 ```
 
-Creates an `evidence` record. `--observed-at` defaults to HEAD; a commit not in the
+Creates an `evidence` record. A `method command` check that simply passed does not need
+one — `akr complete <key> --pass <check>` (D-048); evidence is for a measurement, a
+failure, an artefact or a manual observation.
+
+The title and the summary are never the same text stored twice. With `--title`, a summary
+that only repeats it is dropped. Without it, a one-line summary of up to 80 characters
+becomes the title and is not stored again; a longer one is kept, and the title is its
+opening words. `--observed-at` defaults to HEAD; a commit not in the
 repository is `AKR-G011`.
 
 `--capture <file> --summary <observation>` records SHA-256 and the streamed byte

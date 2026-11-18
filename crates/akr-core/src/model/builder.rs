@@ -191,6 +191,7 @@ impl RecordBuilder {
                     method: CheckMethod::Manual,
                     command: None,
                     verified_by: Vec::new(),
+                    passed_at: None,
                 }],
             });
         }
@@ -255,6 +256,7 @@ impl RecordBuilder {
             method,
             command: None,
             verified_by: verified_by.iter().map(|r| reference(r)).collect(),
+            passed_at: None,
         });
         self
     }

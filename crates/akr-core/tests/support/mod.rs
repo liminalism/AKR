@@ -16,11 +16,75 @@ pub mod history;
 #[allow(unused_imports)]
 pub use history::{Step, SyntheticHistory};
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+fn git_program() -> &'static OsStr {
+    static GIT: OnceLock<PathBuf> = OnceLock::new();
+    GIT.get_or_init(|| {
+        let name = if cfg!(windows) { "git.exe" } else { "git" };
+        if let Some(paths) = std::env::var_os("PATH") {
+            for dir in std::env::split_paths(&paths) {
+                let candidate = dir.join(name);
+                if candidate.is_file() {
+                    return candidate;
+                }
+            }
+        }
+        PathBuf::from(name)
+    })
+    .as_os_str()
+}
+
+fn run_git(dir: &Path, args: &[&str], env: &[(&str, &str)]) -> String {
+    let mut command = Command::new(git_program());
+    command.args(args).current_dir(dir);
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    let output = command.output().expect("git runs");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.path().is_dir() {
+            copy_tree(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), &target)?;
+        }
+    }
+    Ok(())
+}
+
+fn empty_template() -> &'static Path {
+    static TEMPLATE: OnceLock<PathBuf> = OnceLock::new();
+    TEMPLATE.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("akr-p5-template-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("template directory");
+        run_git(&dir, &["init", "--quiet", "--initial-branch=main"], &[]);
+        run_git(&dir, &["config", "user.name", "AKR Test"], &[]);
+        run_git(&dir, &["config", "user.email", "test@example.invalid"], &[]);
+        run_git(&dir, &["config", "commit.gpgsign", "false"], &[]);
+        run_git(&dir, &["config", "gc.auto", "0"], &[]);
+        run_git(&dir, &["config", "core.autocrlf", "false"], &[]);
+        dir
+    })
+}
 
 /// A temporary git repository, removed when it drops.
 pub struct TempRepo {
@@ -29,21 +93,14 @@ pub struct TempRepo {
 }
 
 impl TempRepo {
-    /// Creates an empty repository with a deterministic identity.
+    /// Creates an empty repository with a deterministic identity from the cached template.
     pub fn new(name: &str) -> Self {
         let unique = COUNTER.fetch_add(1, Ordering::SeqCst);
         let root =
             std::env::temp_dir().join(format!("akr-p5-{name}-{}-{unique}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).expect("temp directory");
-
-        let repo = Self { root, clock: 0 };
-        repo.git(&["init", "--quiet", "--initial-branch=main"]);
-        repo.git(&["config", "user.name", "AKR Test"]);
-        repo.git(&["config", "user.email", "test@example.invalid"]);
-        repo.git(&["config", "commit.gpgsign", "false"]);
-        repo.git(&["config", "gc.auto", "0"]);
-        repo
+        copy_tree(empty_template(), &root).expect("copy empty git template");
+        Self { root, clock: 0 }
     }
 
     /// The repository root.
@@ -132,18 +189,7 @@ impl TempRepo {
     }
 
     fn git_env(&self, args: &[&str], env: &[(&str, &str)]) -> String {
-        let mut command = Command::new("git");
-        command.args(args).current_dir(&self.root);
-        for (key, value) in env {
-            command.env(key, value);
-        }
-        let output = command.output().expect("git runs");
-        assert!(
-            output.status.success(),
-            "git {args:?} failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        String::from_utf8_lossy(&output.stdout).into_owned()
+        run_git(&self.root, args, env)
     }
 }
 

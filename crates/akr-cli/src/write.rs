@@ -95,6 +95,10 @@ pub fn run(session: &Session, command: &Command) -> Result<Output, EnvError> {
             note_unmatched_watches(session, &mut result, &key, template.as_ref());
             render(session, result)
         }
+        Command::ProposeMany { from } => {
+            let records = propose_records_from_file(session, from)?;
+            propose_many(session, &context, &records)
+        }
         Command::Revise {
             key,
             from,
@@ -197,11 +201,12 @@ pub fn run(session: &Session, command: &Command) -> Result<Output, EnvError> {
             note_unmatched_watches(session, &mut result, &replacement, template.as_ref());
             render(session, result)
         }
-        Command::Complete { key, checks } => {
-            let key = parse_key(key)?;
-            let checks = parse_checks(checks)?;
-            render(session, akr_core::ops::complete(&context, &key, &checks))
-        }
+        Command::Complete {
+            key,
+            checks,
+            passes,
+        } => complete(session, &context, key, checks, passes),
+        Command::Trace { key, entries } => trace(session, &context, key, entries),
         Command::Abandon {
             key,
             reason,
@@ -271,6 +276,7 @@ pub fn run(session: &Session, command: &Command) -> Result<Output, EnvError> {
             artifact,
             capture,
             summary,
+            title,
             observed_at,
         } => evidence_add(
             session,
@@ -279,7 +285,7 @@ pub fn run(session: &Session, command: &Command) -> Result<Output, EnvError> {
                 key: key.clone(),
                 result: result.clone(),
                 method: method.clone(),
-                title: None,
+                title: title.clone(),
                 command: command.clone(),
                 artifact: artifact.clone(),
                 capture: capture.clone(),
@@ -574,11 +580,15 @@ pub fn evidence_record(
             .clone()
             .ok_or_else(|| missing_commit(session, true))?,
     };
-    let title = request
-        .title
-        .clone()
-        .or_else(|| request.summary.clone())
-        .unwrap_or_else(|| key.to_string());
+    // D-048: a title and a summary that say the same thing are one statement stored twice.
+    // Half of all evidence records in the audited ledgers were exactly that, because the
+    // title used to default to the whole summary and the summary was stored as well.
+    let (title, summary) = evidence_title_and_summary(
+        request.title.as_deref(),
+        request.summary.as_deref(),
+        summary,
+        &key,
+    );
     let mut built =
         akr_core::evidence::AddEvidence::new(key.clone(), &title, result, method, commit.clone());
     if let Some(command) = command {
@@ -594,6 +604,134 @@ pub fn evidence_record(
         built.author = Some(author.clone());
     }
     Ok((key, built.to_record(), commit))
+}
+
+/// The longest title derived from a summary, in characters.
+const DERIVED_TITLE_CHARS: usize = 80;
+
+/// Chooses an evidence record's title and what, if anything, stays in `summary`.
+///
+/// - A title was given: it is the title, and a summary that only repeats it is dropped.
+/// - No title, a short one-line summary: the summary is the title and is not stored again.
+/// - No title, a longer summary: the title is its opening words and the summary is kept,
+///   because then they are no longer the same text.
+/// - Neither: the key.
+///
+/// `stored` is the summary as it would be written — with the capture digest appended when
+/// there is one — and `given` is what the caller typed.
+fn evidence_title_and_summary<'a>(
+    title: Option<&str>,
+    given: Option<&str>,
+    stored: Option<&'a str>,
+    key: &LogicalKey,
+) -> (String, Option<&'a str>) {
+    let title = title.map(str::trim).filter(|text| !text.is_empty());
+    let given = given.map(str::trim).filter(|text| !text.is_empty());
+    match (title, given) {
+        (Some(title), _) => {
+            let repeats = stored.is_some_and(|summary| summary.trim() == title);
+            (title.to_owned(), if repeats { None } else { stored })
+        }
+        (None, Some(given)) => {
+            let derived = derived_title(given);
+            let whole = derived == given && stored.is_some_and(|summary| summary.trim() == given);
+            (derived, if whole { None } else { stored })
+        }
+        (None, None) => (key.to_string(), stored),
+    }
+}
+
+/// A title from the opening of a summary: its first line, cut at a word boundary.
+fn derived_title(summary: &str) -> String {
+    let line = summary.lines().next().unwrap_or_default().trim();
+    if line.chars().count() <= DERIVED_TITLE_CHARS {
+        return line.to_owned();
+    }
+    let mut title = String::new();
+    for word in line.split_whitespace() {
+        if title.chars().count() + word.chars().count() + 1 > DERIVED_TITLE_CHARS - 1 {
+            break;
+        }
+        if !title.is_empty() {
+            title.push(' ');
+        }
+        title.push_str(word);
+    }
+    if title.is_empty() {
+        title = line.chars().take(DERIVED_TITLE_CHARS - 1).collect();
+    }
+    title.push('\u{2026}');
+    title
+}
+
+/// `akr complete`: evidence references, and command checks recording their own pass.
+fn complete(
+    session: &Session,
+    context: &WriteContext,
+    key: &str,
+    checks: &[String],
+    passes: &[String],
+) -> Result<Output, EnvError> {
+    let key = parse_key(key)?;
+    let checks = parse_checks(checks)?;
+    let passes = parse_passes(session, passes)?;
+    let commits: Vec<Commit> = passes.iter().map(|(_, commit)| commit.clone()).collect();
+    ensure_commits_exist(session, &commits)?;
+    render(
+        session,
+        akr_core::ops::complete_with(context, &key, &checks, &passes),
+    )
+}
+
+/// `--pass <check>[=<commit>]`, the commit defaulting to HEAD (D-048).
+///
+/// # Errors
+/// `AKR-C004` for a malformed commit; `AKR-G001` when there is no commit to default to.
+pub fn parse_passes(session: &Session, raw: &[String]) -> Result<Vec<(String, Commit)>, EnvError> {
+    raw.iter()
+        .map(|text| {
+            let (id, commit) = match text.split_once('=') {
+                Some((id, commit)) => (id, Some(commit)),
+                None => (text.as_str(), None),
+            };
+            if id.trim().is_empty() {
+                return Err(EnvError::new(
+                    "AKR-C004",
+                    format!("--pass {text:?}: expected <check-id>[=<commit>]"),
+                ));
+            }
+            let commit = match commit {
+                Some(hex) => {
+                    Commit::new(hex.strip_prefix("git:").unwrap_or(hex)).map_err(|_| {
+                        EnvError::new(
+                            "AKR-C004",
+                            format!("--pass: {hex:?} is not 40 lowercase hex digits"),
+                        )
+                        .help("AKR takes full commit hashes, never abbreviations (D-008)")
+                    })?
+                }
+                None => session
+                    .commit
+                    .clone()
+                    .ok_or_else(|| missing_commit(session, false))?,
+            };
+            Ok((id.trim().to_owned(), commit))
+        })
+        .collect()
+}
+
+/// `akr trace`: reasoning steps appended to a work record, in place (D-047).
+///
+/// # Errors
+/// [`EnvError`] for a malformed key; a library refusal is an [`Output`] with exit 1.
+pub fn trace(
+    session: &Session,
+    context: &WriteContext,
+    key: &str,
+    entries: &[String],
+) -> Result<Output, EnvError> {
+    let key = parse_key(key)?;
+    render(session, akr_core::ops::trace_append(context, &key, entries))
 }
 
 fn capture_digest(root: &Path, path: &str) -> Result<String, EnvError> {
@@ -756,6 +894,54 @@ pub fn evidence_add(
     )
 }
 
+/// `akr propose-many` / `knowledge.propose_many`: several records in one atomic pass.
+///
+/// Proposing a plan or feature often means writing connected records together — a parent
+/// track, ordered milestones linked by `after` / `part_of`, or initial work records —
+/// where each record cites siblings from the same batch. `propose_many` resolves and
+/// validates the *resulting* ledger once, so either every record lands or none does.
+///
+/// # Errors
+/// [`EnvError`] for an empty batch or a commit the repository does not have.
+pub fn propose_many(
+    session: &Session,
+    context: &WriteContext,
+    records: &[Record],
+) -> Result<Output, EnvError> {
+    if records.is_empty() {
+        return Err(EnvError::new(
+            "AKR-C003",
+            "propose-many needs at least one record",
+        ));
+    }
+    let commits: Vec<Commit> = records.iter().flat_map(commits_named_by).collect();
+    ensure_commits_exist(session, &commits)?;
+    let count = records.len();
+    let mut result = akr_core::ops::propose_many(context, records);
+    for record in records {
+        note_unmatched_watches(session, &mut result, &record.id.key, Some(record));
+    }
+    render(session, result).map(|mut output| {
+        output
+            .text
+            .push_str(&format!("{count} records written in one pass\n"));
+        output
+    })
+}
+
+/// Reads a file of arbitrary records for `akr propose-many --from`.
+///
+/// # Errors
+/// [`EnvError`] when the file cannot be read, does not parse, or holds no records.
+pub fn propose_records_from_file(session: &Session, path: &Path) -> Result<Vec<Record>, EnvError> {
+    records_from_file(
+        session,
+        path,
+        "records",
+        "the file holds one or more `record <key>/1 : <kind> { ... }` blocks",
+    )
+}
+
 /// `akr evidence add-many` / `knowledge.evidence_add_many`: one atomic pipeline pass.
 ///
 /// A verification run produces several evidence records at once, and writing them one at a
@@ -810,8 +996,47 @@ pub fn evidence_add_many(
 /// [`EnvError`] when the file cannot be read, does not parse, or holds a record of another
 /// kind.
 pub fn evidence_records_from_file(session: &Session, path: &Path) -> Result<Vec<Record>, EnvError> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| EnvError::new("AKR-C042", format!("cannot read {}: {e}", path.display())))?;
+    let records = records_from_file(
+        session,
+        path,
+        "evidence",
+        "the file holds one or more `record <key>/1 : evidence { ... }` blocks, each with result, method and observed_at",
+    )?;
+    if let Some(other) = records.iter().find(|r| r.kind != Kind::Evidence) {
+        return Err(EnvError::new(
+            "AKR-C031",
+            format!(
+                "{} holds {}, which is a {} record; evidence add-many writes evidence only",
+                path.display(),
+                other.id,
+                other.kind.name()
+            ),
+        ));
+    }
+    Ok(records)
+}
+
+fn resolve_in_session(session: &Session, path: &Path) -> std::path::PathBuf {
+    if path.is_relative() {
+        session.root.join(path)
+    } else {
+        path.to_path_buf()
+    }
+}
+
+fn records_from_file(
+    session: &Session,
+    path: &Path,
+    expected: &str,
+    help: &str,
+) -> Result<Vec<Record>, EnvError> {
+    let resolved = resolve_in_session(session, path);
+    let text = std::fs::read_to_string(&resolved).map_err(|e| {
+        EnvError::new(
+            "AKR-C042",
+            format!("cannot read {}: {e}", resolved.display()),
+        )
+    })?;
     let text = with_header(&text, session);
 
     let mut sources = akr_core::diagnostics::SourceMap::new();
@@ -821,12 +1046,9 @@ pub fn evidence_records_from_file(session: &Session, path: &Path) -> Result<Vec<
     let refuse = |message: String| {
         EnvError::new(
             "AKR-C031",
-            format!("{} does not parse as evidence: {message}", path.display()),
+            format!("{} does not parse as {expected}: {message}", path.display()),
         )
-        .help(
-            "the file holds one or more `record <key>/1 : evidence { ... }` blocks, each \
-             with result, method and observed_at",
-        )
+        .help(help)
     };
     let Some(tree) = parsed.file else {
         let first = parsed
@@ -846,17 +1068,6 @@ pub fn evidence_records_from_file(session: &Session, path: &Path) -> Result<Vec<
     }
 
     let records: Vec<Record> = ledger.records().to_vec();
-    if let Some(other) = records.iter().find(|r| r.kind != Kind::Evidence) {
-        return Err(EnvError::new(
-            "AKR-C031",
-            format!(
-                "{} holds {}, which is a {} record; evidence add-many writes evidence only",
-                path.display(),
-                other.id,
-                other.kind.name()
-            ),
-        ));
-    }
     if records.is_empty() {
         return Err(EnvError::new(
             "AKR-C031",
@@ -1236,10 +1447,13 @@ pub(crate) fn parse_key(text: &str) -> Result<LogicalKey, EnvError> {
 
 fn parse_kind(text: &str) -> Result<Kind, EnvError> {
     Kind::from_name(text).ok_or_else(|| {
-        EnvError::new("AKR-C004", format!("--kind: {text:?} is not a record kind")).help(
-            "one of term, requirement, constraint, policy, decision, observation, evidence, \
-             assessment, milestone, work, track, question",
-        )
+        let written = Kind::written()
+            .iter()
+            .map(|kind| kind.name())
+            .collect::<Vec<_>>()
+            .join(", ");
+        EnvError::new("AKR-C004", format!("--kind: {text:?} is not a record kind"))
+            .help(format!("one of {written}"))
     })
 }
 
@@ -1334,8 +1548,13 @@ fn body_from(
     let Some(path) = from else {
         return Ok(None);
     };
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| EnvError::new("AKR-C042", format!("cannot read {}: {e}", path.display())))?;
+    let resolved = resolve_in_session(session, path);
+    let text = std::fs::read_to_string(&resolved).map_err(|e| {
+        EnvError::new(
+            "AKR-C042",
+            format!("cannot read {}: {e}", resolved.display()),
+        )
+    })?;
     // The command already knows the project, the key and the kind — it is being told them
     // on the command line — so demanding that the file repeat all three was ceremony that
     // sent people to `akr fmt` to find out what a file header looks like. A file that
@@ -1405,8 +1624,13 @@ fn kind_from_file(session: &Session, from: Option<&Path>) -> Result<Kind, EnvErr
         return Err(EnvError::new("AKR-C003", "propose requires --kind <kind>")
             .help("or pass --from <file> with a record that declares one"));
     };
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| EnvError::new("AKR-C042", format!("cannot read {}: {e}", path.display())))?;
+    let resolved = resolve_in_session(session, path);
+    let text = std::fs::read_to_string(&resolved).map_err(|e| {
+        EnvError::new(
+            "AKR-C042",
+            format!("cannot read {}: {e}", resolved.display()),
+        )
+    })?;
     let first = text
         .lines()
         .map(str::trim)

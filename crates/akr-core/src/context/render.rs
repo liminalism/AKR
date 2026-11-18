@@ -277,6 +277,27 @@ fn render_records(
         {
             out.push_str(&format!("  note\n{}", indent(note, 4)));
         }
+        // D-047: the reasoning. A decision's `context` and `consequences` are where an
+        // audit of three projects found the at-the-time reasoning actually written, and
+        // the bundle showed only the `decision` sentence; a work record's `trace` is
+        // where it is meant to go from now on. Withheld with the body when the budget
+        // truncates the record, so a bundle never grows past what was asked for.
+        if !truncated {
+            for slot in [ContentSlot::Context, ContentSlot::Consequences] {
+                if let Some(ContentValue::Prose(text) | ContentValue::Text(text)) = record.get(slot)
+                {
+                    out.push_str(&format!("  {}\n{}", slot.name(), indent(text, 4)));
+                }
+            }
+            if let Some(ContentValue::Strings(entries)) = record.get(ContentSlot::Trace)
+                && !entries.is_empty()
+            {
+                out.push_str("  trace\n");
+                for entry in entries {
+                    out.push_str(&format!("    - {entry}\n"));
+                }
+            }
+        }
         if section == Section::WorkItems {
             // Step 3: "Blocked items are rendered with the live `blocks` edges that hold
             // them, so the reason is adjacent to the fact."
@@ -645,6 +666,10 @@ fn verdict_text(verdict: &Verdict) -> String {
         } => format!(
             "SATISFIED by @{by} (pass at {})",
             &observed_at.as_str()[..8]
+        ),
+        Verdict::Passed { at } => format!(
+            "SATISFIED — the check recorded its own pass at {}",
+            &at.as_str()[..8]
         ),
         Verdict::NoEvidence => "NOT SATISFIED — no evidence".to_owned(),
         Verdict::Unresolved => "NOT SATISFIED — the cited evidence does not resolve".to_owned(),

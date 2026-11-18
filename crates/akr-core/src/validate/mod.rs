@@ -80,6 +80,7 @@ catalogue! {
     23, v023_contradiction_dispositioned, c::R041, Stage::Resolve, "Contradictions are dispositioned";
     24, v024_seals_match, c::R051, Stage::Resolve, "Sealed revisions match their recorded hash";
     25, v025_evidence_artifact_durable, c::T023, Stage::Type, "Evidence artefacts are cited from durable paths";
+    26, v026_trace_entry_bounded, c::T024, Stage::Type, "A trace entry is at most forty words";
 }
 
 /// Looks up a rule by identifier.

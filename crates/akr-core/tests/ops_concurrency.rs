@@ -13,7 +13,7 @@
 //! record and gains another counts the same — so each test checks that every key it asked
 //! for is present.
 
-mod ops_support;
+use crate::ops_support;
 
 use akr_core::model::{ContentSlot, ContentValue, Kind, Record, RecordBuilder, key};
 use akr_core::ops::{self, WriteContext};
@@ -22,12 +22,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn term(key_text: &str, title: &str) -> Record {
-    let mut record = RecordBuilder::new(key_text, 1, Kind::Term)
+    let mut record = RecordBuilder::new(key_text, 1, Kind::Policy)
         .title(title)
         .all_scope()
         .build();
     record.content.insert(
-        ContentSlot::Definition,
+        ContentSlot::Rule,
         ContentValue::prose("A definition supplied by the caller."),
     );
     record
@@ -56,7 +56,7 @@ fn concurrent_proposals_of_distinct_keys_all_survive() {
                 if ops::propose(
                     &context,
                     &key(&key_text),
-                    Kind::Term,
+                    Kind::Policy,
                     "Racer",
                     Some(term(&key_text, "Racer")),
                 )
@@ -112,7 +112,7 @@ fn concurrent_proposals_preserve_the_records_already_in_the_file() {
                 let _ = ops::propose(
                     &context,
                     &key(&key_text),
-                    Kind::Term,
+                    Kind::Policy,
                     "Keeper",
                     Some(term(&key_text, "Keeper")),
                 );
@@ -150,7 +150,7 @@ fn concurrent_proposals_preserve_the_records_already_in_the_file() {
 fn a_source_edited_under_the_write_is_refused_with_c034() {
     let sandbox = Sandbox::save_your_skin();
     let target = key("sys.term.raced-away");
-    let file = ops::conventional_file(&target, Kind::Term);
+    let file = ops::conventional_file(&target, Kind::Policy);
     let full = sandbox.akr_dir().join(&file);
 
     let original = std::fs::read_to_string(&full).unwrap_or_default();
@@ -205,7 +205,7 @@ fn successive_writes_in_one_process_do_not_deadlock() {
         ops::propose(
             &context,
             &key(&key_text),
-            Kind::Term,
+            Kind::Policy,
             "Sequential",
             Some(term(&key_text, "Sequential")),
         )

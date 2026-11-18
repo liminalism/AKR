@@ -39,6 +39,13 @@ fn to_env(error: change::ChangeError) -> EnvError {
 
 /// Parses the `.akr` files of two trees and compares them.
 fn staged_delta(session: &Session) -> Result<(SemanticDelta, Vec<IndexEntry>), EnvError> {
+    let (delta, entries, _) = staged_state(session)?;
+    Ok((delta, entries))
+}
+
+/// The staged delta, the index entries it was computed from, and the staged ledger.
+fn staged_state(session: &Session) -> Result<(SemanticDelta, Vec<IndexEntry>, Ledger), EnvError> {
+    crate::secrets::ensure_untracked(session)?;
     let repository = repository(session)?;
     let entries = repository
         .staged_entries()
@@ -58,7 +65,58 @@ fn staged_delta(session: &Session) -> Result<(SemanticDelta, Vec<IndexEntry>), E
     let changed = repository
         .staged_changes()
         .map_err(|e| EnvError::new("AKR-G001", e.to_string()))?;
-    Ok((change::delta(base.as_ref(), &staged, &changed), entries))
+    let delta = change::delta(base.as_ref(), &staged, &changed);
+    Ok((delta, entries, staged))
+}
+
+/// A work reference in the one spelling the trailer readers look for: `@key` or
+/// `@key/rev` (D-049).
+///
+/// `akr git log` and the session head both search for `AKR-Work: @<key>`, so a
+/// transaction opened with a bare key wrote a trailer neither of them could find.
+fn work_reference(text: &str) -> Result<String, EnvError> {
+    let bare = text.trim().trim_start_matches('@');
+    akr_core::model::Reference::parse(&format!("@{bare}"))
+        .map(|reference| reference.to_string())
+        .map_err(|error| {
+            EnvError::new(
+                "AKR-C004",
+                format!("{text:?} is not a record reference: {error}"),
+            )
+            .help("name a work record by key, e.g. --primary sys.work.audit-lane")
+        })
+}
+
+/// The record a work reference names in `ledger`, if it names one.
+fn referenced<'a>(ledger: &'a Ledger, reference: &str) -> Option<&'a akr_core::model::Record> {
+    let parsed = akr_core::model::Reference::parse(reference).ok()?;
+    match parsed.revision {
+        Some(revision) => ledger.get(&akr_core::model::RevisionId::new(
+            parsed.key.clone(),
+            revision,
+        )),
+        None => ledger
+            .head(&parsed.key)
+            .ok()
+            .or_else(|| ledger.revisions_of(&parsed.key).last().copied()),
+    }
+}
+
+/// Refuses a work reference that names nothing, or names something that is not work.
+fn check_work_references(intent: &ChangeIntent, ledger: &Ledger) -> Result<(), EnvError> {
+    for reference in intent.work_refs() {
+        match referenced(ledger, &reference) {
+            None => return Err(to_env(change::ChangeError::UnknownWork(reference))),
+            Some(record) if record.kind != akr_core::model::Kind::Work => {
+                return Err(to_env(change::ChangeError::NotWork {
+                    reference,
+                    kind: record.kind.name().to_owned(),
+                }));
+            }
+            Some(_) => {}
+        }
+    }
+    Ok(())
 }
 
 /// Parses a set of `(path, text)` pairs into a ledger, ignoring diagnostics.
@@ -181,10 +239,26 @@ pub fn begin(
     related: &[String],
     note: Option<&str>,
     untracked_reason: Option<&str>,
+    why: &[String],
 ) -> Result<Output, EnvError> {
     let repository = repository(session)?;
     if let Some(open) = change::load(repository).map_err(to_env)? {
         return Err(to_env(change::ChangeError::AlreadyOpen(open.id)));
+    }
+    let primary = primary.map(work_reference).transpose()?;
+    let related: Vec<String> = related
+        .iter()
+        .map(|reference| work_reference(reference))
+        .collect::<Result<_, _>>()?;
+    if !why.is_empty() && primary.is_none() {
+        return Err(EnvError::new(
+            "AKR-C003",
+            "--why records a reason on the primary work record; name it with --primary",
+        )
+        .help(
+            "a commit that advances no work record explains itself with --untracked-reason \
+             instead",
+        ));
     }
     let kind = ChangeKind::from_name(kind).ok_or_else(|| {
         EnvError::new(
@@ -206,14 +280,47 @@ pub fn begin(
 
     let mut intent = ChangeIntent::new(&base, kind, summary);
     intent.scope = scope.map(ToOwned::to_owned);
-    intent.primary_work = primary.map(ToOwned::to_owned);
-    intent.related_work = related.to_vec();
+    intent.primary_work = primary;
+    intent.related_work = related;
     intent.implementation_note = note.map(ToOwned::to_owned);
     intent.untracked_reason = untracked_reason.map(ToOwned::to_owned);
+
+    // `--why` is `akr trace` on the primary record (D-047): the reason is written once,
+    // onto the work it explains, and the commit message is generated from there. A
+    // refusal — an unknown key, a record that is not work, an entry over the limit —
+    // opens no transaction.
+    let mut traced = String::new();
+    if !why.is_empty() {
+        let reference = intent.primary_work.clone().unwrap_or_default();
+        let key = akr_core::model::Reference::parse(&reference)
+            .map(|reference| reference.key)
+            .map_err(|error| EnvError::new("AKR-C004", error.to_string()))?;
+        let context = crate::write::context_of(session);
+        match akr_core::ops::trace_append(&context, &key, why) {
+            Ok(applied) => {
+                for file in &applied.files {
+                    traced.push_str(&format!(
+                        "traced {} — stage .akr/{} with the change\n",
+                        key,
+                        file.display().to_string().replace('\\', "/")
+                    ));
+                }
+                for note in &applied.notes {
+                    traced.push_str(note);
+                    traced.push('\n');
+                }
+            }
+            Err(refused) => return crate::write::render(session, Err(refused)),
+        }
+        intent.why = why
+            .iter()
+            .map(|entry| entry.split_whitespace().collect::<Vec<_>>().join(" "))
+            .collect();
+    }
     change::save(repository, &intent).map_err(to_env)?;
 
     Ok(Output::plain(
-        format!("opened change {} on {}\n", intent.id, short(&base)),
+        format!("opened change {} on {}\n{traced}", intent.id, short(&base)),
         Value::object(vec![
             ("id", Value::string(intent.id)),
             ("base_commit", Value::string(base)),
@@ -245,6 +352,9 @@ pub fn show(session: &Session) -> Result<Output, EnvError> {
     }
     if let Some(reason) = &intent.untracked_reason {
         text.push_str(&format!("  untracked  {reason}\n"));
+    }
+    for why in &intent.why {
+        text.push_str(&format!("  why      {why}\n"));
     }
     text.push_str(&format!(
         "  prepared {}\n",
@@ -284,7 +394,7 @@ pub fn prepare(session: &Session, write: bool) -> Result<Output, EnvError> {
     let Some(mut intent) = change::load(repository).map_err(to_env)? else {
         return Err(to_env(change::ChangeError::NoTransaction));
     };
-    let (delta, entries) = staged_delta(session)?;
+    let (delta, entries, staged) = staged_state(session)?;
     if entries.is_empty()
         || !repository
             .has_staged_changes()
@@ -303,6 +413,11 @@ pub fn prepare(session: &Session, write: bool) -> Result<Output, EnvError> {
     {
         return Err(to_env(change::ChangeError::Untracked));
     }
+
+    // A transaction names real work (D-049). A reference that resolves to nothing, or to
+    // a decision or a milestone, wrote an `AKR-Work` trailer that linked no work record
+    // to the commit — every such trailer in one audited project pointed at a non-work key.
+    check_work_references(&intent, &staged)?;
 
     // Several work records moved and none was chosen: the subject can only be about one
     // of them, and guessing produces a message that misdescribes the commit.
@@ -331,6 +446,13 @@ pub fn prepare(session: &Session, write: bool) -> Result<Output, EnvError> {
         delta.transitions.len()
     ));
     text.push_str(&format!("  code             {} files\n", delta.code.len()));
+    if !delta.trace.is_empty() {
+        text.push_str(&format!(
+            "  why              {} trace entr{} — the commit's AKR-Why trailers\n",
+            delta.trace.len(),
+            if delta.trace.len() == 1 { "y" } else { "ies" }
+        ));
+    }
 
     if write {
         intent.prepared_tree = Some(tree.clone());
@@ -444,15 +566,54 @@ pub fn log(session: &Session, reference: &str) -> Result<Output, EnvError> {
 /// `akr change verify --staged` runs.
 pub fn install_hooks(session: &Session) -> Result<Output, EnvError> {
     let repository = repository(session)?;
+    let written = write_hooks(repository, true)?.written;
+    Ok(Output::plain(
+        format!("installed {} hooks\n", written.len()),
+        Value::object(vec![(
+            "hooks",
+            Value::array(written.iter().map(|h| Value::string(h.clone())).collect()),
+        )]),
+    ))
+}
+
+/// The hooks AKR installs.
+const HOOKS: [&str; 2] = ["pre-commit", "commit-msg"];
+
+/// What [`write_hooks`] did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HookReport {
+    /// Hooks written.
+    pub written: Vec<String>,
+    /// Hooks that already existed, were not AKR's, and were left alone.
+    pub kept: Vec<String>,
+}
+
+/// Writes the two hook wrappers into the repository's hooks directory.
+///
+/// With `overwrite` false — how `akr init` calls it (D-049) — a hook somebody else put
+/// there is kept: installing by default must not silently replace a project's own
+/// pre-commit. `akr git install-hooks` is the explicit request and overwrites.
+///
+/// # Errors
+/// `AKR-G001` when git cannot name the hooks directory; `AKR-C042` when it cannot be
+/// written.
+pub fn write_hooks(repository: &Repository, overwrite: bool) -> Result<HookReport, EnvError> {
     let dir = repository
         .git_path("hooks")
         .map_err(|e| EnvError::new("AKR-G001", e.to_string()))?;
     std::fs::create_dir_all(&dir)
         .map_err(|e| EnvError::new("AKR-C042", format!("cannot create {}: {e}", dir.display())))?;
 
-    let mut written = Vec::new();
-    for hook in ["pre-commit", "commit-msg"] {
+    let mut report = HookReport::default();
+    for hook in HOOKS {
         let path = dir.join(hook);
+        if !overwrite
+            && let Ok(existing) = std::fs::read_to_string(&path)
+            && !existing.contains("akr git-hook")
+        {
+            report.kept.push(hook.to_owned());
+            continue;
+        }
         let body = format!("#!/bin/sh\nexec akr git-hook {hook} \"$@\"\n");
         std::fs::write(&path, body).map_err(|e| {
             EnvError::new("AKR-C042", format!("cannot write {}: {e}", path.display()))
@@ -462,15 +623,22 @@ pub fn install_hooks(session: &Session) -> Result<Output, EnvError> {
             use std::os::unix::fs::PermissionsExt;
             let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755));
         }
-        written.push(hook.to_owned());
+        report.written.push(hook.to_owned());
     }
-    Ok(Output::plain(
-        format!("installed {} hooks\n", written.len()),
-        Value::object(vec![(
-            "hooks",
-            Value::array(written.iter().map(|h| Value::string(h.clone())).collect()),
-        )]),
-    ))
+    Ok(report)
+}
+
+/// Whether this worktree's repository has AKR's `pre-commit` hook.
+///
+/// `false` when the answer cannot be had: the session head mentions absent hooks, and a
+/// repository git cannot describe is not one to nag about.
+#[must_use]
+pub fn hooks_installed(repository: &Repository) -> Option<bool> {
+    let dir = repository.git_path("hooks").ok()?;
+    Some(
+        std::fs::read_to_string(dir.join("pre-commit"))
+            .is_ok_and(|text| text.contains("akr git-hook")),
+    )
 }
 
 /// `akr git-hook <name>` — what the installed hooks call.

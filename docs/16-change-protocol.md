@@ -108,15 +108,12 @@ akr change begin --kind chore --scope ci \
 
 ## 6. The generated message
 
-Five sources and no sixth: the transaction summary becomes the subject, the primary work
-record's intent explains why, the semantic delta says what happened, the evidence records
-say what was verified, and the trailers carry the links.
+Five sources and no sixth: the transaction summary becomes the subject, the semantic delta
+says what happened, the evidence records say what was verified, the trace entries the
+change adds say why, and the trailers carry the links.
 
 ```text
 fix(tone): gate reconstructed highlight chroma by uncertainty
-
-Restore the display-linear near-white proxy and combine it with the
-reconstruction uncertainty map.
 
 - raw.work.slice-6-uncertainty-gated-chroma active -> completed
 - raw.work.slice-8-local-tone-hdr proposed -> active
@@ -126,10 +123,19 @@ Verified by:
 
 AKR-Change: chg-01k25r5t4g8f7b2n
 AKR-Work: @raw.work.slice-6-uncertainty-gated-chroma/2
+AKR-Why: near-white proxy alone clipped skin: the uncertainty map says where reconstruction guessed
+AKR-Why: dropped the global chroma cap: it desaturated sunsets that were never clipped
 AKR-Evidence: @raw.evidence.slice-6-verify/1
 AKR-Graph: sha256:5a0aa895...
 AKR-Tree: 41cd7e...
 ```
+
+**The message does not copy the work record's `intent`.** It used to open with it, which
+put the same prose in the ledger and in git, and agents then copied it by hand a third
+time (`docs/19`). The reasons a commit carries are the ones written for it: each `trace`
+entry the staged tree adds to a work record becomes one `AKR-Why:` trailer (D-047).
+`akr change begin --why "<reason>"` is `akr trace` on the `--primary` record, so a reason
+given at the start is written once, onto the work it explains.
 
 The full evidence record does not go in. Git wants a concise historical explanation; the
 ledger keeps the method, artefacts, commands, metrics and acceptance mapping. A second copy
@@ -151,8 +157,13 @@ and staged tree. Passing `-m` through the wrapper therefore cannot discard the d
 
 ## 7. Trailers, not stored commit hashes
 
-`AKR-Change`, `AKR-Work`, `AKR-Evidence`, `AKR-Decision`, `AKR-Graph`, `AKR-Tree` — all
-`git interpret-trailers`-compatible.
+`AKR-Change`, `AKR-Work`, `AKR-Why`, `AKR-Evidence`, `AKR-Decision`, `AKR-Graph`, `AKR-Tree`
+— all `git interpret-trailers`-compatible.
+
+`AKR-Work` names a work record, in the `@key` form the readers search for.
+`akr change prepare` resolves `--primary` and `--related` in the staged ledger and refuses
+a reference that names nothing or names a record of another kind; a bare key is rewritten
+to `@key` when the transaction opens (D-049).
 
 The link points *from the commit to the records*, which is the direction with no hash
 cycle. Trailers survive ordinary rebases, usually survive cherry-picks, can be collected
@@ -206,6 +217,12 @@ exec akr git-hook pre-commit "$@"
 The checks stay in the binary. A hook that carried them would be a second implementation
 nobody keeps in step with the first, and hooks are bypassable anyway — CI is the final
 authority.
+
+**`akr init` installs them** in a git repository, unless `--no-hooks` is given (D-049). A
+hook that is already there and is not AKR's is kept, and the command says so. Hooks live in
+the git directory and are never cloned, so a fresh checkout has none; `akr start` says so
+in one line and names this command. They were opt-in until 0.7, and the measured result
+across three projects was that fewer than 6% of work records were ever named by a commit.
 
 **A commit that changes only its message passes.** The transaction closes at
 `akr git commit`, so every later commit in the worktree meets a hook with no transaction

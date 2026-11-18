@@ -7,8 +7,174 @@
 
 use akr_core::json::Value;
 
+/// Every tool in the closed MCP catalogue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ToolId {
+    /// `knowledge.secret_put`
+    SecretPut,
+    /// `knowledge.secret_get`
+    SecretGet,
+    /// `knowledge.secret_resolve`
+    SecretResolve,
+    /// `knowledge.config_get`
+    ConfigGet,
+    /// `knowledge.config_edit`
+    ConfigEdit,
+    /// `knowledge.search`
+    Search,
+    /// `knowledge.start`
+    Start,
+    /// `knowledge.explain`
+    Explain,
+    /// `knowledge.get`
+    Get,
+    /// `knowledge.context`
+    Context,
+    /// `knowledge.source_list`
+    SourceList,
+    /// `knowledge.source_add`
+    SourceAdd,
+    /// `knowledge.source_search`
+    SourceSearch,
+    /// `knowledge.source_get`
+    SourceGet,
+    /// `knowledge.source_verify`
+    SourceVerify,
+    /// `knowledge.source_supersede`
+    SourceSupersede,
+    /// `knowledge.source_status`
+    SourceStatus,
+    /// `knowledge.source_dependents`
+    SourceDependents,
+    /// `knowledge.source_finalize`
+    SourceFinalize,
+    /// `knowledge.impact`
+    Impact,
+    /// `knowledge.validate`
+    Validate,
+    /// `knowledge.propose`
+    Propose,
+    /// `knowledge.propose_many`
+    ProposeMany,
+    /// `knowledge.revise`
+    Revise,
+    /// `knowledge.supersede`
+    Supersede,
+    /// `knowledge.complete`
+    Complete,
+    /// `knowledge.trace`
+    Trace,
+    /// `knowledge.evidence_add`
+    EvidenceAdd,
+    /// `knowledge.evidence_add_many`
+    EvidenceAddMany,
+    /// `knowledge.handoff_capsule`
+    HandoffCapsule,
+    /// `knowledge.handoff_session_begin`
+    HandoffSessionBegin,
+    /// `knowledge.handoff_session_show`
+    HandoffSessionShow,
+    /// `knowledge.handoff_session_end`
+    HandoffSessionEnd,
+    /// `knowledge.handoff_create`
+    HandoffCreate,
+    /// `knowledge.handoff_list`
+    HandoffList,
+    /// `knowledge.handoff_open`
+    HandoffOpen,
+    /// `knowledge.handoff_expand`
+    HandoffExpand,
+    /// `knowledge.handoff_reveal`
+    HandoffReveal,
+    /// `knowledge.handoff_verify`
+    HandoffVerify,
+    /// `knowledge.handoff_result`
+    HandoffResult,
+    /// `knowledge.handoff_results`
+    HandoffResults,
+    /// `knowledge.handoff_coverage`
+    HandoffCoverage,
+    /// `knowledge.handoff_discard`
+    HandoffDiscard,
+    /// `knowledge.papercut`
+    Papercut,
+}
+
+impl ToolId {
+    /// The canonical dotted tool name.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::SecretPut => "knowledge.secret_put",
+            Self::SecretGet => "knowledge.secret_get",
+            Self::SecretResolve => "knowledge.secret_resolve",
+            Self::ConfigGet => "knowledge.config_get",
+            Self::ConfigEdit => "knowledge.config_edit",
+            Self::Search => "knowledge.search",
+            Self::Start => "knowledge.start",
+            Self::Explain => "knowledge.explain",
+            Self::Get => "knowledge.get",
+            Self::Context => "knowledge.context",
+            Self::SourceList => "knowledge.source_list",
+            Self::SourceAdd => "knowledge.source_add",
+            Self::SourceSearch => "knowledge.source_search",
+            Self::SourceGet => "knowledge.source_get",
+            Self::SourceVerify => "knowledge.source_verify",
+            Self::SourceSupersede => "knowledge.source_supersede",
+            Self::SourceStatus => "knowledge.source_status",
+            Self::SourceDependents => "knowledge.source_dependents",
+            Self::SourceFinalize => "knowledge.source_finalize",
+            Self::Impact => "knowledge.impact",
+            Self::Validate => "knowledge.validate",
+            Self::Propose => "knowledge.propose",
+            Self::ProposeMany => "knowledge.propose_many",
+            Self::Revise => "knowledge.revise",
+            Self::Supersede => "knowledge.supersede",
+            Self::Complete => "knowledge.complete",
+            Self::Trace => "knowledge.trace",
+            Self::EvidenceAdd => "knowledge.evidence_add",
+            Self::EvidenceAddMany => "knowledge.evidence_add_many",
+            Self::HandoffCapsule => "knowledge.handoff_capsule",
+            Self::HandoffSessionBegin => "knowledge.handoff_session_begin",
+            Self::HandoffSessionShow => "knowledge.handoff_session_show",
+            Self::HandoffSessionEnd => "knowledge.handoff_session_end",
+            Self::HandoffCreate => "knowledge.handoff_create",
+            Self::HandoffList => "knowledge.handoff_list",
+            Self::HandoffOpen => "knowledge.handoff_open",
+            Self::HandoffExpand => "knowledge.handoff_expand",
+            Self::HandoffReveal => "knowledge.handoff_reveal",
+            Self::HandoffVerify => "knowledge.handoff_verify",
+            Self::HandoffResult => "knowledge.handoff_result",
+            Self::HandoffResults => "knowledge.handoff_results",
+            Self::HandoffCoverage => "knowledge.handoff_coverage",
+            Self::HandoffDiscard => "knowledge.handoff_discard",
+            Self::Papercut => "knowledge.papercut",
+        }
+    }
+
+    /// Resolves either the dotted or underscored host-safe name.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        TOOLS
+            .iter()
+            .find(|tool| tool.name == name || host_safe_name(tool.name) == name)
+            .map(|tool| tool.id)
+    }
+
+    /// Whether the tool mutates the workspace.
+    #[must_use]
+    pub fn writes(self) -> bool {
+        TOOLS
+            .iter()
+            .find(|tool| tool.id == self)
+            .is_some_and(|tool| tool.writes)
+    }
+}
+
 /// One tool, as `tools/list` reports it.
 pub struct Tool {
+    /// Typed tool identifier.
+    pub id: ToolId,
     /// The tool name.
     pub name: &'static str,
     /// One line, shown to the agent.
@@ -25,34 +191,58 @@ pub struct Tool {
 /// The catalogue, in §2's order.
 pub const TOOLS: &[Tool] = &[
     Tool {
-        name: "knowledge.config_get",
+        id: ToolId::SecretPut,
+        name: ToolId::SecretPut.name(),
+        description: "Store a local-only secret entry from a private UTF-8 file. Returns an opaque {{secret:<id>}} citation, never the value. Cite it in public text; public outputs render [*]. Keep the input file private too.",
+        writes: true,
+    },
+    Tool {
+        id: ToolId::SecretGet,
+        name: ToolId::SecretGet.name(),
+        description: "Read a private citation: [*] by default and when absent. Only reveal=true returns local data; do not reveal credentials to a remote agent.",
+        writes: false,
+    },
+    Tool {
+        id: ToolId::SecretResolve,
+        name: ToolId::SecretResolve.name(),
+        description: "Render citations in a local document: [*] by default; reveal=true explicitly reads local values. Never write resolved output to public records or published files.",
+        writes: false,
+    },
+    Tool {
+        id: ToolId::ConfigGet,
+        name: ToolId::ConfigGet.name(),
         description: "Read .akr/project.akr through the supported configuration surface (akr config show).",
         writes: false,
     },
     Tool {
-        name: "knowledge.config_edit",
+        id: ToolId::ConfigEdit,
+        name: ToolId::ConfigEdit.name(),
         description: "Edit project configuration through the locked, validated write pipeline. Matches akr config set and config untracked add/remove; invalid edits write nothing. Run akr build afterwards.",
         writes: true,
     },
     Tool {
-        name: "knowledge.search",
+        id: ToolId::Search,
+        name: ToolId::Search.name(),
         description: "Search the ledger. Ranks; never authorises — nothing enters a context \
                       bundle because it matched a query. A missing or stale disposable index \
                       is refreshed from the loaded ledger before results are returned.",
         writes: false,
     },
     Tool {
-        name: "knowledge.start",
+        id: ToolId::Start,
+        name: ToolId::Start.name(),
         description: "Read the validated project handoff, then orient a new task to nearby planning records.",
         writes: false,
     },
     Tool {
-        name: "knowledge.explain",
+        id: ToolId::Explain,
+        name: ToolId::Explain.name(),
         description: "Explain a diagnostic code, rule identifier, or record kind.",
         writes: false,
     },
     Tool {
-        name: "knowledge.get",
+        id: ToolId::Get,
+        name: ToolId::Get.name(),
         description: "Retrieve one record by reference. `detail` controls the size: \
                       `summary`, `body` (default: includes acceptance checks), or \
                       `canonical` for the raw AKR source text. Ask for canonical only \
@@ -60,23 +250,27 @@ pub const TOOLS: &[Tool] = &[
         writes: false,
     },
     Tool {
-        name: "knowledge.context",
+        id: ToolId::Context,
+        name: ToolId::Context.name(),
         description: "Assemble the deterministic context bundle for a goal: what governs \
                       this work, what it rests on, and what is questionable.",
         writes: false,
     },
     Tool {
-        name: "knowledge.source_list",
+        id: ToolId::SourceList,
+        name: ToolId::SourceList.name(),
         description: "List registered source documents and their retention state.",
         writes: false,
     },
     Tool {
-        name: "knowledge.source_add",
+        id: ToolId::SourceAdd,
+        name: ToolId::SourceAdd.name(),
         description: "Register an immutable source document from a local path.",
         writes: true,
     },
     Tool {
-        name: "knowledge.source_search",
+        id: ToolId::SourceSearch,
+        name: ToolId::SourceSearch.name(),
         description: "Search the immutable source library — registered outside advice, \
                       audits and reports. Results are NON-AUTHORITATIVE: they say where a \
                       passage is, never that the project adopted it. Punctuation is safe \
@@ -84,58 +278,82 @@ pub const TOOLS: &[Tool] = &[
         writes: false,
     },
     Tool {
-        name: "knowledge.source_get",
+        id: ToolId::SourceGet,
+        name: ToolId::SourceGet.name(),
         description: "Read a passage of a registered source. NON-AUTHORITATIVE. The \
                       default detail is `section`, not the whole document; ask for \
                       `whole` only when the entire report is genuinely wanted.",
         writes: false,
     },
     Tool {
-        name: "knowledge.source_verify",
+        id: ToolId::SourceVerify,
+        name: ToolId::SourceVerify.name(),
         description: "Verify hashes and retained fragments of every registered source.",
         writes: false,
     },
     Tool {
-        name: "knowledge.source_supersede",
+        id: ToolId::SourceSupersede,
+        name: ToolId::SourceSupersede.name(),
         description: "Replace a registered source with a new immutable version.",
         writes: true,
     },
     Tool {
-        name: "knowledge.source_status",
+        id: ToolId::SourceStatus,
+        name: ToolId::SourceStatus.name(),
         description: "Show one source's availability, references, and retained fragments.",
         writes: false,
     },
     Tool {
-        name: "knowledge.source_dependents",
+        id: ToolId::SourceDependents,
+        name: ToolId::SourceDependents.name(),
         description: "List exact and lineage record references to a source.",
         writes: false,
     },
     Tool {
-        name: "knowledge.source_finalize",
+        id: ToolId::SourceFinalize,
+        name: ToolId::SourceFinalize.name(),
         description: "Retain cited fragments or metadata, then optionally remove the full source.",
         writes: true,
     },
     Tool {
-        name: "knowledge.impact",
+        id: ToolId::Impact,
+        name: ToolId::Impact.name(),
         description: "What rests on a record, or what a commit range would invalidate. Call \
                       before proposing a supersession.",
         writes: false,
     },
     Tool {
-        name: "knowledge.validate",
+        id: ToolId::Validate,
+        name: ToolId::Validate.name(),
         description: "Run stages A-D over the ledger as it stands on disk. Call after a \
                       batch of writes and before handing work back to a human.",
         writes: false,
     },
     Tool {
-        name: "knowledge.propose",
+        id: ToolId::Propose,
+        name: ToolId::Propose.name(),
         description: "Create revision 1 of a new key. An existing key is an error: a \
                       proposal is never silently turned into a revision. Pass `acceptance` \
-                      to author its checks — required for a milestone (V-008).",
+                      to author its checks — required for a milestone (V-008). To create \
+                      several connected records in one atomic pass (such as a track plus \
+                      ordered milestones linked by `part_of` or `after`), use \
+                      `knowledge.propose_many` instead of parallel or sequential calls.",
         writes: true,
     },
     Tool {
-        name: "knowledge.revise",
+        id: ToolId::ProposeMany,
+        name: ToolId::ProposeMany.name(),
+        description: "Create revision 1 of several new keys (1–100) in one atomic pass. All \
+                      records are parsed, lowered, and validated together before anything is \
+                      written, so forward or mutual references (`part_of`, `after`, \
+                      `depends_on`, `plan_of_record`, `implements`) between records in the \
+                      same batch resolve without sequential calls. Either every record lands \
+                      or none does.",
+        writes: true,
+    },
+    Tool {
+        id: ToolId::Revise,
+        name: ToolId::Revise.name(),
         description: "Create the next revision of an existing key. `base_rev` must equal \
                       the current head, or the call fails with a conflict. An explicit \
                       state lands on the successor; changed sealed content without one \
@@ -143,7 +361,8 @@ pub const TOOLS: &[Tool] = &[
         writes: true,
     },
     Tool {
-        name: "knowledge.supersede",
+        id: ToolId::Supersede,
+        name: ToolId::Supersede.name(),
         description: "Replace a record in one atomic write, disposing of every unfinished \
                       part_of child. A new_key that does not exist is created from the \
                       propose-style content fields in the same write — the way to replace \
@@ -154,56 +373,79 @@ pub const TOOLS: &[Tool] = &[
         writes: true,
     },
     Tool {
-        name: "knowledge.complete",
+        id: ToolId::Complete,
+        name: ToolId::Complete.name(),
         description: "Move a milestone or work record to completed. Every acceptance check \
-                      must be satisfied by passing evidence — create it first with \
-                      knowledge.evidence_add, then cite it here as a D-009 reference, e.g. \
-                      {\"checks\": {\"no-placeholder-assets\": \
+                      must be satisfied. A `command` check you ran and saw pass records \
+                      itself: {\"checks\": {\"suite\": {\"passed_at\": \"HEAD\"}}} — no \
+                      evidence record (D-048). Anything else cites evidence created with \
+                      knowledge.evidence_add: {\"checks\": {\"no-placeholder-assets\": \
                       \"@sys.evidence.asset-audit/1\"}}.",
         writes: true,
     },
     Tool {
-        name: "knowledge.evidence_add",
-        description: "Record what was observed: result, method, and the commit it was \
-                      observed at (defaults to HEAD). Deliberately has no field for what \
-                      the evidence verifies (D-016) — cite it from a check's verified_by \
-                      or from knowledge.complete.",
+        id: ToolId::Trace,
+        name: ToolId::Trace.name(),
+        description: "Append why to a work record, a line at a time (D-047). Part of your \
+                      job is to help the next agent understand what happened here: what \
+                      was asked, what you found in the code as it stood, and why that led \
+                      to what you did — dead ends included. One reason per entry, about \
+                      25 words (40 is refused); more entries for a change with more \
+                      impact, never longer ones. Never restate the diff: git has it. \
+                      Edits the head in place: no revision, no acceptance check reopened.",
         writes: true,
     },
     Tool {
-        name: "knowledge.evidence_add_many",
+        id: ToolId::EvidenceAdd,
+        name: ToolId::EvidenceAdd.name(),
+        description: "Record what was observed: result, method, and the commit it was \
+                      observed at (defaults to HEAD). For a measurement, a failure, an \
+                      artefact or a manual observation — a `command` check that simply \
+                      passed needs no evidence record (knowledge.complete, passed_at). \
+                      Deliberately has no field for what the evidence verifies (D-016) — \
+                      cite it from a check's verified_by or from knowledge.complete.",
+        writes: true,
+    },
+    Tool {
+        id: ToolId::EvidenceAddMany,
+        name: ToolId::EvidenceAddMany.name(),
         description: "Record up to 100 evidence observations atomically. The workspace is \
                       opened once and the resulting ledger is validated and written once; \
                       if any item is invalid, none are written.",
         writes: true,
     },
     Tool {
-        name: "knowledge.handoff_capsule",
+        id: ToolId::HandoffCapsule,
+        name: ToolId::HandoffCapsule.name(),
         description: "The project capsule: toolchain, layout, build and test commands, namespaces,\
                       what is authoritative and what is generated. Derived from the workspace, so\
                       no agent has to rediscover it.",
         writes: false,
     },
     Tool {
-        name: "knowledge.handoff_session_begin",
+        id: ToolId::HandoffSessionBegin,
+        name: ToolId::HandoffSessionBegin.name(),
         description: "Open a handoff session. `request` is the user's request VERBATIM; every\
                       packet cut afterwards inherits it, and a narrowed assignment renders beneath\
                       it so the narrowing stays visible. Call this once, before delegating.",
         writes: true,
     },
     Tool {
-        name: "knowledge.handoff_session_show",
+        id: ToolId::HandoffSessionShow,
+        name: ToolId::HandoffSessionShow.name(),
         description: "The open session: its verbatim request, workspace drift, and every packet\
                       cut from it with whether it has answered.",
         writes: false,
     },
     Tool {
-        name: "knowledge.handoff_session_end",
+        id: ToolId::HandoffSessionEnd,
+        name: ToolId::HandoffSessionEnd.name(),
         description: "Close the open session. Its capsule and packets stay readable.",
         writes: true,
     },
     Tool {
-        name: "knowledge.handoff_create",
+        id: ToolId::HandoffCreate,
+        name: ToolId::HandoffCreate.name(),
         description: "Cut a packet for another agent. `mode` decides what it sees of YOUR\
                       judgement: worker (sees your notes - continuing your job), scout (withheld -\
                       exploring independently), reviewer (withheld - checking your output),\
@@ -213,13 +455,15 @@ pub const TOOLS: &[Tool] = &[
         writes: true,
     },
     Tool {
-        name: "knowledge.handoff_list",
+        id: ToolId::HandoffList,
+        name: ToolId::HandoffList.name(),
         description: "The packets this workspace holds, with mode, role, and whether each is\
                       answered.",
         writes: false,
     },
     Tool {
-        name: "knowledge.handoff_open",
+        id: ToolId::HandoffOpen,
+        name: ToolId::HandoffOpen.name(),
         description: "Open a packet: the mode's contract, the verbatim request, your assignment\
                       and scope, the inherited project and session capsules, what earlier\
                       packets already read and ran, what is already established, what not to\
@@ -229,50 +473,58 @@ pub const TOOLS: &[Tool] = &[
         writes: false,
     },
     Tool {
-        name: "knowledge.handoff_expand",
+        id: ToolId::HandoffExpand,
+        name: ToolId::HandoffExpand.name(),
         description: "Read one section of a packet: task, workspace, project, session, scope,\
                       assignment or inherited (what earlier packets read, ran and changed).\
                       Cheaper than re-opening the whole packet.",
         writes: false,
     },
     Tool {
-        name: "knowledge.handoff_reveal",
+        id: ToolId::HandoffReveal,
+        name: ToolId::HandoffReveal.name(),
         description: "Release the parent's worker notes, and record that it happened. Call it\
                       after your own pass, then compare: what did either side miss?",
         writes: true,
     },
     Tool {
-        name: "knowledge.handoff_verify",
+        id: ToolId::HandoffVerify,
+        name: ToolId::HandoffVerify.name(),
         description: "Does the packet still describe this tree? Reports exact or drifted, and\
                       names what moved.",
         writes: false,
     },
     Tool {
-        name: "knowledge.handoff_result",
+        id: ToolId::HandoffResult,
+        name: ToolId::HandoffResult.name(),
         description: "File what you found. Findings, evidence, changes, uncertainties, follow-up -\
                       and COVERAGE: what you read, searched, ran, and deliberately did not open.\
                       Coverage is what stops the next agent re-reading what you already read.",
         writes: true,
     },
     Tool {
-        name: "knowledge.handoff_results",
+        id: ToolId::HandoffResults,
+        name: ToolId::HandoffResults.name(),
         description: "Read what came back, for one packet or for the whole open session.",
         writes: false,
     },
     Tool {
-        name: "knowledge.handoff_coverage",
+        id: ToolId::HandoffCoverage,
+        name: ToolId::HandoffCoverage.name(),
         description: "What the session has and has not looked at, rolled up across every result.\
                       Delegate the next wave against this rather than against a hunch.",
         writes: false,
     },
     Tool {
-        name: "knowledge.handoff_discard",
+        id: ToolId::HandoffDiscard,
+        name: ToolId::HandoffDiscard.name(),
         description: "Delete a packet, capsule or result. All of it is disposable; nothing durable\
                       is lost.",
         writes: true,
     },
     Tool {
-        name: "knowledge.papercut",
+        id: ToolId::Papercut,
+        name: ToolId::Papercut.name(),
         description: "Log a small friction hit while working — a tool call that missed \
                       and had to be retried, a confusing setup step, a flaky command, a \
                       stale cache, a misleading error, a non-obvious gotcha. One or two \
@@ -300,9 +552,7 @@ pub fn host_safe_name(name: &str) -> String {
 /// the underscored one [`host_safe_name`] advertises.
 #[must_use]
 pub fn canonical_tool_name(name: &str) -> Option<&'static str> {
-    TOOLS.iter().find_map(|tool| {
-        (tool.name == name || host_safe_name(tool.name) == name).then_some(tool.name)
-    })
+    ToolId::from_name(name).map(ToolId::name)
 }
 
 /// Whether `name` matches Grok Build 1.0.25's advertised-tool regex.
@@ -321,10 +571,54 @@ pub fn is_host_safe_name(name: &str) -> bool {
 /// The input schema for a tool, or `None` if the name is unknown.
 #[must_use]
 pub fn input_schema(name: &str) -> Option<Value> {
-    let name = canonical_tool_name(name).unwrap_or(name);
-    let schema = match name {
-        "knowledge.config_get" => object(Vec::new(), &[]),
-        "knowledge.config_edit" => object(
+    ToolId::from_name(name).map(input_schema_for)
+}
+
+/// The input schema for a typed tool identifier.
+#[must_use]
+pub fn input_schema_for(id: ToolId) -> Value {
+    match id {
+        ToolId::SecretPut => object(
+            vec![(
+                "from",
+                string(
+                    "Private local UTF-8 input file. Contents are stored locally and never echoed; keep this input file private too.",
+                ),
+            )],
+            &["from"],
+        ),
+        ToolId::SecretGet => object(
+            vec![
+                (
+                    "ref",
+                    string("Opaque {{secret:<id>}} citation or 32 lowercase hex identifier."),
+                ),
+                (
+                    "reveal",
+                    boolean(
+                        "Explicitly allow the local value in this tool response. Default false ([*]); do not reveal credentials to remote agents.",
+                    ),
+                ),
+            ],
+            &["ref"],
+        ),
+        ToolId::SecretResolve => object(
+            vec![
+                (
+                    "from",
+                    string("Local document with inline opaque secret citations; never modified."),
+                ),
+                (
+                    "reveal",
+                    boolean(
+                        "Explicitly allow local values in this response. Default false ([*]); resolved output must stay private.",
+                    ),
+                ),
+            ],
+            &["from"],
+        ),
+        ToolId::ConfigGet => object(Vec::new(), &[]),
+        ToolId::ConfigEdit => object(
             vec![
                 (
                     "action",
@@ -344,7 +638,7 @@ pub fn input_schema(name: &str) -> Option<Value> {
             ],
             &["action"],
         ),
-        "knowledge.search" => object(
+        ToolId::Search => object(
             vec![
                 (
                     "query",
@@ -366,7 +660,7 @@ pub fn input_schema(name: &str) -> Option<Value> {
             ],
             &["query"],
         ),
-        "knowledge.start" => object(
+        ToolId::Start => object(
             vec![
                 ("task", string("What the agent should start working on.")),
                 ("paths", string_array("Path globs the work will touch.")),
@@ -374,14 +668,14 @@ pub fn input_schema(name: &str) -> Option<Value> {
             ],
             &["task"],
         ),
-        "knowledge.explain" => object(
+        ToolId::Explain => object(
             vec![(
                 "subject",
                 string("Diagnostic code, rule id, or record kind to explain."),
             )],
             &["subject"],
         ),
-        "knowledge.get" => object(
+        ToolId::Get => object(
             vec![
                 (
                     "ref",
@@ -406,7 +700,7 @@ pub fn input_schema(name: &str) -> Option<Value> {
             ],
             &["ref"],
         ),
-        "knowledge.context" => object(
+        ToolId::Context => object(
             vec![
                 (
                     "goal",
@@ -421,14 +715,14 @@ pub fn input_schema(name: &str) -> Option<Value> {
             ],
             &["goal"],
         ),
-        "knowledge.source_list" => object(
+        ToolId::SourceList => object(
             vec![(
                 "all_versions",
                 boolean("Include superseded source registrations."),
             )],
             &[],
         ),
-        "knowledge.source_add" => object(
+        ToolId::SourceAdd => object(
             vec![
                 ("path", string("Local Markdown file to register.")),
                 ("id", string("Optional stable source id.")),
@@ -439,7 +733,7 @@ pub fn input_schema(name: &str) -> Option<Value> {
             ],
             &["path"],
         ),
-        "knowledge.source_search" => object(
+        ToolId::SourceSearch => object(
             vec![
                 ("query", string("What to look for. Punctuation is safe.")),
                 (
@@ -469,7 +763,7 @@ pub fn input_schema(name: &str) -> Option<Value> {
             ],
             &["query"],
         ),
-        "knowledge.source_get" => object(
+        ToolId::SourceGet => object(
             vec![
                 (
                     "chunk",
@@ -493,8 +787,8 @@ pub fn input_schema(name: &str) -> Option<Value> {
             ],
             &[],
         ),
-        "knowledge.source_verify" => object(Vec::new(), &[]),
-        "knowledge.source_supersede" => object(
+        ToolId::SourceVerify => object(Vec::new(), &[]),
+        ToolId::SourceSupersede => object(
             vec![
                 ("old_id", string("Existing source id.")),
                 ("new_path", string("Local replacement Markdown file.")),
@@ -502,9 +796,9 @@ pub fn input_schema(name: &str) -> Option<Value> {
             ],
             &["old_id", "new_path"],
         ),
-        "knowledge.source_status" => object(vec![("id", string("Source id."))], &["id"]),
-        "knowledge.source_dependents" => object(vec![("id", string("Source id."))], &["id"]),
-        "knowledge.source_finalize" => object(
+        ToolId::SourceStatus => object(vec![("id", string("Source id."))], &["id"]),
+        ToolId::SourceDependents => object(vec![("id", string("Source id."))], &["id"]),
+        ToolId::SourceFinalize => object(
             vec![
                 ("id", string("Source id.")),
                 ("retain", string("cited (default) or metadata.")),
@@ -520,7 +814,7 @@ pub fn input_schema(name: &str) -> Option<Value> {
             ],
             &["id"],
         ),
-        "knowledge.impact" => object(
+        ToolId::Impact => object(
             vec![
                 (
                     "ref",
@@ -537,7 +831,7 @@ pub fn input_schema(name: &str) -> Option<Value> {
             ],
             &[],
         ),
-        "knowledge.validate" => object(
+        ToolId::Validate => object(
             vec![
                 (
                     "review_clean",
@@ -556,40 +850,27 @@ pub fn input_schema(name: &str) -> Option<Value> {
             ],
             &[],
         ),
-        "knowledge.propose" => object(
-            vec![
-                (
-                    "key",
-                    string(
-                        "The new logical key, dot-delimited: namespace.topic.slug. The \
-                         first segment must be a namespace declared in .akr/project.akr.",
+        ToolId::Propose => propose_record_schema(),
+        ToolId::ProposeMany => object(
+            vec![(
+                "records",
+                Value::object(vec![
+                    ("type", Value::string("array")),
+                    (
+                        "description",
+                        Value::string(
+                            "Records to create in one atomic transaction. Sibling records in \
+                             this array may reference each other.",
+                        ),
                     ),
-                ),
-                ("kind", kind_schema()),
-                ("title", string("The one-line label.")),
-                ("state", string("Override the class's initial state.")),
-                ("scope", scope_schema()),
-                (
-                    "topic",
-                    string(
-                        "The exclusivity handle, normative kinds only. A topic is one \
-                         lowercase ASCII segment containing letters, digits or internal \
-                         hyphens; it is not a dot-delimited key.",
-                    ),
-                ),
-                ("slots", slots_schema()),
-                ("claims", claims_schema()),
-                ("relations", relations_schema()),
-                (
-                    "acceptance",
-                    acceptance_schema("Required to propose a milestone (V-008)."),
-                ),
-                ("sources", sources_schema()),
-                ("acknowledged", acknowledged_schema()),
-            ],
-            &["key", "kind", "title"],
+                    ("items", propose_record_schema()),
+                    ("minItems", Value::integer(1)),
+                    ("maxItems", Value::integer(100)),
+                ]),
+            )],
+            &["records"],
         ),
-        "knowledge.revise" => object(
+        ToolId::Revise => object(
             vec![
                 ("key", string("The key to revise.")),
                 ("title", string("Replace the title.")),
@@ -628,7 +909,7 @@ pub fn input_schema(name: &str) -> Option<Value> {
             ],
             &["key", "base_rev"],
         ),
-        "knowledge.supersede" => object(
+        ToolId::Supersede => object(
             vec![
                 ("old_key", string("The key whose head is retired.")),
                 (
@@ -671,7 +952,7 @@ pub fn input_schema(name: &str) -> Option<Value> {
             ],
             &["old_key"],
         ),
-        "knowledge.complete" => object(
+        ToolId::Complete => object(
             vec![
                 ("key", string("The milestone or work record to complete.")),
                 (
@@ -681,23 +962,61 @@ pub fn input_schema(name: &str) -> Option<Value> {
                         (
                             "description",
                             Value::string(
-                                "check id -> evidence reference, in a D-009 form: \
-                                 {\"no-placeholder-assets\": \
-                                 \"@sys.evidence.asset-audit/1\"}. Create the evidence \
+                                "check id -> how it is satisfied. For a `command` check \
+                                 that passed: {\"passed_at\": \"HEAD\"} or a full 40-hex \
+                                 commit (D-048). Otherwise an evidence reference in a \
+                                 D-009 form: \"@sys.evidence.asset-audit/1\", created \
                                  with knowledge.evidence_add first.",
                             ),
                         ),
                         (
                             "additionalProperties",
-                            Value::object(vec![("type", Value::string("string"))]),
+                            Value::object(vec![(
+                                "oneOf",
+                                Value::array(vec![
+                                    Value::object(vec![("type", Value::string("string"))]),
+                                    object(
+                                        vec![(
+                                            "passed_at",
+                                            string("HEAD, or the full 40-hex commit."),
+                                        )],
+                                        &["passed_at"],
+                                    ),
+                                ]),
+                            )]),
                         ),
                     ]),
                 ),
             ],
             &["key"],
         ),
-        "knowledge.evidence_add" => evidence_schema(),
-        "knowledge.evidence_add_many" => object(
+        ToolId::Trace => object(
+            vec![
+                ("key", string("The work record whose trace grows.")),
+                (
+                    "entries",
+                    Value::object(vec![
+                        ("type", Value::string("array")),
+                        (
+                            "description",
+                            Value::string(
+                                "One reasoning step each: why this approach, what the \
+                                 code as found forced, what was tried and dropped. About \
+                                 25 words; over 40 is AKR-T024.",
+                            ),
+                        ),
+                        (
+                            "items",
+                            Value::object(vec![("type", Value::string("string"))]),
+                        ),
+                        ("minItems", Value::integer(1)),
+                    ]),
+                ),
+            ],
+            &["key", "entries"],
+        ),
+        ToolId::EvidenceAdd => evidence_schema(),
+        ToolId::EvidenceAddMany => object(
             vec![(
                 "evidence",
                 Value::object(vec![
@@ -713,7 +1032,7 @@ pub fn input_schema(name: &str) -> Option<Value> {
             )],
             &["evidence"],
         ),
-        "knowledge.handoff_capsule" => object(
+        ToolId::HandoffCapsule => object(
             vec![
                 (
                     "refresh",
@@ -729,7 +1048,7 @@ pub fn input_schema(name: &str) -> Option<Value> {
             ],
             &[],
         ),
-        "knowledge.handoff_session_begin" => object(
+        ToolId::HandoffSessionBegin => object(
             vec![
                 (
                     "request",
@@ -768,9 +1087,9 @@ pub fn input_schema(name: &str) -> Option<Value> {
             ],
             &["request"],
         ),
-        "knowledge.handoff_session_show" => object(Vec::new(), &[]),
-        "knowledge.handoff_session_end" => object(Vec::new(), &[]),
-        "knowledge.handoff_create" => object(
+        ToolId::HandoffSessionShow => object(Vec::new(), &[]),
+        ToolId::HandoffSessionEnd => object(Vec::new(), &[]),
+        ToolId::HandoffCreate => object(
             vec![
                 (
                     "mode",
@@ -862,12 +1181,12 @@ pub fn input_schema(name: &str) -> Option<Value> {
             ],
             &["mode"],
         ),
-        "knowledge.handoff_list" => object(Vec::new(), &[]),
-        "knowledge.handoff_open" => object(
+        ToolId::HandoffList => object(Vec::new(), &[]),
+        ToolId::HandoffOpen => object(
             vec![("packet", string("The packet id, e.g. sc-7f29d3a10b44."))],
             &["packet"],
         ),
-        "knowledge.handoff_expand" => object(
+        ToolId::HandoffExpand => object(
             vec![
                 ("packet", string("The packet id.")),
                 (
@@ -880,13 +1199,9 @@ pub fn input_schema(name: &str) -> Option<Value> {
             ],
             &["packet", "section"],
         ),
-        "knowledge.handoff_reveal" => {
-            object(vec![("packet", string("The packet id."))], &["packet"])
-        }
-        "knowledge.handoff_verify" => {
-            object(vec![("packet", string("The packet id."))], &["packet"])
-        }
-        "knowledge.handoff_result" => object(
+        ToolId::HandoffReveal => object(vec![("packet", string("The packet id."))], &["packet"]),
+        ToolId::HandoffVerify => object(vec![("packet", string("The packet id."))], &["packet"]),
+        ToolId::HandoffResult => object(
             vec![
                 ("packet", string("The packet this answers.")),
                 ("by", string("Who is filing.")),
@@ -931,22 +1246,22 @@ pub fn input_schema(name: &str) -> Option<Value> {
             ],
             &["packet"],
         ),
-        "knowledge.handoff_results" => object(
+        ToolId::HandoffResults => object(
             vec![(
                 "packet",
                 string("One packet's results. Omit for every packet of the open session."),
             )],
             &[],
         ),
-        "knowledge.handoff_coverage" => object(Vec::new(), &[]),
-        "knowledge.handoff_discard" => object(
+        ToolId::HandoffCoverage => object(Vec::new(), &[]),
+        ToolId::HandoffDiscard => object(
             vec![(
                 "packet",
                 string("The id of the packet, capsule or result to remove."),
             )],
             &["packet"],
         ),
-        "knowledge.papercut" => object(
+        ToolId::Papercut => object(
             vec![
                 (
                     "message",
@@ -980,27 +1295,57 @@ pub fn input_schema(name: &str) -> Option<Value> {
             ],
             &["message", "agent"],
         ),
-        _ => return None,
-    };
-    Some(schema)
+    }
 }
 
 /// The output schema for each tool, or `None` for a name that is not one.
 ///
-/// Every tool answers with a JSON object, so this is one shape rather than twenty-nine.
-/// It used to be a `match` naming each tool and returning that same shape from every arm
-/// — a list carrying no information, and one that a new tool silently fell off: the seven
-/// `knowledge.handoff_*` tools were declared, implemented and schema'd, and still failed
-/// `no_tool_can_reach_the_sqlite_cache` for want of a line here. Deriving it from the
-/// catalogue removes the drift rather than adding seven more lines to it. `input_schema`
-/// stays a per-tool `match`, because there the arms actually differ.
+/// Every tool answers with a JSON object, so this is one shape rather than forty-four.
 #[must_use]
 pub fn output_schema(name: &str) -> Option<Value> {
-    let name = canonical_tool_name(name).unwrap_or(name);
-    TOOLS
-        .iter()
-        .any(|tool| tool.name == name)
-        .then(|| Value::object(vec![("type", Value::string("object"))]))
+    ToolId::from_name(name).map(output_schema_for)
+}
+
+/// The output schema for a typed tool identifier.
+#[must_use]
+pub fn output_schema_for(_id: ToolId) -> Value {
+    Value::object(vec![("type", Value::string("object"))])
+}
+
+fn propose_record_schema() -> Value {
+    object(
+        vec![
+            (
+                "key",
+                string(
+                    "The new logical key, dot-delimited: namespace.topic.slug. The \
+                     first segment must be a namespace declared in .akr/project.akr.",
+                ),
+            ),
+            ("kind", kind_schema()),
+            ("title", string("The one-line label.")),
+            ("state", string("Override the class's initial state.")),
+            ("scope", scope_schema()),
+            (
+                "topic",
+                string(
+                    "The exclusivity handle, normative kinds only. A topic is one \
+                     lowercase ASCII segment containing letters, digits or internal \
+                     hyphens; it is not a dot-delimited key.",
+                ),
+            ),
+            ("slots", slots_schema()),
+            ("claims", claims_schema()),
+            ("relations", relations_schema()),
+            (
+                "acceptance",
+                acceptance_schema("Required to propose a milestone (V-008)."),
+            ),
+            ("sources", sources_schema()),
+            ("acknowledged", acknowledged_schema()),
+        ],
+        &["key", "kind", "title"],
+    )
 }
 
 fn evidence_schema() -> Value {
@@ -1029,7 +1374,13 @@ fn evidence_schema() -> Value {
                 "artifact",
                 string("A repository path to the artefact, if one exists."),
             ),
-            ("summary", string("One line on what was observed.")),
+            (
+                "summary",
+                string(
+                    "What was observed, with the numbers. Not stored when it only repeats \
+                     the title.",
+                ),
+            ),
             (
                 "capture",
                 string(
@@ -1042,7 +1393,10 @@ fn evidence_schema() -> Value {
             ),
             (
                 "title",
-                string("The one-line label. Defaults to the summary or the key."),
+                string(
+                    "The one-line label. Defaults to the summary's opening words, or the \
+                     key.",
+                ),
             ),
         ],
         &["key", "result", "method"],
@@ -1054,7 +1408,8 @@ fn evidence_schema() -> Value {
 /// learns what a kind needs before the first `AKR-T001` rather than from it.
 fn kind_schema() -> Value {
     let mut description = String::from("The record kind. Contracts per kind: ");
-    for (index, kind) in akr_core::model::Kind::ALL.iter().enumerate() {
+    let written = akr_core::model::Kind::written();
+    for (index, kind) in written.iter().enumerate() {
         if index > 0 {
             description.push_str("; ");
         }
@@ -1092,13 +1447,25 @@ fn kind_schema() -> Value {
         description.push(']');
     }
     description.push('.');
+    // D-046: the retired kinds stay readable and are named here once, so an agent that
+    // remembers `requirement` learns where it went instead of meeting AKR-T008.
+    let retired: Vec<String> = akr_core::model::Kind::ALL
+        .iter()
+        .filter_map(|kind| {
+            kind.folds_into()
+                .map(|into| format!("{} -> {}", kind.name(), into.name()))
+        })
+        .collect();
+    description.push_str(" Retired, not accepted for a new key: ");
+    description.push_str(&retired.join(", "));
+    description.push('.');
     Value::object(vec![
         ("type", Value::string("string")),
         ("description", Value::string(description)),
         (
             "enum",
             Value::array(
-                akr_core::model::Kind::ALL
+                written
                     .iter()
                     .map(|kind| Value::string(kind.name()))
                     .collect(),
@@ -1168,20 +1535,14 @@ fn check_method_values() -> Vec<&'static str> {
         .collect()
 }
 
-/// The `evidence.method` values (D-016), taken from the same per-kind enum table the
-/// type-checker reads (`Kind::content_enum_values`), so this can never drift from
-/// `spec/tables/vocabulary.json`.
+/// The `evidence.method` values (D-016), taken directly from the same per-kind enum
+/// table the type-checker reads (`Kind::content_enum_values`), so this can never drift
+/// from `spec/tables/vocabulary.json`.
 fn evidence_method_values() -> Vec<&'static str> {
-    // Nothing in this crate may panic: a panic here would take the schema down with it,
-    // and `tools/list` is the first thing a client asks for — a dead server on the
-    // handshake is the one failure an agent cannot diagnose. The fallback is the same
-    // list, and `evidence_method_values_track_the_ledger` fails loudly if they diverge.
     akr_core::model::Kind::Evidence
         .content_enum_values(akr_core::model::ContentSlot::Method)
-        .map_or_else(
-            || vec!["manual", "command", "observation"],
-            <[&'static str]>::to_vec,
-        )
+        .unwrap_or(&[])
+        .to_vec()
 }
 
 /// The `disposition.outcome` values, taken from `Outcome::ALL` — the same table
@@ -1217,18 +1578,46 @@ fn slots_schema() -> Value {
                 "Content slots for the selected kind. Exact contracts: {}. Topic is a \
                  separate top-level field and is only valid on normative kinds. Planning \
                  kinds accept optional `note` (D-026): operator commentary, rendered in \
-                 views for terminal records. Closed slots: {}.",
+                 views for terminal records. Closed slots: {}. What each is for: {} Say \
+                 why, never what changed: git holds the diff.",
                 slot_contract_summary(),
                 enum_slot_summary(),
+                slot_guidance_summary(),
             )),
         ),
         ("additionalProperties", Value::bool(true)),
     ])
 }
 
-/// Every kind's slots, generated from the vocabulary table used by the type-checker.
+/// What the prose slots are for, from the vocabulary's `doc` lines (D-049).
+///
+/// The audit behind D-047 found no surface that told an agent what `intent` or `context`
+/// should hold, and that agents filled them with a restatement of the diff. The text is
+/// the vocabulary's, so `akr explain` prints the same words. The bookkeeping slots a tool
+/// fills are left out: an agent never writes them through this object.
+fn slot_guidance_summary() -> String {
+    use akr_core::model::{ContentSlot, Kind};
+    let mut clauses: Vec<String> = Vec::new();
+    for kind in Kind::written() {
+        if kind == Kind::Papercut {
+            continue;
+        }
+        for spec in kind.content_slots() {
+            if matches!(spec.slot, ContentSlot::Note | ContentSlot::Trace) {
+                continue;
+            }
+            if let Some(doc) = kind.slot_doc(spec.slot) {
+                clauses.push(format!("{}.{}: {doc}", kind.name(), spec.slot.name()));
+            }
+        }
+    }
+    clauses.join(" ")
+}
+
+/// Every written kind's slots, generated from the vocabulary table used by the
+/// type-checker. Retired kinds (D-046) are left out: no new record may take one.
 fn slot_contract_summary() -> String {
-    akr_core::model::Kind::ALL
+    akr_core::model::Kind::written()
         .iter()
         .map(|kind| {
             let slots = kind
@@ -1275,7 +1664,7 @@ fn acknowledged_schema() -> Value {
 /// line and takes the guess out of it.
 fn enum_slot_summary() -> String {
     let mut clauses: Vec<String> = Vec::new();
-    for kind in akr_core::model::Kind::ALL {
+    for kind in akr_core::model::Kind::written() {
         for spec in kind.content_slots() {
             if let Some(values) = kind.content_enum_values(spec.slot) {
                 clauses.push(format!(
@@ -1359,9 +1748,9 @@ fn relations_schema() -> Value {
     let properties = akr_core::model::Relation::ALL
         .iter()
         .map(|relation| {
-            // Each relation names the kinds it may point at. A proposer reading only that
-            // a decision "has supported_by" found out from two refusals in a row that a
-            // constraint is not among them.
+            // Each relation names both the kinds it may point at (range) and the kinds
+            // that may declare it (domain). A proposer reading only target kinds tried to
+            // declare `implements` on milestones and failed six calls in a row.
             let targets = match relation.range() {
                 akr_core::model::Range::Any => "References to any kind.".to_owned(),
                 akr_core::model::Range::SameKind => {
@@ -1376,7 +1765,21 @@ fn relations_schema() -> Value {
                         .join(", ")
                 ),
             };
-            (relation.name().to_owned(), string_array(&targets))
+            let sources = match relation.domain() {
+                akr_core::model::Domain::Any => "Declared on any kind.".to_owned(),
+                akr_core::model::Domain::Kinds(kinds) => format!(
+                    "Declared on: {}.",
+                    kinds
+                        .iter()
+                        .map(|kind| kind.name())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            };
+            (
+                relation.name().to_owned(),
+                string_array(&format!("{targets} {sources}")),
+            )
         })
         .collect();
     Value::object(vec![
@@ -1384,16 +1787,22 @@ fn relations_schema() -> Value {
         (
             "description",
             Value::string(
-                "relation name -> array of references. Target kinds are constrained \
-                 (V-005): `implements` accepts requirement, policy, constraint or \
-                 decision, not a work record. Use depends_on for a prerequisite; a \
+                "relation name -> array of references. Both source and target kinds are \
+                 constrained (V-005): `implements` belongs on `work` and `decision` \
+                 (targeting requirement, policy, constraint or decision), not on \
+                 `milestone` or `track` — a milestone uses `depends_on` for \
+                 prerequisites, while `work` items (`part_of` / `plan_of_record` the \
+                 milestone) declare `implements`. Use depends_on for a prerequisite; a \
                  completed planning prerequisite remains satisfied. Use derived_from \
                  for provenance rather than prerequisite ordering. A `contradicts` edge \
                  between two live records needs `acknowledged: true` on one of them, or \
                  one side superseded, or it fails V-023 (AKR-R041). Pin a revision \
                  (`@key/2`) only to cite that revision for good: an unpinned `@key` \
                  follows the head, and a pinned reference to a revision that a later one \
-                 supersedes fails V-006 (AKR-L021).",
+                 supersedes fails V-006 (AKR-L021). When proposing a connected batch \
+                 whose relations (`part_of`, `after`, `depends_on`) reference each \
+                 other, use `knowledge.propose_many` instead of parallel \
+                 `knowledge.propose` calls.",
             ),
         ),
         ("properties", Value::Object(properties)),
@@ -1559,37 +1968,6 @@ fn dispositions_schema() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// `evidence_method_values` falls back rather than panicking, because a panic on the
-    /// `tools/list` path would kill the server during the handshake. That makes the
-    /// fallback a silent-drift risk, so the divergence is caught here instead.
-    #[test]
-    fn evidence_method_values_track_the_ledger() {
-        let table = akr_core::model::Kind::Evidence
-            .content_enum_values(akr_core::model::ContentSlot::Method)
-            .expect("evidence.method is an enum content slot");
-        assert_eq!(evidence_method_values(), table.to_vec());
-    }
-
-    /// The schema must never advertise a value the dispatcher rejects, nor omit one it
-    /// accepts.
-    #[test]
-    fn schema_enums_match_their_authoritative_tables() {
-        assert_eq!(
-            check_method_values(),
-            akr_core::model::CheckMethod::ALL
-                .iter()
-                .map(|m| m.name())
-                .collect::<Vec<_>>()
-        );
-        assert_eq!(
-            outcome_values(),
-            akr_core::model::Outcome::ALL
-                .iter()
-                .map(|o| o.name())
-                .collect::<Vec<_>>()
-        );
-    }
 
     #[test]
     fn host_safe_names_are_unique_and_match_grok_regex() {

@@ -1,0 +1,14 @@
+akr 0.1
+project fixtures
+
+record fx.work.long-winded/1 : work {
+    title "Work whose trace entry restates rather than reasons"
+    state proposed
+    intent """
+        Keep the cache warm across restarts.
+    """
+    trace [
+        "chose the file cache because the memo is lost on restart",
+        "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word",
+    ]
+}

@@ -20,9 +20,20 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
+static SAVE_YOUR_SKIN_TEMPLATE: OnceLock<Template> = OnceLock::new();
+static SYS_TANDEM_TEMPLATE: OnceLock<Template> = OnceLock::new();
+
+struct Template {
+    root: PathBuf,
+    snapshot: PathBuf,
+    commits: Vec<String>,
+    substitutions: Vec<(String, String)>,
+    today: &'static str,
+}
 
 /// One worked example's synthetic history and the invented hashes its records cite.
 pub struct Fixture {
@@ -214,91 +225,28 @@ impl Example {
     /// # Panics
     /// As [`Example::materialise`].
     pub fn of(fixture: &Fixture, name: &str) -> Self {
+        let template = match fixture.name {
+            "save-your-skin" => SAVE_YOUR_SKIN_TEMPLATE.get_or_init(|| build_template(fixture)),
+            "sys-tandem" => SYS_TANDEM_TEMPLATE.get_or_init(|| build_template(fixture)),
+            _ => unreachable!("unsupported fixture {}", fixture.name),
+        };
+
         let unique = COUNTER.fetch_add(1, Ordering::SeqCst);
         let root =
             std::env::temp_dir().join(format!("akr-p6-{name}-{}-{unique}", std::process::id()));
+        let snapshot = root.with_extension("snapshot");
         let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).expect("temp directory");
-
-        git(&root, &["init", "--quiet", "--initial-branch=main"]);
-        git(&root, &["config", "user.name", "AKR Test"]);
-        git(&root, &["config", "user.email", "test@example.invalid"]);
-        git(&root, &["config", "commit.gpgsign", "false"]);
-        git(&root, &["config", "gc.auto", "0"]);
-
-        let mut commits = Vec::new();
-        for (day, (message, writes)) in fixture.steps.iter().enumerate() {
-            for (path, contents) in *writes {
-                write(&root.join(path), contents);
-            }
-            let stamp = format!("2026-01-{:02}T12:00:00+00:00", day + 1);
-            git(&root, &["add", "-A"]);
-            let output = Command::new("git")
-                .args(["commit", "--quiet", "-m", message])
-                .current_dir(&root)
-                .env("GIT_AUTHOR_DATE", &stamp)
-                .env("GIT_COMMITTER_DATE", &stamp)
-                .output()
-                .expect("git runs");
-            assert!(output.status.success(), "git commit failed for {message}");
-            commits.push(git(&root, &["rev-parse", "HEAD"]).trim().to_owned());
-        }
-
-        let source = examples_dir().join(fixture.name);
-        copy_dir(&source.join(".akr"), &root.join(".akr"));
-        std::fs::create_dir_all(root.join("docs/generated")).expect("views directory");
-        if let Ok(views) = std::fs::read_dir(source.join("docs/generated")) {
-            for entry in views {
-                let entry = entry.expect("view").path();
-                if entry.extension().is_some_and(|e| e == "md") {
-                    let name = entry.file_name().expect("file name");
-                    std::fs::copy(&entry, root.join("docs/generated").join(name))
-                        .expect("copy view");
-                }
-            }
-        }
-
-        // Repoint every cited commit at the real one. This changes the record bytes, so
-        // the seals and the source-graph hash change with them; both are regenerated
-        // below rather than patched, because regenerating is what the tool does.
-        let mut substitutions = Vec::new();
-        for (index, invented) in fixture.commits.iter().enumerate() {
-            let real = &commits[index];
-            rewrite_tree(&root.join(".akr"), invented, real);
-            substitutions.push((real.clone(), (*invented).to_owned()));
-            substitutions.push((real[..8].to_owned(), invented[..8].to_owned()));
-        }
-
-        let example = Self {
-            root,
-            commits,
-            substitutions,
-            today: fixture.today,
-            snapshot: PathBuf::new(),
-        };
-        example.run(&["lock"]);
-        example.run(&["build"]);
-
-        // The one derived value the substitutions above cannot cover: the source graph is
-        // a hash of the rewritten bytes, so it is read back and mapped to the hash the
-        // committed example carries.
-        let mut example = example;
-        let committed = source_graph_of(
-            &std::fs::read_to_string(source.join(".akr/akr.lock")).expect("committed lock"),
-        );
-        let rebuilt = source_graph_of(
-            &std::fs::read_to_string(example.root.join(".akr/akr.lock")).expect("rebuilt lock"),
-        );
-        example.substitutions.push((rebuilt, committed));
-
-        // A snapshot of the built tree, so a transcript's `git checkout <path>` can be
-        // honoured without adding a commit. Committing the workspace would move HEAD off
-        // C5 and invalidate every hash the transcripts quote.
-        let snapshot = example.root.with_extension("snapshot");
         let _ = std::fs::remove_dir_all(&snapshot);
-        copy_dir(&example.root.join("docs/generated"), &snapshot);
-        example.snapshot = snapshot;
-        example
+        copy_dir(&template.root, &root);
+        copy_dir(&template.snapshot, &snapshot);
+
+        Self {
+            root,
+            commits: template.commits.clone(),
+            substitutions: template.substitutions.clone(),
+            today: template.today,
+            snapshot,
+        }
     }
 
     /// Runs a transcript's non-`akr` shell line: `sed`, `git checkout`, `cd`.
@@ -424,20 +372,24 @@ impl Example {
         &self.commits[n - 1]
     }
 
-    /// Runs `akr` in the workspace with the frozen `--today`, returning stdout, stderr and
-    /// the exit status.
-    ///
-    /// # Panics
-    /// If the binary cannot be executed.
+    /// Runs `akr` in-process in the workspace with the frozen `--today`, returning stdout,
+    /// stderr and the exit status.
     pub fn run(&self, args: &[&str]) -> Run {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_akr"));
-        command.arg("--today").arg(self.today);
-        command.args(args).current_dir(&self.root);
-        let output = command.output().expect("the akr binary runs");
+        let mut argv = Vec::with_capacity(args.len() + 4);
+        if !args.contains(&"--dir") {
+            argv.push("--dir".to_owned());
+            argv.push(self.root.to_string_lossy().into_owned());
+        }
+        if !args.contains(&"--today") {
+            argv.push("--today".to_owned());
+            argv.push(self.today.to_owned());
+        }
+        argv.extend(args.iter().map(|s| (*s).to_owned()));
+        let execution = akr_cli::execute(&argv);
         Run {
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-            code: output.status.code().unwrap_or(-1),
+            stdout: execution.stdout,
+            stderr: execution.stderr,
+            code: execution.exit as i32,
         }
     }
 
@@ -489,7 +441,7 @@ impl Example {
                         .strip_prefix(base)
                         .unwrap_or(&path)
                         .to_string_lossy()
-                        .into_owned();
+                        .replace('\\', "/");
                     out.push((name, akr_core::hash::sha256_hex(&bytes)));
                 }
             }
@@ -568,6 +520,97 @@ pub fn example_source() -> PathBuf {
 /// Where the transcripts live.
 pub fn transcript_dir() -> PathBuf {
     example_source().join("transcripts")
+}
+
+fn build_template(fixture: &Fixture) -> Template {
+    let root = std::env::temp_dir().join(format!(
+        "akr-cli-tpl-{}-{}",
+        fixture.name,
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("temp directory");
+
+    git(&root, &["init", "--quiet", "--initial-branch=main"]);
+    git(&root, &["config", "user.name", "AKR Test"]);
+    git(&root, &["config", "user.email", "test@example.invalid"]);
+    git(&root, &["config", "commit.gpgsign", "false"]);
+    git(&root, &["config", "gc.auto", "0"]);
+
+    let mut commits = Vec::new();
+    for (day, (message, writes)) in fixture.steps.iter().enumerate() {
+        for (path, contents) in *writes {
+            write(&root.join(path), contents);
+        }
+        let stamp = format!("2026-01-{:02}T12:00:00+00:00", day + 1);
+        git(&root, &["add", "-A"]);
+        let output = Command::new("git")
+            .args(["commit", "--quiet", "-m", message])
+            .current_dir(&root)
+            .env("GIT_AUTHOR_DATE", &stamp)
+            .env("GIT_COMMITTER_DATE", &stamp)
+            .output()
+            .expect("git runs");
+        assert!(output.status.success(), "git commit failed for {message}");
+        commits.push(git(&root, &["rev-parse", "HEAD"]).trim().to_owned());
+    }
+
+    let source = examples_dir().join(fixture.name);
+    copy_dir(&source.join(".akr"), &root.join(".akr"));
+    std::fs::create_dir_all(root.join("docs/generated")).expect("views directory");
+    if let Ok(views) = std::fs::read_dir(source.join("docs/generated")) {
+        for entry in views {
+            let entry = entry.expect("view").path();
+            if entry.extension().is_some_and(|e| e == "md") {
+                let name = entry.file_name().expect("file name");
+                std::fs::copy(&entry, root.join("docs/generated").join(name)).expect("copy view");
+            }
+        }
+    }
+
+    let mut substitutions = Vec::new();
+    for (index, invented) in fixture.commits.iter().enumerate() {
+        let real = &commits[index];
+        rewrite_tree(&root.join(".akr"), invented, real);
+        substitutions.push((real.clone(), (*invented).to_owned()));
+        substitutions.push((real[..8].to_owned(), invented[..8].to_owned()));
+    }
+
+    let root_str = root.to_string_lossy().into_owned();
+    for cmd in ["lock", "build"] {
+        let res = akr_cli::execute(&[
+            "--dir".to_owned(),
+            root_str.clone(),
+            "--today".to_owned(),
+            fixture.today.to_owned(),
+            cmd.to_owned(),
+        ]);
+        assert_eq!(
+            res.exit as i32, 0,
+            "template {cmd}: {}{}",
+            res.stdout, res.stderr
+        );
+    }
+
+    let committed = source_graph_of(
+        &std::fs::read_to_string(source.join(".akr/akr.lock")).expect("committed lock"),
+    );
+    let rebuilt = source_graph_of(
+        &std::fs::read_to_string(root.join(".akr/akr.lock")).expect("rebuilt lock"),
+    );
+    substitutions.push((rebuilt, committed));
+
+    let snapshot = root.with_extension("snapshot");
+    let _ = std::fs::remove_dir_all(&snapshot);
+    copy_dir(&root.join("docs/generated"), &snapshot);
+
+    Template {
+        root,
+        snapshot,
+        commits,
+        substitutions,
+        today: fixture.today,
+    }
 }
 
 fn source_graph_of(lock: &str) -> String {

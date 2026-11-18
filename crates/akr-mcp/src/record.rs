@@ -461,7 +461,10 @@ fn slot_line(slot: ContentSlot, value: &Value) -> Result<String, ToolError> {
         }
         // Enum members are bare words.
         ContentSlot::Method | ContentSlot::Result | ContentSlot::Confidence => string(value, name)?,
-        ContentSlot::Watches | ContentSlot::Aliases | ContentSlot::Collated => {
+        ContentSlot::Watches
+        | ContentSlot::Aliases
+        | ContentSlot::Collated
+        | ContentSlot::Trace => {
             let items: Vec<String> = array(value, name)?
                 .iter()
                 .filter_map(Value::as_str)

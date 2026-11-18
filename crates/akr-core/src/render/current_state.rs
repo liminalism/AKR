@@ -36,8 +36,13 @@ pub fn render_current_state(cx: RenderContext<'_>) -> String {
         ("Evidence", Kind::Evidence),
     ];
     for (heading, kind) in SECTIONS {
-        blocks.push(format!("## {heading}"));
         let records = heads_of_kind(cx, *kind);
+        // D-046: a retired kind has a section only in a ledger that still holds such
+        // records. A project that never wrote a `term` should not be told it has none.
+        if records.is_empty() && kind.is_retired() {
+            continue;
+        }
+        blocks.push(format!("## {heading}"));
         if records.is_empty() {
             blocks.push("_(none)_".to_owned());
             continue;

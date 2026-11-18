@@ -24,15 +24,12 @@ use std::path::{Path, PathBuf};
 
 use crate::errors::{Class, ToolError, class_of, first_error_code};
 use crate::record;
+use crate::schema::ToolId;
 
 /// Whether a tool writes to `.akr/records/` (§2).
 #[must_use]
 pub fn is_write(name: &str) -> bool {
-    let name = crate::schema::canonical_tool_name(name).unwrap_or(name);
-    crate::schema::TOOLS
-        .iter()
-        .find(|tool| tool.name == name)
-        .is_some_and(|tool| tool.writes)
+    ToolId::from_name(name).is_some_and(ToolId::writes)
 }
 
 fn missing_commit(session: &Session, suggest_observed_at: bool) -> ToolError {
@@ -93,39 +90,104 @@ impl ToolResult {
     }
 }
 
-/// Runs a tool.
+/// Runs a tool by name.
 ///
 /// # Errors
 /// [`ToolError`] carrying §5's class, summary and diagnostic array.
 pub fn call(root: &Path, name: &str, arguments: &Value) -> Result<ToolResult, ToolError> {
-    let name = crate::schema::canonical_tool_name(name).unwrap_or(name);
-    match name {
-        "knowledge.config_get" => run_read(root, Command::ConfigShow),
-        "knowledge.config_edit" => config_edit(root, arguments),
-        "knowledge.search" => search(root, arguments),
-        "knowledge.start" => start(root, arguments),
-        "knowledge.explain" => explain(arguments),
-        "knowledge.get" => get(root, arguments),
-        "knowledge.context" => context(root, arguments),
-        "knowledge.source_list" => source_list(root, arguments),
-        "knowledge.source_add" => source_add(root, arguments),
-        "knowledge.source_search" => source_search(root, arguments),
-        "knowledge.source_get" => source_get(root, arguments),
-        "knowledge.source_verify" => source_verify(root, arguments),
-        "knowledge.source_supersede" => source_supersede(root, arguments),
-        "knowledge.source_status" => source_status(root, arguments),
-        "knowledge.source_dependents" => source_dependents(root, arguments),
-        "knowledge.source_finalize" => source_finalize(root, arguments),
-        "knowledge.impact" => impact(root, arguments),
-        "knowledge.validate" => validate(root, arguments),
-        "knowledge.propose" => propose(root, arguments),
-        "knowledge.revise" => revise(root, arguments),
-        "knowledge.supersede" => supersede(root, arguments),
-        "knowledge.complete" => complete(root, arguments),
-        "knowledge.evidence_add" => evidence_add(root, arguments),
-        "knowledge.evidence_add_many" => evidence_add_many(root, arguments),
-        "knowledge.handoff_capsule" => run_read(
+    call_at(root, name, arguments, None)
+}
+
+/// Runs a tool by name with an optional frozen `today` date.
+///
+/// # Errors
+/// [`ToolError`] carrying §5's class, summary and diagnostic array.
+pub fn call_at(
+    root: &Path,
+    name: &str,
+    arguments: &Value,
+    today: Option<akr_core::model::Date>,
+) -> Result<ToolResult, ToolError> {
+    let Some(id) = ToolId::from_name(name) else {
+        return Err(ToolError::new(
+            "AKR-X041",
+            format!("unknown tool {name:?}; the catalogue is closed for 0.1"),
+        ));
+    };
+    call_id_at(root, id, arguments, today)
+}
+
+/// Runs a tool by typed identifier.
+///
+/// # Errors
+/// [`ToolError`] carrying §5's class, summary and diagnostic array.
+pub fn call_id(root: &Path, id: ToolId, arguments: &Value) -> Result<ToolResult, ToolError> {
+    call_id_at(root, id, arguments, None)
+}
+
+/// Runs a tool by typed identifier with an optional frozen `today` date.
+///
+/// # Errors
+/// [`ToolError`] carrying §5's class, summary and diagnostic array.
+pub fn call_id_at(
+    root: &Path,
+    id: ToolId,
+    arguments: &Value,
+    today: Option<akr_core::model::Date>,
+) -> Result<ToolResult, ToolError> {
+    match id {
+        ToolId::SecretPut => run_write_at(
             root,
+            today,
+            Command::SecretPut {
+                from: PathBuf::from(required_str(arguments, "from")?),
+            },
+        ),
+        ToolId::SecretGet => run_read_at(
+            root,
+            today,
+            Command::SecretGet {
+                reference: required_str(arguments, "ref")?.to_owned(),
+                reveal: secret_reveal(arguments)?,
+            },
+        ),
+        ToolId::SecretResolve => run_read_at(
+            root,
+            today,
+            Command::SecretResolve {
+                from: PathBuf::from(required_str(arguments, "from")?),
+                reveal: secret_reveal(arguments)?,
+            },
+        ),
+        ToolId::ConfigGet => run_read_at(root, today, Command::ConfigShow),
+        ToolId::ConfigEdit => config_edit(root, arguments),
+        ToolId::Search => search(root, arguments),
+        ToolId::Start => start(root, arguments),
+        ToolId::Explain => explain(arguments),
+        ToolId::Get => get(root, arguments),
+        ToolId::Context => context(root, arguments),
+        ToolId::SourceList => source_list(root, arguments),
+        ToolId::SourceAdd => source_add(root, arguments),
+        ToolId::SourceSearch => source_search(root, arguments),
+        ToolId::SourceGet => source_get(root, arguments),
+        ToolId::SourceVerify => source_verify(root, arguments),
+        ToolId::SourceSupersede => source_supersede(root, arguments),
+        ToolId::SourceStatus => source_status(root, arguments),
+        ToolId::SourceDependents => source_dependents(root, arguments),
+        ToolId::SourceFinalize => source_finalize(root, arguments),
+        ToolId::Impact => impact_at(root, arguments, today),
+        ToolId::Validate => validate_at(root, arguments, today),
+        ToolId::Propose => propose(root, arguments),
+        ToolId::ProposeMany => propose_many(root, arguments),
+        ToolId::Revise => revise(root, arguments),
+        ToolId::Supersede => supersede(root, arguments),
+        ToolId::Complete => complete(root, arguments),
+        ToolId::Trace => trace(root, arguments),
+        ToolId::EvidenceAdd => evidence_add(root, arguments),
+        ToolId::EvidenceAddMany => evidence_add_many(root, arguments),
+        ToolId::HandoffCapsule => run_read_at(
+            root,
+            today,
             Command::HandoffCapsule {
                 refresh: arguments
                     .get("refresh")
@@ -134,13 +196,14 @@ pub fn call(root: &Path, name: &str, arguments: &Value) -> Result<ToolResult, To
                 boundaries: string_list(arguments, "boundaries"),
             },
         ),
-        "knowledge.handoff_session_begin" => handoff_session_begin(root, arguments),
-        "knowledge.handoff_session_show" => run_read(root, Command::HandoffSessionShow),
-        "knowledge.handoff_session_end" => run_coordination(root, Command::HandoffSessionEnd),
-        "knowledge.handoff_create" => handoff_create(root, arguments),
-        "knowledge.handoff_list" => run_read(root, Command::HandoffList),
-        "knowledge.handoff_open" => run_read(
+        ToolId::HandoffSessionBegin => handoff_session_begin(root, arguments),
+        ToolId::HandoffSessionShow => run_read_at(root, today, Command::HandoffSessionShow),
+        ToolId::HandoffSessionEnd => run_coordination(root, Command::HandoffSessionEnd),
+        ToolId::HandoffCreate => handoff_create(root, arguments),
+        ToolId::HandoffList => run_read_at(root, today, Command::HandoffList),
+        ToolId::HandoffOpen => run_read_at(
             root,
+            today,
             Command::HandoffOpen {
                 id: required_str(arguments, "packet")?.to_owned(),
                 // The MCP surface has no reveal-on-open shorthand on purpose: `open` is
@@ -150,50 +213,57 @@ pub fn call(root: &Path, name: &str, arguments: &Value) -> Result<ToolResult, To
                 reveal: false,
             },
         ),
-        "knowledge.handoff_expand" => run_read(
+        ToolId::HandoffExpand => run_read_at(
             root,
+            today,
             Command::HandoffExpand {
                 id: required_str(arguments, "packet")?.to_owned(),
                 section: required_str(arguments, "section")?.to_owned(),
             },
         ),
-        "knowledge.handoff_verify" => run_read(
+        ToolId::HandoffVerify => run_read_at(
             root,
+            today,
             Command::HandoffVerify {
                 id: required_str(arguments, "packet")?.to_owned(),
             },
         ),
-        "knowledge.handoff_reveal" => run_coordination(
+        ToolId::HandoffReveal => run_coordination(
             root,
             Command::HandoffReveal {
                 id: required_str(arguments, "packet")?.to_owned(),
             },
         ),
-        "knowledge.handoff_result" => handoff_result(root, arguments),
-        "knowledge.handoff_results" => run_read(
+        ToolId::HandoffResult => handoff_result(root, arguments),
+        ToolId::HandoffResults => run_read_at(
             root,
+            today,
             Command::HandoffResults {
                 packet: optional_str(arguments, "packet"),
             },
         ),
-        "knowledge.handoff_coverage" => run_read(root, Command::HandoffCoverage),
-        "knowledge.handoff_discard" => run_coordination(
+        ToolId::HandoffCoverage => run_read_at(root, today, Command::HandoffCoverage),
+        ToolId::HandoffDiscard => run_coordination(
             root,
             Command::HandoffDiscard {
                 id: required_str(arguments, "packet")?.to_owned(),
             },
         ),
-        "knowledge.papercut" => papercut(root, arguments),
-        other => Err(ToolError::new(
-            "AKR-X041",
-            format!("unknown tool {other:?}; the catalogue is closed for 0.1"),
-        )),
+        ToolId::Papercut => papercut(root, arguments),
     }
 }
 
 // -------------------------------------------------------------------------------------
 // read tools
 // -------------------------------------------------------------------------------------
+
+fn secret_reveal(arguments: &Value) -> Result<bool, ToolError> {
+    match arguments.get("reveal") {
+        None => Ok(false),
+        Some(Value::Bool(value)) => Ok(*value),
+        _ => Err(ToolError::new("AKR-C004", "reveal must be a boolean")),
+    }
+}
 
 fn source_list(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
     run_read(
@@ -689,7 +759,11 @@ fn source_finalize(root: &Path, arguments: &Value) -> Result<ToolResult, ToolErr
     )
 }
 
-fn impact(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
+fn impact_at(
+    root: &Path,
+    arguments: &Value,
+    today: Option<akr_core::model::Date>,
+) -> Result<ToolResult, ToolError> {
     let reference = arguments.get("ref").and_then(Value::as_str);
     let git_diff = arguments.get("git_diff").and_then(Value::as_str);
     match (reference, git_diff) {
@@ -706,7 +780,7 @@ fn impact(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
                 reference: reference.map(ToOwned::to_owned),
                 git_diff: git_diff.map(ToOwned::to_owned),
             };
-            run_read(root, command)
+            run_read_at(root, today, command)
         }
     }
 }
@@ -716,8 +790,12 @@ fn impact(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
 /// The one read tool whose payload is not the command's `result` verbatim: `akr check`
 /// reports the pipeline's stage counts, and an agent wants a verdict. Both are computed
 /// from the same [`Output`], so they cannot disagree.
-fn validate(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
-    let mut session = open(root, false)?;
+fn validate_at(
+    root: &Path,
+    arguments: &Value,
+    today: Option<akr_core::model::Date>,
+) -> Result<ToolResult, ToolError> {
+    let mut session = open_at(root, false, today)?;
     let command = Command::Check {
         scratch_clean: flag(arguments, "scratch_clean"),
         review_clean: flag(arguments, "review_clean"),
@@ -809,8 +887,18 @@ fn config_edit(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> 
     Ok(ToolResult::Structured(finish(&session.sources, output)?))
 }
 
-fn propose(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
-    let session = open(root, true)?;
+fn build_proposed_record(
+    session: &Session,
+    arguments: &Value,
+) -> Result<
+    (
+        LogicalKey,
+        akr_core::model::Kind,
+        String,
+        akr_core::model::Record,
+    ),
+    ToolError,
+> {
     let key = required_str(arguments, "key")?;
     let kind_name = required_str(arguments, "kind")?;
     let title = required_str(arguments, "title")?;
@@ -831,13 +919,64 @@ fn propose(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
         arguments,
     )?;
     let template = record::parse(&source, &parsed)?;
+    Ok((parsed, kind, title.to_owned(), template))
+}
+
+fn propose(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
+    let session = open(root, true)?;
+    let (parsed, kind, title, template) = build_proposed_record(&session, arguments)?;
     akr_cli::write::ensure_commits_exist(&session, &akr_cli::write::commits_named_by(&template))
         .map_err(environment)?;
     let context = write_context(&session);
-    let mut result = akr_core::ops::propose(&context, &parsed, kind, title, Some(template.clone()));
+    let mut result =
+        akr_core::ops::propose(&context, &parsed, kind, &title, Some(template.clone()));
     akr_cli::write::note_unmatched_watches(&session, &mut result, &parsed, Some(&template));
     Ok(ToolResult::Structured(write_result(
         &session, &parsed, result,
+    )?))
+}
+
+fn propose_many(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
+    let session = open(root, true)?;
+    let items = arguments
+        .get("records")
+        .and_then(Value::as_array)
+        .ok_or_else(|| ToolError::new("AKR-C003", "`records` must be a non-empty array"))?;
+    if items.is_empty() {
+        return Err(ToolError::new(
+            "AKR-C003",
+            "`records` must contain at least one record",
+        ));
+    }
+    if items.len() > 100 {
+        return Err(ToolError::new(
+            "AKR-C004",
+            "`records` accepts at most 100 records per transaction",
+        ));
+    }
+
+    let mut records = Vec::with_capacity(items.len());
+    for item in items {
+        let (_, _, _, template) = build_proposed_record(&session, item)?;
+        records.push(template);
+    }
+    let first_target = records[0].id.key.clone();
+    let commits: Vec<akr_core::model::Commit> = records
+        .iter()
+        .flat_map(akr_cli::write::commits_named_by)
+        .collect();
+    akr_cli::write::ensure_commits_exist(&session, &commits).map_err(environment)?;
+
+    let context = write_context(&session);
+    let mut result = akr_core::ops::propose_many(&context, &records);
+    for record in &records {
+        akr_cli::write::note_unmatched_watches(&session, &mut result, &record.id.key, Some(record));
+    }
+    Ok(ToolResult::Structured(write_many_result(
+        &session,
+        &first_target,
+        "records",
+        result,
     )?))
 }
 
@@ -1012,10 +1151,33 @@ fn complete(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
     let key = required_str(arguments, "key")?;
     let parsed = key_of(key)?;
     let mut checks = Vec::new();
+    // D-048: a command check may record its own pass — `{"passed_at": "HEAD"}` in place
+    // of an evidence reference. The spelling is the CLI's `--pass <check>[=<commit>]`,
+    // parsed by the same function, so both surfaces accept and refuse the same things.
+    let mut passes: Vec<String> = Vec::new();
     if let Some(Value::Object(pairs)) = arguments.get("checks") {
         for (id, reference) in pairs {
+            if let Some(commit) = reference.get("passed_at") {
+                let text = commit.as_str().ok_or_else(|| {
+                    ToolError::new(
+                        "AKR-C004",
+                        format!("check `{id}`: passed_at is \"HEAD\" or a 40-hex commit"),
+                    )
+                })?;
+                passes.push(if text == "HEAD" {
+                    id.clone()
+                } else {
+                    format!("{id}={text}")
+                });
+                continue;
+            }
             let text = reference.as_str().ok_or_else(|| {
-                ToolError::new("AKR-C004", format!("check `{id}` needs a reference"))
+                ToolError::new(
+                    "AKR-C004",
+                    format!(
+                        "check `{id}` needs an evidence reference, or {{\"passed_at\": \"HEAD\"}} for a command check that passed"
+                    ),
+                )
             })?;
             let reference = akr_core::model::Reference::parse(text).map_err(|e| {
                 ToolError::new(
@@ -1026,11 +1188,45 @@ fn complete(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
             checks.push((id.clone(), reference));
         }
     }
+    let passes = akr_cli::write::parse_passes(&session, &passes).map_err(environment)?;
+    let commits: Vec<akr_core::model::Commit> =
+        passes.iter().map(|(_, commit)| commit.clone()).collect();
+    akr_cli::write::ensure_commits_exist(&session, &commits).map_err(environment)?;
     let context = write_context(&session);
     Ok(ToolResult::Structured(write_result(
         &session,
         &parsed,
-        akr_core::ops::complete(&context, &parsed, &checks),
+        akr_core::ops::complete_with(&context, &parsed, &checks, &passes),
+    )?))
+}
+
+/// `knowledge.trace`: reasoning steps appended to a work record, in place (D-047).
+fn trace(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
+    let session = open(root, true)?;
+    let key = required_str(arguments, "key")?;
+    let parsed = key_of(key)?;
+    let entries: Vec<String> = match arguments.get("entries") {
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|item| {
+                item.as_str()
+                    .map(ToOwned::to_owned)
+                    .ok_or_else(|| ToolError::new("AKR-C004", "entries is an array of strings"))
+            })
+            .collect::<Result<_, _>>()?,
+        Some(Value::String(text)) => vec![text.clone()],
+        _ => {
+            return Err(ToolError::new(
+                "AKR-C003",
+                "entries is required: one reasoning step per string",
+            ));
+        }
+    };
+    let context = write_context(&session);
+    Ok(ToolResult::Structured(write_result(
+        &session,
+        &parsed,
+        akr_core::ops::trace_append(&context, &parsed, &entries),
     )?))
 }
 
@@ -1115,7 +1311,7 @@ fn evidence_add_many(root: &Path, arguments: &Value) -> Result<ToolResult, ToolE
     .map_err(environment)?;
     let result = akr_core::ops::propose_many(&context, &records);
     Ok(ToolResult::Structured(write_many_result(
-        &session, &target, result,
+        &session, &target, "evidence", result,
     )?))
 }
 
@@ -1183,10 +1379,19 @@ fn papercut(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
 
 /// Opens the workspace, exactly as the command line opens it.
 fn open(root: &Path, writing: bool) -> Result<Session, ToolError> {
+    open_at(root, writing, None)
+}
+
+fn open_at(
+    root: &Path,
+    writing: bool,
+    today: Option<akr_core::model::Date>,
+) -> Result<Session, ToolError> {
     let global = Global {
         dir: PathBuf::from(root),
         profile: Profile::Strict,
         format: Format::Json,
+        today,
         ..Global::default()
     };
     let mut session = Session::open_ledger(&global).map_err(environment)?;
@@ -1201,7 +1406,15 @@ fn open(root: &Path, writing: bool) -> Result<Session, ToolError> {
 /// Verbatim is the point. §1's invariant is that a tool and its command produce the same
 /// answer, and the cheapest way to keep that true is for the tool to add nothing.
 fn run_read(root: &Path, command: Command) -> Result<ToolResult, ToolError> {
-    let mut session = open(root, false)?;
+    run_read_at(root, None, command)
+}
+
+fn run_read_at(
+    root: &Path,
+    today: Option<akr_core::model::Date>,
+    command: Command,
+) -> Result<ToolResult, ToolError> {
+    let mut session = open_at(root, false, today)?;
     let output = commands::run(&mut session, &command).map_err(environment)?;
     let text = output.text.clone();
     let structured = finish(&session.sources, output)?;
@@ -1251,7 +1464,15 @@ fn handoff_result(root: &Path, arguments: &Value) -> Result<ToolResult, ToolErro
 }
 
 fn run_write(root: &Path, command: Command) -> Result<ToolResult, ToolError> {
-    let mut session = open(root, true)?;
+    run_write_at(root, None, command)
+}
+
+fn run_write_at(
+    root: &Path,
+    today: Option<akr_core::model::Date>,
+    command: Command,
+) -> Result<ToolResult, ToolError> {
+    let mut session = open_at(root, true, today)?;
     let output = commands::run(&mut session, &command).map_err(environment)?;
     Ok(ToolResult::Structured(finish(&session.sources, output)?))
 }
@@ -1687,6 +1908,7 @@ fn write_result(
 fn write_many_result(
     session: &Session,
     first_target: &LogicalKey,
+    collection_key: &str,
     result: akr_core::ops::WriteResult,
 ) -> Result<Value, ToolError> {
     let applied = match result {
@@ -1725,7 +1947,7 @@ fn write_many_result(
         })
         .collect();
     let mut fields = vec![
-        ("evidence", Value::array(entries)),
+        (collection_key, Value::array(entries)),
         (
             "written",
             Value::integer(i64::try_from(applied.changes.len()).unwrap_or(i64::MAX)),

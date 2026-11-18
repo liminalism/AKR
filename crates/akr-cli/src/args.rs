@@ -116,6 +116,25 @@ pub struct Invocation {
 /// The commands of `docs/07-cli.md` §6.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
+    /// Store a local-only immutable secret entry from a UTF-8 file.
+    SecretPut {
+        /// Input file; its value is never accepted as a command-line argument.
+        from: PathBuf,
+    },
+    /// Read a local secret citation, redacted unless explicitly revealed.
+    SecretGet {
+        /// Opaque citation or identifier.
+        reference: String,
+        /// Explicitly allow private values in this output.
+        reveal: bool,
+    },
+    /// Render a local document containing secret citations.
+    SecretResolve {
+        /// Input document, never modified.
+        from: PathBuf,
+        /// Explicitly allow private values in this output.
+        reveal: bool,
+    },
     /// Read project configuration through the supported surface.
     ConfigShow,
     /// Replace project configuration from a complete project file.
@@ -145,6 +164,8 @@ pub enum Command {
         project: Option<String>,
         /// Declared namespaces.
         namespaces: Vec<String>,
+        /// Leave the git hooks uninstalled (D-049).
+        no_hooks: bool,
     },
     /// Canonically format, or check formatting.
     Fmt {
@@ -428,6 +449,8 @@ pub enum Command {
         note: Option<String>,
         /// Why a material change carries no work reference.
         untracked_reason: Option<String>,
+        /// Reasons to append to the primary work record's trace (D-047).
+        why: Vec<String>,
     },
     /// `akr change show`.
     ChangeShow,
@@ -469,6 +492,11 @@ pub enum Command {
         /// A file holding the record body.
         from: Option<PathBuf>,
     },
+    /// `akr propose-many --from <file>`.
+    ProposeMany {
+        /// A file holding one or more `record <key>/1 : <kind> { ... }` blocks.
+        from: PathBuf,
+    },
     /// `akr revise <key>`.
     Revise {
         /// The key to revise.
@@ -503,6 +531,15 @@ pub enum Command {
         key: String,
         /// `check=@evidence` pairs.
         checks: Vec<String>,
+        /// `check[=commit]`: command checks that record their own pass (D-048).
+        passes: Vec<String>,
+    },
+    /// `akr trace <work> "<text>"...` (D-047).
+    Trace {
+        /// The work record whose trace grows.
+        key: String,
+        /// One reasoning step per argument.
+        entries: Vec<String>,
     },
     /// `akr abandon <key> --reason <text>`.
     Abandon {
@@ -578,6 +615,8 @@ pub enum Command {
         capture: Option<String>,
         /// A one-line summary.
         summary: Option<String>,
+        /// The one-line label. Defaults to the summary's opening words, or the key.
+        title: Option<String>,
         /// The commit it was observed at. Defaults to HEAD.
         observed_at: Option<String>,
     },
@@ -679,6 +718,9 @@ impl Command {
     #[must_use]
     pub fn name(&self) -> String {
         match self {
+            Self::SecretPut { .. } => "secret put".to_owned(),
+            Self::SecretGet { .. } => "secret get".to_owned(),
+            Self::SecretResolve { .. } => "secret resolve".to_owned(),
             Self::ConfigShow | Self::ConfigSet { .. } | Self::ConfigUntracked { .. } => {
                 "config".to_owned()
             }
@@ -727,10 +769,12 @@ impl Command {
             | Self::SourceDependents { .. }
             | Self::SourceFinalize { .. } => "source".to_owned(),
             Self::Propose { .. } => "propose".to_owned(),
+            Self::ProposeMany { .. } => "propose-many".to_owned(),
             Self::Revise { .. } => "revise".to_owned(),
             Self::Supersede { .. } => "supersede".to_owned(),
             Self::Complete { .. } => "complete".to_owned(),
             Self::Abandon { .. } => "abandon".to_owned(),
+            Self::Trace { .. } => "trace".to_owned(),
             Self::Papercut { .. } => "papercut".to_owned(),
             Self::PapercutClose { .. } => "papercut close".to_owned(),
             Self::PapercutReset { .. } => "papercut reset".to_owned(),
@@ -801,6 +845,7 @@ impl UsageError {
 /// command missing here is a command no typo ever finds and whose `--help` nobody
 /// notices is absent — which is how `git-hook` came to answer "unknown command".
 pub const COMMANDS: &[&str] = &[
+    "secret",
     "config",
     "init",
     "fmt",
@@ -825,10 +870,12 @@ pub const COMMANDS: &[&str] = &[
     "git",
     "git-hook",
     "propose",
+    "propose-many",
     "revise",
     "supersede",
     "complete",
     "abandon",
+    "trace",
     "papercut",
     "evidence",
     "scratch",
@@ -843,6 +890,7 @@ pub const COMMANDS: &[&str] = &[
 /// flags (`AKR-C005`).
 pub fn parse(argv: &[String]) -> Result<Invocation, UsageError> {
     let mut global = Global::default();
+    let mut dir_explicit = false;
     let mut rest: Vec<String> = Vec::new();
     let mut strict_seen = false;
     let mut lenient_seen = false;
@@ -877,7 +925,10 @@ pub fn parse(argv: &[String]) -> Result<Invocation, UsageError> {
                 return ok(global, Command::Help);
             }
             "--version" | "-V" => return ok(global, Command::Version),
-            "--dir" => global.dir = PathBuf::from(value(&mut args, "--dir")?),
+            "--dir" => {
+                global.dir = PathBuf::from(value(&mut args, "--dir")?);
+                dir_explicit = true;
+            }
             "--strict" => {
                 strict_seen = true;
                 global.profile = Profile::Strict;
@@ -943,7 +994,8 @@ pub fn parse(argv: &[String]) -> Result<Invocation, UsageError> {
     let Some((name, tail)) = rest.split_first() else {
         return ok(global, Command::Help);
     };
-    let command = parse_command(name, tail, at_seen)?;
+    let explicit_dir = dir_explicit.then_some(global.dir.as_path());
+    let command = parse_command(name, tail, at_seen, explicit_dir)?;
 
     if global.format == Format::Json && !command.supports_json() {
         return Err(UsageError::new(
@@ -969,7 +1021,12 @@ fn value<'a>(
         .ok_or_else(|| UsageError::new("AKR-C003", format!("{flag} requires a value")))
 }
 
-fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, UsageError> {
+fn parse_command(
+    name: &str,
+    tail: &[String],
+    at_seen: bool,
+    dir: Option<&std::path::Path>,
+) -> Result<Command, UsageError> {
     let flag_set = |flag: &str| tail.iter().any(|a| a == flag);
     let positional: Vec<&String> = tail.iter().filter(|a| !a.starts_with('-')).collect();
 
@@ -999,6 +1056,47 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
     };
 
     Ok(match name {
+        "secret" => {
+            known_flags(&["--from", "--reveal"])?;
+            if at_seen {
+                return Err(UsageError::new(
+                    "AKR-C005",
+                    "local secret entries have no Git history; --at is not supported",
+                ));
+            }
+            let bare = values_skipped(tail, &["--from"]);
+            let sub = bare.first().ok_or_else(|| {
+                UsageError::new("AKR-C003", "secret requires put, get or resolve")
+            })?;
+            let from = || {
+                option_value(tail, "--from")
+                    .map(PathBuf::from)
+                    .ok_or_else(|| {
+                        UsageError::new("AKR-C003", "secret put/resolve requires --from <file>")
+                    })
+            };
+            match sub.as_str() {
+                "put" if !flag_set("--reveal") && bare.len() == 1 => {
+                    Command::SecretPut { from: from()? }
+                }
+                "get" if option_value(tail, "--from").is_none() && bare.len() == 2 => {
+                    Command::SecretGet {
+                        reference: bare[1].to_owned(),
+                        reveal: flag_set("--reveal"),
+                    }
+                }
+                "resolve" if bare.len() == 1 => Command::SecretResolve {
+                    from: from()?,
+                    reveal: flag_set("--reveal"),
+                },
+                _ => {
+                    return Err(UsageError::new(
+                        "AKR-C004",
+                        "use secret put --from <file>, get <citation> [--reveal], or resolve --from <file> [--reveal]",
+                    ));
+                }
+            }
+        }
         "config" => match tail.first().map(String::as_str).unwrap_or("show") {
             "show" if tail.len() <= 1 => Command::ConfigShow,
             "set" => {
@@ -1024,10 +1122,11 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
             }
         },
         "init" => {
-            known_flags(&["--project", "--namespace"])?;
+            known_flags(&["--project", "--namespace", "--no-hooks"])?;
             Command::Init {
                 project: option_value(tail, "--project"),
                 namespaces: repeated(tail, "--namespace"),
+                no_hooks: flag_set("--no-hooks"),
             }
         }
         "fmt" => {
@@ -1321,7 +1420,7 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
             }
             Command::DiffStaged
         }
-        "handoff" => parse_handoff(name, &positional, tail)?,
+        "handoff" => parse_handoff(name, &positional, tail, dir)?,
         "change" => parse_change(name, &positional, tail)?,
         "git" => parse_git(name, &positional, tail)?,
         "git-hook" => Command::GitHook {
@@ -1338,6 +1437,26 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
                 kind: option_value(tail, "--kind"),
                 title: option_value(tail, "--title"),
                 from: option_value(tail, "--from").map(PathBuf::from),
+            }
+        }
+        "propose-many" => {
+            refuse_edit(tail)?;
+            known_flags(&["--from"])?;
+            let bare = values_skipped(tail, &["--from"]);
+            if let Some(extra) = bare.first() {
+                return Err(UsageError::new(
+                    "AKR-C002",
+                    format!("unexpected argument {extra:?}; propose-many reads keys from --from"),
+                ));
+            }
+            Command::ProposeMany {
+                from: option_value(tail, "--from")
+                    .map(PathBuf::from)
+                    .ok_or_else(|| {
+                        UsageError::new("AKR-C003", "propose-many requires --from <file>").with_help(
+                            "the file holds one or more `record <key>/1 : <kind> { ... }` blocks",
+                        )
+                    })?,
             }
         }
         "revise" => {
@@ -1369,10 +1488,27 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
             }
         }
         "complete" => {
-            known_flags(&["--check"])?;
+            known_flags(&["--check", "--pass"])?;
             Command::Complete {
                 key: need(0, "a key")?,
                 checks: repeated(tail, "--check"),
+                passes: repeated(tail, "--pass"),
+            }
+        }
+        "trace" => {
+            // No flags at all, so a reason that happens to start with `--` is an unknown
+            // flag rather than a silently dropped entry.
+            known_flags(&[])?;
+            let entries: Vec<String> = positional.iter().skip(1).map(|s| (*s).clone()).collect();
+            if entries.is_empty() {
+                return Err(UsageError::new(
+                    "AKR-C003",
+                    "trace requires the reason, as text: akr trace <work-key> \"<why>\"",
+                ));
+            }
+            Command::Trace {
+                key: need(0, "a work key")?,
+                entries,
             }
         }
         "abandon" => {
@@ -1535,6 +1671,7 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
                 "--artifact",
                 "--capture",
                 "--summary",
+                "--title",
                 "--observed-at",
                 "--from",
             ])?;
@@ -1551,6 +1688,7 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
                     artifact: option_value(tail, "--artifact"),
                     capture: option_value(tail, "--capture"),
                     summary: option_value(tail, "--summary"),
+                    title: option_value(tail, "--title"),
                     observed_at: option_value(tail, "--observed-at"),
                 },
                 "add-many" => Command::EvidenceAddMany {
@@ -1985,6 +2123,31 @@ fn parse_change(
             format!("{name} requires a subcommand (begin|show|status|prepare|verify|abort)"),
         )
     })?;
+    // `akr change` used to accept any flag at all: an unknown one was ignored, so a
+    // misspelt `--primry` opened a transaction that named no work and said nothing.
+    let allowed: &[&str] = match sub {
+        "begin" => &[
+            "--summary",
+            "--kind",
+            "--scope",
+            "--primary",
+            "--related",
+            "--note",
+            "--untracked-reason",
+            "--why",
+        ],
+        "prepare" | "verify" => &["--staged"],
+        _ => &[],
+    };
+    for arg in tail.iter().filter(|a| a.starts_with("--")) {
+        let base = arg.split('=').next().unwrap_or(arg);
+        if !allowed.contains(&base) {
+            return Err(UsageError::new(
+                "AKR-C002",
+                format!("unknown flag {base:?} for command \"{name} {sub}\""),
+            ));
+        }
+    }
     Ok(match sub {
         "begin" => {
             let summary = option_value(tail, "--summary")
@@ -1997,6 +2160,7 @@ fn parse_change(
                 related: repeated(tail, "--related"),
                 note: option_value(tail, "--note"),
                 untracked_reason: option_value(tail, "--untracked-reason"),
+                why: repeated(tail, "--why"),
             }
         }
         "show" | "status" => Command::ChangeShow,
@@ -2033,6 +2197,7 @@ fn parse_handoff(
     name: &str,
     positional: &[&String],
     tail: &[String],
+    dir: Option<&std::path::Path>,
 ) -> Result<Command, UsageError> {
     let sub = positional.first().map(|s| s.as_str()).ok_or_else(|| {
         UsageError::new(
@@ -2057,20 +2222,34 @@ fn parse_handoff(
         searches: repeated(tail, "--note-search"),
     };
 
+    let resolve_path = |path: &str| -> PathBuf {
+        let candidate = std::path::Path::new(path);
+        if candidate.is_relative()
+            && let Some(dir) = dir
+        {
+            return dir.join(candidate);
+        }
+        candidate.to_path_buf()
+    };
+
     // A verbatim request is often a paragraph with newlines and quotes in it, which a
     // shell mangles. Reading it from a file is the only way to keep "verbatim" literally
     // true for a long one.
     let from_file = |flag: &str| -> Result<Option<String>, UsageError> {
         match option_value(tail, flag) {
             None => Ok(None),
-            Some(path) => Ok(Some(
-                std::fs::read_to_string(&path)
-                    .map_err(|error| {
-                        UsageError::new("AKR-C004", format!("{flag} {path}: {error}"))
-                    })?
-                    .trim_end_matches(['\n', '\r'])
-                    .to_owned(),
-            )),
+            Some(path) => {
+                refuse_private_argument_file(dir, &path)?;
+                let resolved = resolve_path(&path);
+                Ok(Some(
+                    std::fs::read_to_string(&resolved)
+                        .map_err(|error| {
+                            UsageError::new("AKR-C004", format!("{flag} {path}: {error}"))
+                        })?
+                        .trim_end_matches(['\n', '\r'])
+                        .to_owned(),
+                ))
+            }
         }
     };
     let one_of = |inline: &str, file: &str| -> Result<Option<String>, UsageError> {
@@ -2106,7 +2285,9 @@ fn parse_handoff(
                 )
                 .with_help("put every field in the spec file; it takes the MCP tool's arguments"));
             }
-            let text = std::fs::read_to_string(&path)
+            refuse_private_argument_file(dir, &path)?;
+            let resolved = resolve_path(&path);
+            let text = std::fs::read_to_string(&resolved)
                 .map_err(|error| UsageError::new("AKR-C004", format!("--spec {path}: {error}")))?;
             Some(
                 akr_core::json::parse(&text).map_err(|error| {
@@ -2461,6 +2642,29 @@ fn values_skipped<'a>(tail: &'a [String], value_flags: &[&str]) -> Vec<&'a Strin
     out
 }
 
+fn refuse_private_argument_file(
+    dir: Option<&std::path::Path>,
+    path: &str,
+) -> Result<(), UsageError> {
+    let root = match dir {
+        Some(dir) => dir.to_path_buf(),
+        None => std::env::current_dir()
+            .map_err(|_| UsageError::new("AKR-C004", "cannot resolve the input-file directory"))?,
+    };
+    let candidate = std::path::Path::new(path);
+    let resolved = if candidate.is_relative() {
+        root.join(candidate)
+    } else {
+        candidate.to_path_buf()
+    };
+    akr_core::secrets::require_public_input(&root, &resolved).map_err(|_| {
+        UsageError::new(
+            "AKR-C004",
+            "private secret storage cannot be used as a handoff input file",
+        )
+    })
+}
+
 /// Every value of a repeatable flag, in order.
 /// `--paths a b` takes `a` and leaves `b` as a second positional, which used to be
 /// dropped without a word. One positional is the most either command takes.
@@ -2520,6 +2724,7 @@ fn mcp_equivalent(name: &str) -> Option<String> {
     let (head, tail) = match rest.split_once('_') {
         Some(("evidence", tail)) => ("evidence", Some(tail.replace('_', "-"))),
         Some(("source", tail)) => ("source", Some(tail.replace('_', "-"))),
+        Some(("secret", tail)) => ("secret", Some(tail.replace('_', "-"))),
         Some(("handoff", tail)) => ("handoff", Some(tail.replace('_', "-"))),
         _ => (rest, None),
     };
@@ -2570,16 +2775,24 @@ fn distance(a: &str, b: &str) -> usize {
 #[must_use]
 #[allow(clippy::too_many_lines)]
 pub fn help_for(name: &str) -> Option<String> {
+    if name == "secret" {
+        return Some("akr secret put --from <private-utf8-file>\nakr secret get <citation> [--reveal]\nakr secret resolve --from <document> [--reveal]\n\nLocal-only secret category in .akr/secrets/. put returns an opaque {{secret:<id>}}\ncitation; embed that token in public record text. Public output always shows [*].\nOnly --reveal reads private values. Missing private data also shows [*].\nInput files and revealed output must stay private. Do not reveal credentials to\nremote agents. Share the private store only through a separate trusted channel.\n".to_owned());
+    }
     let text = match name {
         "config" => {
             "akr config show\nakr config set --from <file>\nakr config untracked add|remove <glob>\n\nRead or edit .akr/project.akr through the locked write pipeline.\nset accepts a complete AKR project file; records and project renames are refused.\nUntracked edits preserve other declarations. Invalid edits write nothing.\nRun `akr build` after changing configuration.\n"
         }
         "init" => {
-            "akr init [--project <name>] [--namespace <name> ...]\n\
+            "akr init [--project <name>] [--namespace <name> ...] [--no-hooks]\n\
              \n\
              Scaffolds a workspace: .akr/project.akr, .akr/records/, .akr/archive/, an\n\
              AGENTS.md protocol section, and .gitignore entries. Never overwrites an\n\
              existing .akr/ (AKR-C013).\n\
+             \n\
+             In a git repository it also installs the pre-commit and commit-msg hooks\n\
+             (`akr git install-hooks`), so a commit made outside `akr change` is noticed\n\
+             (D-049). A hook that is already there and is not AKR's is kept. --no-hooks\n\
+             skips the step; `git commit --no-verify` bypasses a hook once.\n\
              \n\
              FLAGS\n\
              \x20   --project <name>      the project name, in key-segment form\n\
@@ -2968,9 +3181,14 @@ pub fn help_for(name: &str) -> Option<String> {
         }
         "propose" => {
             "akr propose <key> [--kind <kind>] [--title <text>] [--from <file>]\n\
+             akr propose-many --from <file>\n\
              \n\
              Creates revision 1 of a new key in its class's initial state. An existing\n\
              key is an error: use `akr revise`.\n\
+             \n\
+             To create several connected records in one atomic pass (for example a\n\
+             track and milestones linked by `part_of` or `after`), use\n\
+             `akr propose-many --from <file>`.\n\
              \n\
              <key> is dot-delimited: namespace.topic.slug — the first segment must be a\n\
              namespace declared in .akr/project.akr. Every segment starts with a\n\
@@ -2995,6 +3213,22 @@ pub fn help_for(name: &str) -> Option<String> {
              \x20                     names a file whose record line declares one\n\
              \x20   --title <text>    the one-line label\n\
              \x20   --from <file>     a file holding an AKR slot-list fragment\n"
+        }
+        "propose-many" => {
+            "akr propose-many --from <file>\n\
+             \n\
+             Creates revision 1 of several new keys in one atomic pipeline pass: all\n\
+             records are parsed, lowered, and validated together before any file is\n\
+             written, so forward or mutual references (`part_of`, `after`,\n\
+             `depends_on`, `plan_of_record`, `implements`) between records in the\n\
+             same batch resolve without sequential round-trips. Either every record\n\
+             lands or none does.\n\
+             \n\
+             The file holds one or more `record <key>/1 : <kind> { ... }` blocks in\n\
+             ordinary AKR syntax; the `akr 0.1` / `project` header may be omitted.\n\
+             \n\
+             FLAGS\n\
+             \x20   --from <file>     a file holding one or more `record <key>/1 : <kind> { ... }` blocks\n"
         }
         "revise" => {
             "akr revise <key> [--from <file>] [--state <state>] [--title <text>]\n\
@@ -3041,15 +3275,39 @@ pub fn help_for(name: &str) -> Option<String> {
              obsolete.\n"
         }
         "complete" => {
-            "akr complete <key> [--check <id>=<evidence-ref> ...]\n\
+            "akr complete <key> [--pass <id>[=<commit>] ...] [--check <id>=<evidence-ref> ...]\n\
              \n\
              Moves a milestone or work record to `completed`. Every acceptance check\n\
-             must be satisfied by evidence with result pass observed after the record\n\
-             last changed (D-016). Evidence references are D-009 forms:\n\
+             must be satisfied.\n\
+             \n\
+             --pass is for a `method command` check whose command you ran and saw pass:\n\
+             the check records the commit itself (HEAD unless you name one) and no\n\
+             evidence record is written (D-048). It is refused for a manual or\n\
+             observational check.\n\
+             --check cites an evidence record with result pass observed after the record\n\
+             last changed (D-016) -- for a measurement, a captured artefact, or anything a\n\
+             later reader will want to read. Evidence references are D-009 forms:\n\
              --check no-placeholder-assets=@sys.evidence.asset-audit/1\n\
              \n\
              Completing a milestone requires its plan of record to be retired first\n\
              (V-019): complete or abandon the plan, then complete the milestone.\n"
+        }
+        "trace" => {
+            "akr trace <work-key> \"<why>\" [\"<why>\" ...]\n\
+             \n\
+             Appends reasoning steps to a work record's trace, in place (D-047). No\n\
+             revision is minted and no acceptance check is put back in question, so it\n\
+             is cheap to do as the work proceeds.\n\
+             \n\
+             One entry is one reason or one dead end: why this approach, what the code\n\
+             as you found it forced, what you tried and dropped. Not what changed --\n\
+             git has the diff. Aim for 25 words; an entry over 40 is refused\n\
+             (AKR-T024). Explain in proportion to the expected impact of the change,\n\
+             not its line count: more entries, never longer ones.\n\
+             \n\
+             `akr get <work-key>` shows each entry beside the commit that introduced it.\n\
+             A choice that binds the project is a decision; a finding worth re-reading is\n\
+             an observation.\n"
         }
         "abandon" => {
             "akr abandon <key> --reason <text>\n\
@@ -3118,10 +3376,15 @@ pub fn help_for(name: &str) -> Option<String> {
             "akr evidence add <key> --result pass|fail|inconclusive\n\
              \x20                   --method manual|command|observation\n\
              \x20                   [--command <text>] [--artifact <path>] [--capture <path>]\n\
-             \x20                   [--summary <text>] [--observed-at <commit>]\n\
+             \x20                   [--summary <text>] [--title <text>] [--observed-at <commit>]\n\
              akr evidence add-many --from <file>\n\
              \n\
-             Creates an evidence record. --capture streams a raw file into a summary with\n\
+             Creates an evidence record. A `method command` check that simply passed\n\
+             does not need one: `akr complete <key> --pass <check>` (D-048). Evidence is\n\
+             for a measurement, a failure, an artefact, or a manual observation.\n\
+             --summary says what was observed; without --title its opening words become\n\
+             the title, and a summary that only repeats the title is not stored twice.\n\
+              --capture streams a raw file into a summary with\n\
              SHA-256 and byte count; it requires --summary and stores no artifact\n\
              dependency. Raw captures may stay in scratch. Prefer this over committing\n\
              large captures. --observed-at defaults to HEAD and must be a\n\
@@ -3172,6 +3435,10 @@ pub fn help() -> String {
          COMMANDS\n",
     );
     for (name, summary) in [
+        (
+            "secret",
+            "local-only secret entries and opaque citations; put, get, resolve",
+        ),
         ("init", "scaffold a workspace"),
         (
             "config",
@@ -3216,6 +3483,10 @@ pub fn help() -> String {
         ("git", "generate and make the commit; message, commit, log"),
         ("propose", "create a record; --kind, --title, --from"),
         (
+            "propose-many",
+            "create several connected records in one atomic pass; --from",
+        ),
+        (
             "revise",
             "create the next revision; --from, --state, --title",
         ),
@@ -3225,8 +3496,9 @@ pub fn help() -> String {
         ),
         (
             "complete",
-            "finish a milestone; --check <id>=<evidence-ref>",
+            "finish a milestone or work; --pass <id>, --check <id>=<evidence-ref>",
         ),
+        ("trace", "append why to a work record, a line at a time"),
         ("abandon", "abandon a planning record; --reason is required"),
         (
             "papercut",
@@ -3249,4 +3521,123 @@ pub fn help() -> String {
     }
     out.push_str("\nEXIT CODES\n    0 ok    1 diagnostics    2 usage    3 environment\n");
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_strs(args: &[&str]) -> Result<Invocation, UsageError> {
+        let argv: Vec<String> = args.iter().map(|s| (*s).to_owned()).collect();
+        parse(&argv)
+    }
+
+    #[test]
+    fn start_and_context_accept_flag_or_positional_equivalently() {
+        let s_flag = parse_strs(&["start", "--task", "renderer boundary", "--paths", "src/**"])
+            .expect("flagged start");
+        let s_pos = parse_strs(&["start", "--paths", "src/**", "renderer boundary"])
+            .expect("positional start");
+        assert_eq!(s_flag.command, s_pos.command);
+        let s_both = parse_strs(&["start", "--task", "a", "b"]).expect_err("both rejected");
+        assert_eq!(s_both.code, "AKR-C005");
+
+        let c_flag = parse_strs(&["context", "--goal", "sys.milestone.m3-playable-day"])
+            .expect("flagged context");
+        let c_pos = parse_strs(&[
+            "context",
+            "--paths",
+            "src/**",
+            "sys.milestone.m3-playable-day",
+        ])
+        .expect("positional context");
+        let c_bare =
+            parse_strs(&["context", "sys.milestone.m3-playable-day"]).expect("bare context");
+        assert_eq!(c_flag.command, c_bare.command);
+        assert!(matches!(
+            c_pos.command,
+            Command::Context { ref goal, ref paths, .. }
+            if goal == "sys.milestone.m3-playable-day"
+                && paths == &[Glob::new("src/**")]
+        ));
+        let c_both =
+            parse_strs(&["context", "--goal", "a.b.c", "d.e.f"]).expect_err("both rejected");
+        assert_eq!(c_both.code, "AKR-C005");
+    }
+
+    #[test]
+    fn paths_take_commas_and_reject_stray_positionals() {
+        let sep = parse_strs(&[
+            "context",
+            "sys.milestone.m3-playable-day",
+            "--paths",
+            "sim/**",
+            "--paths",
+            "lege/**",
+        ])
+        .expect("repeated --paths");
+        let comma = parse_strs(&[
+            "context",
+            "sys.milestone.m3-playable-day",
+            "--paths",
+            "sim/**,lege/**",
+        ])
+        .expect("comma --paths");
+        assert_eq!(sep.command, comma.command);
+
+        let stray = parse_strs(&[
+            "context",
+            "sys.milestone.m3-playable-day",
+            "--paths",
+            "sim/**",
+            "lege/**",
+        ])
+        .expect_err("stray second positional");
+        assert_eq!(stray.code, "AKR-C002");
+    }
+
+    #[test]
+    fn usage_contracts_and_aliases_parse_without_a_workspace() {
+        let help = help_for("propose").expect("propose help");
+        assert!(help.contains("slot-list"), "{help}");
+        assert!(help.contains("intent"), "{help}");
+
+        for args in [
+            vec!["--format", "json", "fmt", "--check"],
+            vec!["--format", "json", "init"],
+        ] {
+            let err = parse_strs(&args).expect_err("json unsupported");
+            assert_eq!(err.code, "AKR-C041");
+        }
+
+        let check = parse_strs(&["check", "--review-clean"]).expect("check");
+        let validate = parse_strs(&["validate", "--review-clean"]).expect("validate");
+        assert_eq!(check.command, validate.command);
+        assert!(help_for("validate").is_some_and(|h| h.contains("akr validate")));
+
+        let diff_err = parse_strs(&["diff"]).expect_err("diff requires --staged");
+        assert_eq!(diff_err.code, "AKR-C003");
+        assert!(diff_err.message.contains("--staged"));
+
+        let s_pos = parse_strs(&["search", "playable day"]).expect("positional search");
+        let s_flag = parse_strs(&["search", "--query", "playable day"]).expect("flagged search");
+        assert_eq!(s_pos.command, s_flag.command);
+        let s_both = parse_strs(&["search", "playable day", "--query", "other"]).expect_err("both");
+        assert_eq!(s_both.code, "AKR-C005");
+
+        for args in [vec!["propose-many"], vec!["evidence", "add-many"]] {
+            let err = parse_strs(&args).expect_err("missing required option");
+            assert_eq!(err.code, "AKR-C003");
+        }
+        assert!(matches!(
+            parse_strs(&["evidence", "add", "sys.evidence.asset-audit"])
+                .expect("parses before workspace check")
+                .command,
+            Command::EvidenceAdd { result: None, .. }
+        ));
+        let bad_cmd = parse_strs(&["chekc"]).expect_err("unknown command");
+        assert_eq!(bad_cmd.code, "AKR-C001");
+        let bad_flag = parse_strs(&["--bogus-flag", "check"]).expect_err("unknown flag");
+        assert_eq!(bad_flag.code, "AKR-C002");
+    }
 }

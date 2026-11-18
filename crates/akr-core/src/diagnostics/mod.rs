@@ -400,6 +400,8 @@ pub mod codes {
         T004 = "AKR-T004";
         /// Block in the wrong place.
         T007 = "AKR-T007";
+        /// A new key was given a retired kind (D-046).
+        T008 = "AKR-T008";
         /// Illegal state for the kind's class.
         T011 = "AKR-T011";
         /// Unknown enum value.
@@ -412,6 +414,8 @@ pub mod codes {
         T022 = "AKR-T022";
         /// Evidence artefact cited from the disposable scratch directory.
         T023 = "AKR-T023";
+        /// A trace entry is longer than forty words (D-047).
+        T024 = "AKR-T024";
         /// Resolved question missing a resolution.
         T031 = "AKR-T031";
         /// Malformed scope term.

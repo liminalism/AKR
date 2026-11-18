@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::errors::ToolError;
-use crate::schema::{TOOLS, input_schema, output_schema};
+use crate::schema::{TOOLS, ToolId, input_schema_for, output_schema_for};
 use crate::tools;
 
 /// The legacy protocol version this server still accepts.
@@ -82,6 +82,8 @@ pub struct Server {
     /// The root is not inside any workspace (`AKR-C011`), so every tool takes and
     /// advertises the optional `workspace` argument (D-045).
     rootless: bool,
+    /// Optional frozen evaluation date (used by deterministic differential tests).
+    today: Option<akr_core::model::Date>,
 }
 
 /// Which half of the tool catalogue this server exposes.
@@ -135,7 +137,15 @@ impl Server {
             host_safe_tool_names: AtomicBool::new(false),
             executable: crate::skew::Executable::current(),
             rootless,
+            today: None,
         }
+    }
+
+    /// Sets an explicit evaluation date instead of reading the system clock.
+    #[must_use]
+    pub fn with_today(mut self, today: Option<akr_core::model::Date>) -> Self {
+        self.today = today;
+        self
     }
 
     /// Restricts the catalogue to one surface.
@@ -228,12 +238,29 @@ impl Server {
         } else {
             ("knowledge.context", "knowledge.validate")
         };
+        let (secret_put, trace) = if self.host_safe_tool_names.load(Ordering::Relaxed) {
+            ("knowledge_secret_put", "knowledge_trace")
+        } else {
+            ("knowledge.secret_put", "knowledge.trace")
+        };
+        // D-049: what the ledger is for, said where every session reads it.
+        let purpose = format!(
+            " Part of your job is to help the next agent understand what happened here:              what was asked, what you found in the code as it stood, and why that led to              what you did. Record it as you go with {trace} on the work record, in              proportion to the expected impact of the change; never restate a diff."
+        );
+        let privacy = format!(
+            "{purpose} Keep private paths, filenames and credentials in local-only secret entries \
+             using {secret_put} from a private UTF-8 file; cite the returned opaque \
+             {{{{secret:<id>}}}} token in public text. Public output renders [*]. Never copy \
+             resolved values into public records, sources, evidence or handoffs. Secret \
+             storage (.akr/secrets/) must stay out of Git and published files. Reveal \
+             is explicit and sends values to the caller; do not reveal keys to remote agents."
+        );
         if self.rootless {
             return Value::string(format!(
                 "No AKR ledger at {}; the workspaces are below it. Pass `workspace` (a \
                  workspace directory, absolute or relative to that directory) with every \
                  call. Call {context} before touching code, and {validate} before handing \
-                 work back.",
+                 work back.{privacy}",
                 std::path::absolute(&self.root)
                     .unwrap_or_else(|_| self.root.clone())
                     .display()
@@ -241,7 +268,7 @@ impl Server {
         }
         Value::string(format!(
             "AKR knowledge ledger at {}. Call {context} before touching \
-             code, and {validate} before handing work back.",
+             code, and {validate} before handing work back.{privacy}",
             self.root.display()
         ))
     }
@@ -328,18 +355,14 @@ impl Server {
                         }
                         fields.extend([
                             ("inputSchema", {
-                                let schema =
-                                    input_schema(tool.name).unwrap_or(Value::Object(Vec::new()));
+                                let schema = input_schema_for(tool.id);
                                 if self.rootless {
                                     with_workspace_argument(schema)
                                 } else {
                                     schema
                                 }
                             }),
-                            (
-                                "outputSchema",
-                                output_schema(tool.name).unwrap_or(Value::Object(Vec::new())),
-                            ),
+                            ("outputSchema", output_schema_for(tool.id)),
                             (
                                 "annotations",
                                 Value::object(vec![
@@ -348,10 +371,7 @@ impl Server {
                                     // (`01-architecture.md` §9), so no tool is destructive
                                     // even when it writes.
                                     ("destructiveHint", Value::bool(false)),
-                                    (
-                                        "idempotentHint",
-                                        Value::bool(!matches!(tool.name, "knowledge.revise")),
-                                    ),
+                                    ("idempotentHint", Value::bool(tool.id != ToolId::Revise)),
                                 ]),
                             ),
                         ]);
@@ -364,7 +384,11 @@ impl Server {
 
     fn tools_call(&self, params: &Value) -> Value {
         let advertised = params.get("name").and_then(Value::as_str).unwrap_or("");
-        let name = crate::schema::canonical_tool_name(advertised).unwrap_or(advertised);
+        let tool_id = ToolId::from_name(advertised);
+        let name = match tool_id {
+            Some(id) => id.name(),
+            None => advertised,
+        };
         let arguments = params
             .get("arguments")
             .cloned()
@@ -375,7 +399,10 @@ impl Server {
         // command line's `--dir`; the tools never see it.
         let (root, outcome) = match workspace_root(&self.root, &arguments) {
             Ok((root, tool_arguments)) => {
-                let outcome = guarded_tool_call(|| tools::call(&root, name, &tool_arguments));
+                let outcome = guarded_tool_call(|| match tool_id {
+                    Some(id) => tools::call_id_at(&root, id, &tool_arguments, self.today),
+                    None => tools::call_at(&root, advertised, &tool_arguments, self.today),
+                });
                 (root, outcome)
             }
             Err(error) => (self.root.clone(), Err(error)),
@@ -386,25 +413,32 @@ impl Server {
                 // `budget_tokens`, still treat them as internally budgeted at the
                 // assembly default: a second, smaller adapter ceiling produced a compact
                 // preview that itself exceeded the advertised hard limit.
-                let internally_budgeted = match name {
-                    "knowledge.start" => Some(token_budget(&arguments, 1_400)),
-                    // A session capsule embeds a session head assembled to its own
-                    // budget, so a second ceiling at the adapter would truncate work
-                    // that was already sized.
-                    "knowledge.handoff_session_begin" => Some(token_budget(&arguments, 1_400)),
-                    "knowledge.context" => arguments
+                let internally_budgeted = match tool_id {
+                    Some(ToolId::Start | ToolId::HandoffSessionBegin) => {
+                        Some(token_budget(&arguments, 1_400))
+                    }
+                    Some(ToolId::Context) => arguments
                         .get("budget_tokens")
                         .and_then(Value::as_integer)
                         .and_then(|value| usize::try_from(value).ok()),
                     _ => None,
                 };
-                let enforced = crate::budget::enforce(
-                    name,
-                    payload.text(),
-                    payload.structured(),
-                    internally_budgeted,
-                    &arguments,
-                );
+                let enforced = match tool_id {
+                    Some(id) => crate::budget::enforce_id(
+                        id,
+                        payload.text(),
+                        payload.structured(),
+                        internally_budgeted,
+                        &arguments,
+                    ),
+                    None => crate::budget::enforce(
+                        name,
+                        payload.text(),
+                        payload.structured(),
+                        internally_budgeted,
+                        &arguments,
+                    ),
+                };
                 (enforced.text, enforced.structured, false)
             }
             Err(mut error) => {

@@ -188,6 +188,7 @@ impl Sha256 {
                 self.buffered = 0;
             }
         }
+        #[allow(clippy::chunks_exact_to_as_chunks)]
         let mut chunks = rest.chunks_exact(64);
         for chunk in &mut chunks {
             let mut block = [0u8; 64];

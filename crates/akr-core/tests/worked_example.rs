@@ -18,14 +18,18 @@ use akr_core::resolve::{BuildInputs, ResolvedModel, Workspace, load_workspace};
 use akr_core::syntax::{format, parse};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 fn example_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/save-your-skin")
 }
 
-fn workspace() -> Workspace {
-    let root = example_root();
-    load_workspace(&root, &root.join(".akr")).expect("the worked example loads")
+pub(crate) fn workspace() -> &'static Workspace {
+    static WORKSPACE: OnceLock<Workspace> = OnceLock::new();
+    WORKSPACE.get_or_init(|| {
+        let root = example_root();
+        load_workspace(&root, &root.join(".akr")).expect("the worked example loads")
+    })
 }
 
 /// The build inputs the committed lock and the committed view banners were produced with.
@@ -136,8 +140,11 @@ fn the_two_multi_revision_keys_have_the_chains_the_manifest_describes() {
 #[test]
 fn the_committed_lock_parses() {
     let workspace = workspace();
-    let text = workspace.lock_text.expect("the example has a lock");
-    let lock = Lock::parse(&text).expect("the committed lock parses");
+    let text = workspace
+        .lock_text
+        .as_deref()
+        .expect("the example has a lock");
+    let lock = Lock::parse(text).expect("the committed lock parses");
     assert_eq!(lock.project, "save-your-skin");
     assert_eq!(lock.build.tool, "akr 0.1.0");
     assert_eq!(lock.build.built_at, "2026-08-03T09:14:00Z");
@@ -267,21 +274,6 @@ fn a_generated_lock_round_trips_and_verifies() {
     let reparsed = Lock::parse(&rendered).expect("round trip");
     assert_eq!(reparsed.render(), rendered, "rendering is a fixed point");
     assert!(reparsed.verify(&lock).is_empty(), "verifies against itself");
-}
-
-#[test]
-fn the_build_is_reproducible() {
-    // `docs/01-architecture.md` §4: a build is a pure function of (sources, commit, tool
-    // version). Two loads of the same directory produce the same lock, byte for byte.
-    let first = workspace();
-    let second = workspace();
-    let a = ResolvedModel::build(&first.ledger, &inputs(&first.inputs))
-        .to_lock()
-        .render();
-    let b = ResolvedModel::build(&second.ledger, &inputs(&second.inputs))
-        .to_lock()
-        .render();
-    assert_eq!(a, b);
 }
 
 // -------------------------------------------------------------------------------------

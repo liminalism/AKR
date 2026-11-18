@@ -39,7 +39,7 @@ dependencies = [
 
 [[package]]
 name = "akr-cli"
-version = "0.6.2"
+version = "0.7.0"
 dependencies = [
  "akr-core",
  "rusqlite",
@@ -47,7 +47,7 @@ dependencies = [
 
 [[package]]
 name = "akr-core"
-version = "0.6.2"
+version = "0.7.0"
 dependencies = [
  "rusqlite",
  "serde_json",
@@ -55,19 +55,19 @@ dependencies = [
 
 [[package]]
 name = "akr-gui"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "akr-cli",
- "pixelkit-raster",
- "pixelkit-shell",
- "pixelkit-text",
- "pixelkit-ui",
- "pixelkit-windowing",
+ "liminalkit-raster",
+ "liminalkit-shell",
+ "liminalkit-text",
+ "liminalkit-ui",
+ "liminalkit-windowing",
 ]
 
 [[package]]
 name = "akr-mcp"
-version = "0.6.2"
+version = "0.7.0"
 dependencies = [
  "akr-cli",
  "akr-core",
@@ -821,6 +821,57 @@ dependencies = [
 ]
 
 [[package]]
+name = "liminalkit-raster"
+version = "0.5.0"
+source = "git+https://github.com/liminalism/liminalkit.git?rev=b60e4cea168f51e082e48d0058cef6aa9c2b94da#b60e4cea168f51e082e48d0058cef6aa9c2b94da"
+dependencies = [
+ "wide",
+]
+
+[[package]]
+name = "liminalkit-shell"
+version = "0.5.0"
+source = "git+https://github.com/liminalism/liminalkit.git?rev=b60e4cea168f51e082e48d0058cef6aa9c2b94da#b60e4cea168f51e082e48d0058cef6aa9c2b94da"
+dependencies = [
+ "arboard",
+ "liminalkit-raster",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
+ "zeroize",
+]
+
+[[package]]
+name = "liminalkit-text"
+version = "0.5.0"
+source = "git+https://github.com/liminalism/liminalkit.git?rev=b60e4cea168f51e082e48d0058cef6aa9c2b94da#b60e4cea168f51e082e48d0058cef6aa9c2b94da"
+dependencies = [
+ "liminalkit-raster",
+]
+
+[[package]]
+name = "liminalkit-ui"
+version = "0.5.0"
+source = "git+https://github.com/liminalism/liminalkit.git?rev=b60e4cea168f51e082e48d0058cef6aa9c2b94da#b60e4cea168f51e082e48d0058cef6aa9c2b94da"
+dependencies = [
+ "liminalkit-raster",
+ "liminalkit-shell",
+ "liminalkit-text",
+ "unicode-segmentation",
+ "zeroize",
+]
+
+[[package]]
+name = "liminalkit-windowing"
+version = "0.5.0"
+source = "git+https://github.com/liminalism/liminalkit.git?rev=b60e4cea168f51e082e48d0058cef6aa9c2b94da#b60e4cea168f51e082e48d0058cef6aa9c2b94da"
+dependencies = [
+ "liminalkit-raster",
+ "liminalkit-shell",
+ "softbuffer",
+ "winit",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1350,57 +1401,6 @@ name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
-
-[[package]]
-name = "pixelkit-raster"
-version = "0.1.0"
-source = "git+https://github.com/liminalism/pixelkit.git?rev=614c9c6e84ce3cd0bc6c81988f636b493b30a497#614c9c6e84ce3cd0bc6c81988f636b493b30a497"
-dependencies = [
- "wide",
-]
-
-[[package]]
-name = "pixelkit-shell"
-version = "0.1.0"
-source = "git+https://github.com/liminalism/pixelkit.git?rev=614c9c6e84ce3cd0bc6c81988f636b493b30a497#614c9c6e84ce3cd0bc6c81988f636b493b30a497"
-dependencies = [
- "arboard",
- "objc2-app-kit 0.3.2",
- "objc2-foundation 0.3.2",
- "pixelkit-raster",
- "zeroize",
-]
-
-[[package]]
-name = "pixelkit-text"
-version = "0.1.0"
-source = "git+https://github.com/liminalism/pixelkit.git?rev=614c9c6e84ce3cd0bc6c81988f636b493b30a497#614c9c6e84ce3cd0bc6c81988f636b493b30a497"
-dependencies = [
- "pixelkit-raster",
-]
-
-[[package]]
-name = "pixelkit-ui"
-version = "0.1.0"
-source = "git+https://github.com/liminalism/pixelkit.git?rev=614c9c6e84ce3cd0bc6c81988f636b493b30a497#614c9c6e84ce3cd0bc6c81988f636b493b30a497"
-dependencies = [
- "pixelkit-raster",
- "pixelkit-shell",
- "pixelkit-text",
- "unicode-segmentation",
- "zeroize",
-]
-
-[[package]]
-name = "pixelkit-windowing"
-version = "0.1.0"
-source = "git+https://github.com/liminalism/pixelkit.git?rev=614c9c6e84ce3cd0bc6c81988f636b493b30a497#614c9c6e84ce3cd0bc6c81988f636b493b30a497"
-dependencies = [
- "pixelkit-raster",
- "pixelkit-shell",
- "softbuffer",
- "winit",
-]
 
 [[package]]
 name = "pkg-config"

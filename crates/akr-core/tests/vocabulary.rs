@@ -272,7 +272,7 @@ fn every_rule_has_a_function_and_the_json_code() {
     let json = names(&v["rules"]);
     let code: BTreeSet<String> = RULES.iter().map(|r| r.id.to_string()).collect();
     assert_eq!(json, code, "rule sets differ");
-    assert_eq!(code.len(), 25, "V-001..V-025");
+    assert_eq!(code.len(), 26, "V-001..V-026");
 
     for spec in RULES {
         let entry = &v["rules"][spec.id.to_string()];
@@ -306,4 +306,57 @@ fn scope_term_forms_match() {
         3,
         "D-010 fixes three scope term forms"
     );
+}
+
+#[test]
+fn retired_kinds_and_their_fold_targets_match() {
+    // D-046. The JSON says which kinds are retired and what each folds into; the code
+    // decides what may be written and what may supersede what from the same facts.
+    let v = vocabulary();
+    for kind in Kind::ALL {
+        let entry = &v["kinds"][kind.name()];
+        assert_eq!(
+            kind.is_retired(),
+            entry["retired"].as_bool().unwrap_or(false),
+            "retired flag of {kind}"
+        );
+        assert_eq!(
+            kind.folds_into().map(Kind::name),
+            entry["folds_into"].as_str(),
+            "fold target of {kind}"
+        );
+        if let Some(into) = kind.folds_into() {
+            assert!(!into.is_retired(), "{kind} folds into a retired kind");
+            assert_eq!(into.class(), kind.class(), "{kind} folds across classes");
+            assert!(
+                Relation::Supersedes.range().accepts(into, *kind),
+                "a {into} may supersede the {kind} that folds into it"
+            );
+            assert!(
+                !Relation::Supersedes.range().accepts(*kind, into),
+                "a retired {kind} may not supersede a {into}"
+            );
+        }
+    }
+    assert_eq!(Kind::written().len(), 8, "D-046 leaves eight written kinds");
+}
+
+#[test]
+fn purposes_and_slot_guidance_match_the_json() {
+    // D-049: `akr explain` and the MCP slot schema print these from code, so the code
+    // must say what the spine says.
+    let v = vocabulary();
+    for kind in Kind::ALL {
+        let entry = &v["kinds"][kind.name()];
+        assert_eq!(
+            kind.purpose(),
+            entry["purpose"].as_str().expect("purpose"),
+            "purpose of {kind}"
+        );
+        for slot in entry["content_slots"].as_array().expect("array") {
+            let name = slot["name"].as_str().expect("name");
+            let code = kind.slot_doc(ContentSlot::from_name(name).expect("known slot"));
+            assert_eq!(code, slot["doc"].as_str(), "guidance for {kind}.{name}");
+        }
+    }
 }

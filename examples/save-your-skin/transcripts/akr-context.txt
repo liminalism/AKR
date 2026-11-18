@@ -5,7 +5,7 @@ AKR CONTEXT BUNDLE
 goal        sys.milestone.m3-playable-day/1 — M3 — playable day
 commit      (none)
 paths       sim/src/project/**
-generated   akr 0.6.1, source-graph
+generated   akr 0.7.0, source-graph
             sha256:5159d2714f688627a85906b161def17b0358155fbfc2a3fc00b681d29a305f55
 
 ── 1. GOAL ──────────────────────────────────────────────────────────────────
@@ -119,6 +119,14 @@ The goal is itself a milestone. No containing milestone or track.
   The viewer reads an immutable frame snapshot produced by the simulator at each
   tick boundary. It does not call into the simulator, and no engine type appears
   in a viewer signature.
+  context
+    Revision 1 put engine types in viewer signatures and made the viewer
+    untestable in isolation. The text-layout question turned on the same boundary,
+    so both were settled together.
+  consequences
+    One extra allocation and copy per frame, measured at 0.4 ms against the 16 ms
+    budget. Accepted. The snapshot type is now a third thing to keep in step when
+    simulator state changes, which the tandem-work policy already covers.
   supersedes    @lege.decision.renderer-boundary/1  (superseded)
   implements    @lege.req.no-engine-types-in-viewer/1
   resolves      @lege.question.text-rendering-owner/1  (resolved)
@@ -240,7 +248,7 @@ AT RISK (4)
   terminal                4
   out of scope           12
 
-23 records, 11 sections, ~5150 tokens. No prose truncated.
+23 records, 11 sections, ~5264 tokens. No prose truncated.
 
 $ echo $?
 0

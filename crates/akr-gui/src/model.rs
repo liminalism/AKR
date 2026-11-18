@@ -69,13 +69,13 @@ impl ReviewSnapshot {
         let keys = self
             .records
             .iter()
-            .filter(|record| matches!(record.kind.as_str(), "track" | "milestone" | "work"))
+            .filter(|record| matches!(record.kind.as_str(), "milestone" | "work"))
             .map(|record| record.key.as_str())
             .collect::<BTreeSet<_>>();
         let mut children = BTreeMap::<String, Vec<String>>::new();
         let mut roots = Vec::new();
         for record in &self.records {
-            if !matches!(record.kind.as_str(), "track" | "milestone" | "work") {
+            if !matches!(record.kind.as_str(), "milestone" | "work") {
                 continue;
             }
             let parent = record

@@ -77,7 +77,8 @@ pub fn run_standalone(command: &Command) -> Option<Result<Output, EnvError>> {
         Command::Init {
             project,
             namespaces,
-        } => Some(crate::init::run(project.as_deref(), namespaces)),
+            no_hooks,
+        } => Some(crate::init::run(project.as_deref(), namespaces, !*no_hooks)),
         _ => None,
     }
 }
@@ -101,6 +102,21 @@ pub fn run(session: &mut Session, command: &Command) -> Result<Output, EnvError>
     // any one command, so they are filled in once here rather than by each command that
     // happens to remember.
     let mut output = dispatch(session, command)?;
+    // Public reads never consult private storage. Only the dedicated secret surface
+    // returns citation identities or explicitly requested local values.
+    if !matches!(
+        command,
+        Command::SecretPut { .. }
+            | Command::SecretGet { .. }
+            | Command::SecretResolve { .. }
+            | Command::Get {
+                detail: crate::args::Detail::Canonical,
+                ..
+            }
+    ) {
+        output.text = akr_core::secrets::redact(&output.text);
+        akr_core::secrets::redact_json(&mut output.result);
+    }
     output.commit = session
         .inputs
         .commit
@@ -111,7 +127,40 @@ pub fn run(session: &mut Session, command: &Command) -> Result<Output, EnvError>
 }
 
 fn dispatch(session: &mut Session, command: &Command) -> Result<Output, EnvError> {
+    // All generic input-file routes stay on the public side of the boundary.
     match command {
+        Command::ConfigSet { from }
+        | Command::ProposeMany { from }
+        | Command::EvidenceAddMany { from } => crate::secrets::public_input(&session.root, from)?,
+        Command::Propose {
+            from: Some(from), ..
+        }
+        | Command::Revise {
+            from: Some(from), ..
+        }
+        | Command::Supersede {
+            from: Some(from), ..
+        } => crate::secrets::public_input(&session.root, from)?,
+        Command::Fmt { paths, .. } => {
+            for path in paths {
+                crate::secrets::public_input(&session.root, path)?;
+            }
+        }
+        Command::EvidenceAdd {
+            artifact, capture, ..
+        } => {
+            for path in artifact.iter().chain(capture) {
+                crate::secrets::public_input(&session.root, Path::new(path))?;
+            }
+        }
+        _ => (),
+    }
+    match command {
+        Command::SecretPut { from } => crate::secrets::put(session, from),
+        Command::SecretGet { reference, reveal } => {
+            crate::secrets::get(session, reference, *reveal)
+        }
+        Command::SecretResolve { from, reveal } => crate::secrets::resolve(session, from, *reveal),
         Command::ConfigShow => crate::config::show(session),
         Command::ConfigSet { from } => {
             let path = if from.is_absolute() {
@@ -334,6 +383,7 @@ fn dispatch(session: &mut Session, command: &Command) -> Result<Output, EnvError
             related,
             note,
             untracked_reason,
+            why,
         } => crate::change::begin(
             session,
             kind,
@@ -343,6 +393,7 @@ fn dispatch(session: &mut Session, command: &Command) -> Result<Output, EnvError
             related,
             note.as_deref(),
             untracked_reason.as_deref(),
+            why,
         ),
         Command::ChangeShow => crate::change::show(session),
         Command::ChangeAbort => crate::change::abort(session),
@@ -368,10 +419,12 @@ fn dispatch(session: &mut Session, command: &Command) -> Result<Output, EnvError
             dry_run,
         } => crate::source::finalize(session, id, retain, context, *remove_file, *dry_run),
         Command::Propose { .. }
+        | Command::ProposeMany { .. }
         | Command::Revise { .. }
         | Command::Supersede { .. }
         | Command::Complete { .. }
         | Command::Abandon { .. }
+        | Command::Trace { .. }
         | Command::Papercut { .. }
         | Command::PapercutClose { .. }
         | Command::PapercutReset { .. }
@@ -910,6 +963,7 @@ fn check(
     review_clean: bool,
     views_current: bool,
 ) -> Result<Output, EnvError> {
+    crate::secrets::ensure_untracked(session)?;
     session.attach_lock();
     let model = session.resolve();
     let mut diagnostics = session.diagnostics(&model);
@@ -955,9 +1009,7 @@ fn check(
     let mut view_diagnostics = if counts_of(session, &model).records == 0 {
         Vec::new()
     } else {
-        check_views_current(&session.view_dir(), context).map_err(|e| {
-            EnvError::new("AKR-E001", format!("cannot read the view directory: {e}"))
-        })?
+        check_views_relative(session, context)?
     };
 
     // An agent that has just written a record has stale views BY CONSTRUCTION, and has not
@@ -1027,6 +1079,7 @@ fn check(
         text.push_str(&scratch_fact(&scratch));
         text.push_str(&recorded_commands_fact(session));
         text.push_str(&unverifiable_scope_fact(&session.unverifiable_scopes()));
+        text.push_str(&retired_kinds_fact(&model));
         let missing = crate::init::missing_gitignore_entries(&session.root);
         if !missing.is_empty() {
             text.push_str(&format!(
@@ -1139,6 +1192,25 @@ struct Counts {
     heads: usize,
     checks: usize,
     satisfied: usize,
+}
+
+fn check_views_relative(
+    session: &Session,
+    context: akr_core::render::RenderContext<'_>,
+) -> Result<Vec<akr_core::diagnostics::Diagnostic>, EnvError> {
+    let mut diagnostics = check_views_current(&session.view_dir(), context)
+        .map_err(|e| EnvError::new("AKR-E001", format!("cannot read the view directory: {e}")))?;
+    let root_prefix = format!("{}/", session.root.to_string_lossy().replace('\\', "/"));
+    for diagnostic in &mut diagnostics {
+        if let akr_core::diagnostics::Subject::File(path) = &mut diagnostic.primary.subject
+            && let Some(rel) = path.strip_prefix(&root_prefix)
+        {
+            let rel = rel.to_owned();
+            diagnostic.message = diagnostic.message.replace(path.as_str(), &rel);
+            *path = rel;
+        }
+    }
+    Ok(diagnostics)
 }
 
 fn counts_of(session: &Session, model: &akr_core::resolve::ResolvedModel<'_>) -> Counts {
@@ -1348,6 +1420,7 @@ fn days_from_civil(date: Date) -> i64 {
 // -------------------------------------------------------------------------------------
 
 fn build(session: &mut Session, check: bool) -> Result<Output, EnvError> {
+    crate::secrets::ensure_untracked(session)?;
     session.attach_lock();
     let model = session.resolve();
     let mut diagnostics = session.diagnostics(&model);
@@ -1383,9 +1456,7 @@ fn build(session: &mut Session, check: bool) -> Result<Output, EnvError> {
 
         let freshness = session.freshness(&queue);
         let context = akr_core::render::RenderContext::new(&model, &freshness);
-        let view_diagnostics = check_views_current(&session.view_dir(), context).map_err(|e| {
-            EnvError::new("AKR-E001", format!("cannot read the view directory: {e}"))
-        })?;
+        let view_diagnostics = check_views_relative(session, context)?;
         let views_current = view_diagnostics.is_empty();
         text.push_str(&format!(
             "  stage E  emit (in memory)      {} views        {}\n",
@@ -1878,6 +1949,19 @@ fn get(
             text.push_str(&format!("    {line}\n"));
         }
     }
+    // D-047: the reasoning, each step beside the commit that introduced it. The commit is
+    // derived from git history and never stored (D-032), so it survives a rebase and
+    // costs the ledger nothing. An entry not yet committed has none.
+    let trace = trace_with_commits(session, record);
+    if detail != Detail::Summary && !trace.is_empty() {
+        text.push_str("\n  trace\n");
+        for (entry, commit) in &trace {
+            let at = commit
+                .as_ref()
+                .map_or_else(|| "(new)   ".to_owned(), |c| c.as_str()[..8].to_owned());
+            text.push_str(&format!("    {at}  {entry}\n"));
+        }
+    }
     if detail != Detail::Summary && !record.claims.is_empty() {
         text.push_str("\n  claims\n");
         for claim in &record.claims {
@@ -1914,6 +1998,9 @@ fn get(
             }
             for reference in &check.verified_by {
                 text.push_str(&format!("      verified_by  {reference}\n"));
+            }
+            if let Some(commit) = &check.passed_at {
+                text.push_str(&format!("      passed_at  {commit}\n"));
             }
         }
     }
@@ -2155,6 +2242,31 @@ fn get(
     Ok(Output::text(text).with_result(Value::object(fields)))
 }
 
+/// A work record's trace entries, each with the commit that introduced it when git can
+/// say (D-047). Empty for a record with no trace.
+fn trace_with_commits(
+    session: &Session,
+    record: &akr_core::model::Record,
+) -> Vec<(String, Option<akr_core::model::Commit>)> {
+    let Some(akr_core::model::ContentValue::Strings(entries)) =
+        record.get(akr_core::model::ContentSlot::Trace)
+    else {
+        return Vec::new();
+    };
+    let commits = match (&session.repository, record.file.as_deref()) {
+        (Some(repository), Some(path)) => {
+            akr_core::git::trace_introductions(repository, path, &record.id.key, entries)
+                .unwrap_or_default()
+        }
+        _ => Vec::new(),
+    };
+    entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| (entry.clone(), commits.get(index).cloned().flatten()))
+        .collect()
+}
+
 /// One acceptance verdict, in plain terminal words.
 ///
 /// The Markdown renderer's phrasing without its backticks: `get` prints to a terminal and
@@ -2163,6 +2275,7 @@ fn verdict_line(verdict: &akr_core::resolve::Verdict) -> String {
     use akr_core::resolve::Verdict;
     match verdict {
         Verdict::Satisfied { by, .. } => format!("satisfied by @{by}"),
+        Verdict::Passed { at } => format!("satisfied — passed at {}", &at.as_str()[..8]),
         Verdict::NoEvidence => "not satisfied — no evidence".to_owned(),
         Verdict::Unresolved => "not satisfied — the cited evidence does not resolve".to_owned(),
         Verdict::Failing { by, result } => format!(
@@ -3748,6 +3861,27 @@ const DECISIONS: &str = include_str!("../../../docs/DECISIONS.md");
 /// The registries are compiled in: `akr explain` needs no workspace, which is the point —
 /// somebody reading a CI log should be able to look a code up without a checkout.
 fn explain(subject: &str) -> Output {
+    if subject.eq_ignore_ascii_case("secret") || subject.eq_ignore_ascii_case("secrets") {
+        return Output::plain(
+            format!(
+                "secret — local-only category outside the public record graph\n\n{}\nReference: docs/18-private-secrets.md\n",
+                crate::args::help_for("secret").unwrap_or_default()
+            ),
+            Value::object(vec![
+                ("category", Value::string("secret")),
+                ("storage", Value::string(akr_core::secrets::DIRECTORY)),
+                (
+                    "citation",
+                    Value::string("{{secret:<32 lowercase hex digits>}}"),
+                ),
+                (
+                    "public_rendering",
+                    Value::string(akr_core::secrets::REDACTED),
+                ),
+                ("public_record_kind", Value::bool(false)),
+            ]),
+        );
+    }
     if subject.eq_ignore_ascii_case("acceptance") {
         return Output::plain(
             "acceptance — checks on milestone/work records\n\nacceptance {\n    check smoke {\n        statement \"The command passes on the implementation.\"\n        method command\n        command \"cargo test -p my-crate smoke\"\n        verified_by [ @project.evidence.smoke/1 ]\n    }\n}\n\nMethods: manual, command, observation. A command check requires command.\nverified_by cites passing evidence; evidence describes observations, not what it verifies.\ncomplete --check smoke=@project.evidence.smoke/1 can attach evidence at completion.\nA revise acceptance overlay replaces the entire check set; include all checks to retain.\nReference: docs/02-data-model.md, docs/07-cli.md.\n",
@@ -3839,12 +3973,55 @@ fn explain(subject: &str) -> Output {
     }
 }
 
+/// How many live records still carry a retired kind (D-046), as a build fact.
+///
+/// A fact and not a diagnostic: those records are valid, and a ledger is not in error for
+/// holding its own history. The line is how a project learns it has folding it could do.
+/// Silent when there are none.
+fn retired_kinds_fact(model: &akr_core::resolve::ResolvedModel) -> String {
+    let mut counts: std::collections::BTreeMap<akr_core::model::Kind, usize> =
+        std::collections::BTreeMap::new();
+    for record in model.ledger().records() {
+        if record.is_live() && record.kind.is_retired() {
+            *counts.entry(record.kind).or_default() += 1;
+        }
+    }
+    if counts.is_empty() {
+        return String::new();
+    }
+    let total: usize = counts.values().sum();
+    let detail = counts
+        .iter()
+        .map(|(kind, count)| {
+            format!(
+                "{count} {kind} -> {}",
+                kind.folds_into().map_or("?", akr_core::model::Kind::name)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "    {total} live record(s) of retired kinds ({detail}) — still valid; fold with `akr supersede <key> --with <new-key> --from <body>` when it is worth it (D-046)\n"
+    )
+}
+
 /// The schema of one record kind: class, lifecycle, and slots, from the same tables the
 /// type-checker reads. This is how an author learns what a kind requires *before* the
 /// first `AKR-T001` rather than from it.
 fn explain_kind(kind: akr_core::model::Kind) -> Output {
     let class = kind.class();
     let mut text = format!("{} — a record kind\n", kind.name());
+    // What it is for, in the vocabulary's own words (D-049). The slot tables below say
+    // what a kind accepts; nothing used to say what it was meant to hold.
+    text.push_str(&format!("  purpose    {}\n", kind.purpose()));
+    if let Some(into) = kind.folds_into() {
+        text.push_str(&format!(
+            "  retired    no new record may take this kind (AKR-T008, D-046). Write a `{into}` \
+             instead; an existing {} stays readable, may be revised, and folds with \
+             `akr supersede <key> --with <new-{into}-key> --from <body>`\n",
+            kind.name()
+        ));
+    }
     text.push_str(&format!("  class      {}\n", class.name()));
     text.push_str(&format!(
         "  lifecycle  {}   (initial: {})\n",
@@ -3898,6 +4075,12 @@ fn explain_kind(kind: akr_core::model::Kind) -> Output {
     }
     if !optional.is_empty() {
         text.push_str(&format!("  optional   {}\n", optional.join(", ")));
+    }
+    // What each slot is for (D-049) — the same lines the MCP slot schema carries.
+    for spec in kind.content_slots() {
+        if let Some(doc) = kind.slot_doc(spec.slot) {
+            text.push_str(&format!("  {:<10} {doc}\n", spec.slot.name()));
+        }
     }
     // `topic` either way round. Listing only what a kind accepts leaves an author who has
     // seen `topic` on the write surface to assume it is universal, and the refusal arrives

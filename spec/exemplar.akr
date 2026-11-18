@@ -5,6 +5,10 @@
 # if a form does not appear here, do not write it in a specification document,
 # an example, or a fixture. The records describe a toy project and are not
 # expected to satisfy every validation rule.
+#
+# Five kinds shown here are retired (D-046): assessment, requirement,
+# constraint, term and track. They remain part of the language, so that sealed
+# history reads as it was written, and no new record may take one.
 
 akr 0.1
 project exemplar
@@ -50,6 +54,7 @@ record demo.milestone.playable-day/1 : milestone {
                 """
             method command
             command "cargo run -p tools -- audit-assets --path content/day-loop"
+            passed_at git:e806b3f54a2d7091c5e13b8a26f490dc7b135e64
         }
     }
     author "dkoepke"
@@ -67,6 +72,7 @@ record demo.obs.frame-budget/1 : observation {
     method instrumented
     watches [ "engine/render/**", "engine/sim/step.rs" ]
     review_after 2026-12-01
+    confidence high
     contradicts [ @demo.assessment.coverage-gaps/1 ]  # measured, not audited
     acknowledged true
     author "dkoepke"
@@ -102,6 +108,8 @@ record demo.policy.tandem-work/2 : policy {
         Divergence between the two has cost more time than the coupling does.
         """
     exceptions [ @demo.track.lighting ]
+    measure "simulator lag of at most one milestone"
+    aliases [ "tandem rule", "engine-sim coupling" ]
     claim lag-bound {
         text """
             Permitted simulator lag is at most one milestone, never two.
@@ -172,6 +180,10 @@ record demo.work.day-loop-plan/2 : work {
         the sim step, then the audit.
         """
     target 2026-08-30
+    trace [
+        "renderer boundary first: the sim step cannot be tested while the viewer owns the passes",
+        "dropped the shared clock: it made a day boundary depend on frame rate"
+    ]
     # Every unfinished child of revision 1 must be dispositioned here (D-017).
     disposition @demo.work.lighting-pass {
         outcome carried_forward

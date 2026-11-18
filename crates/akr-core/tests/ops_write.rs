@@ -6,6 +6,17 @@
 
 mod ops_support;
 
+#[path = "ops_atomicity.rs"]
+mod ops_atomicity;
+#[path = "ops_concurrency.rs"]
+mod ops_concurrency;
+#[path = "secrets.rs"]
+mod secrets;
+#[path = "store_index.rs"]
+mod store_index;
+#[path = "store_schema.rs"]
+mod store_schema;
+
 use akr_core::model::{
     Class, Commit, ContentSlot, ContentValue, Kind, Outcome as DispositionOutcome, Record,
     RecordBuilder, Reference, Relation, RevisionId, Segment, State, key,
@@ -15,12 +26,12 @@ use ops_support::Sandbox;
 use std::collections::BTreeSet;
 
 fn term(key_text: &str, title: &str) -> Record {
-    let mut record = RecordBuilder::new(key_text, 1, Kind::Term)
+    let mut record = RecordBuilder::new(key_text, 1, Kind::Policy)
         .title(title)
         .all_scope()
         .build();
     record.content.insert(
-        ContentSlot::Definition,
+        ContentSlot::Rule,
         ContentValue::prose("A definition supplied by the caller, as `--from` would."),
     );
     record
@@ -39,7 +50,7 @@ fn propose_creates_revision_one_in_the_conventional_file() {
     let applied = ops::propose(
         &context,
         &target,
-        Kind::Term,
+        Kind::Policy,
         "Audit lane",
         Some(term("sys.term.audit-lane", "Audit lane")),
     )
@@ -48,7 +59,10 @@ fn propose_creates_revision_one_in_the_conventional_file() {
     assert_eq!(applied.operation, ops::Operation::Propose);
     assert_eq!(applied.changes.len(), 1);
     assert_eq!(applied.changes[0].kind, ops::ChangeKind::Created);
-    assert_eq!(applied.files, vec![conventional_file(&target, Kind::Term)]);
+    assert_eq!(
+        applied.files,
+        vec![conventional_file(&target, Kind::Policy)]
+    );
     assert!(applied.lock_stale, "a new revision needs a new seal");
 
     // The record is on disk, in the state its class starts in, and the tree still parses.
@@ -65,15 +79,56 @@ fn propose_creates_revision_one_in_the_conventional_file() {
 }
 
 #[test]
-fn propose_refuses_an_existing_key() {
+fn propose_refuses_invalid_or_duplicate_proposals_without_writing() {
     let sandbox = Sandbox::save_your_skin();
     let context = WriteContext::new(sandbox.akr_dir());
-    let target = key("sys.term.playable-day");
+    let before = sandbox.snapshot();
 
-    let refused = ops::propose(&context, &target, Kind::Term, "again", None)
-        .expect_err("the key already exists");
+    let refused = ops::propose(
+        &context,
+        &key("sys.term.playable-day"),
+        Kind::Policy,
+        "again",
+        None,
+    )
+    .expect_err("the key already exists");
     assert_eq!(refused.code.as_str(), "AKR-L041");
     assert!(refused.help.is_some_and(|h| h.contains("akr revise")));
+
+    // No `rule`, which V-008 requires of a policy. A bare proposal is refused rather
+    // than written with a placeholder body.
+    let refused = ops::propose(
+        &context,
+        &key("sys.policy.bare"),
+        Kind::Policy,
+        "Bare",
+        None,
+    )
+    .expect_err("a policy with no rule does not validate");
+    assert_eq!(refused.code.as_str(), "AKR-C031");
+    assert!(
+        refused
+            .diagnostics
+            .iter()
+            .any(|d| d.code.as_str() == "AKR-T001")
+    );
+
+    let refused = ops::propose(
+        &context,
+        &key("nope.policy.stranger"),
+        Kind::Policy,
+        "Stranger",
+        Some(term("nope.policy.stranger", "Stranger")),
+    )
+    .expect_err("the namespace is not declared");
+    assert!(
+        refused
+            .diagnostics
+            .iter()
+            .any(|d| d.code.as_str() == "AKR-L004")
+    );
+
+    assert_eq!(before, sandbox.snapshot(), "refusals write nothing");
 }
 
 #[test]
@@ -115,44 +170,6 @@ fn propose_many_rejects_a_duplicate_without_writing_anything() {
     let refused = ops::propose_many(&context, &records).expect_err("duplicate batch key");
     assert_eq!(refused.code.as_str(), "AKR-L041");
     assert_eq!(before, sandbox.snapshot(), "a refused batch writes nothing");
-}
-
-#[test]
-fn propose_refuses_a_record_that_would_not_validate() {
-    let sandbox = Sandbox::save_your_skin();
-    let context = WriteContext::new(sandbox.akr_dir());
-
-    // No `definition`, which V-008 requires of a term. A bare proposal is refused rather
-    // than written with a placeholder body.
-    let refused = ops::propose(&context, &key("sys.term.bare"), Kind::Term, "Bare", None)
-        .expect_err("a term with no definition does not validate");
-    assert_eq!(refused.code.as_str(), "AKR-C031");
-    assert!(
-        refused
-            .diagnostics
-            .iter()
-            .any(|d| d.code.as_str() == "AKR-T001")
-    );
-}
-
-#[test]
-fn propose_refuses_an_undeclared_namespace() {
-    let sandbox = Sandbox::save_your_skin();
-    let context = WriteContext::new(sandbox.akr_dir());
-    let refused = ops::propose(
-        &context,
-        &key("nope.term.stranger"),
-        Kind::Term,
-        "Stranger",
-        Some(term("nope.term.stranger", "Stranger")),
-    )
-    .expect_err("the namespace is not declared");
-    assert!(
-        refused
-            .diagnostics
-            .iter()
-            .any(|d| d.code.as_str() == "AKR-L004")
-    );
 }
 
 // -------------------------------------------------------------------------------------
@@ -341,9 +358,11 @@ fn revise_repoints_non_historical_pins_and_leaves_historical_ones() {
 }
 
 #[test]
-fn revise_refuses_an_in_place_edit_of_a_sealed_head() {
+fn revise_refuses_sealed_in_place_and_unknown_key() {
     let sandbox = Sandbox::save_your_skin();
     let context = WriteContext::new(sandbox.akr_dir());
+    let before = sandbox.snapshot();
+
     let refused = ops::revise(
         &context,
         &key("sys.term.playable-day"),
@@ -355,12 +374,7 @@ fn revise_refuses_an_in_place_edit_of_a_sealed_head() {
     )
     .expect_err("sealed bodies are immutable");
     assert_eq!(refused.code.as_str(), "AKR-C032");
-}
 
-#[test]
-fn revise_refuses_an_unknown_key() {
-    let sandbox = Sandbox::save_your_skin();
-    let context = WriteContext::new(sandbox.akr_dir());
     let refused = ops::revise(
         &context,
         &key("sys.term.absent"),
@@ -369,6 +383,7 @@ fn revise_refuses_an_unknown_key() {
     )
     .expect_err("there is nothing to revise");
     assert_eq!(refused.code.as_str(), "AKR-L001");
+    assert_eq!(before, sandbox.snapshot(), "refusals write nothing");
 }
 
 // -------------------------------------------------------------------------------------
@@ -509,7 +524,7 @@ fn supersede_with_links_an_already_proposed_replacement_key_atomically() {
     ops::propose(
         &context,
         &old_key,
-        Kind::Term,
+        Kind::Policy,
         "Legacy session",
         Some(term("sys.term.legacy-session", "Legacy session")),
     )
@@ -527,7 +542,7 @@ fn supersede_with_links_an_already_proposed_replacement_key_atomically() {
     ops::propose(
         &context,
         &new_key,
-        Kind::Term,
+        Kind::Policy,
         "Playable session",
         Some(term("sys.term.playable-session", "Playable session")),
     )
@@ -1044,7 +1059,7 @@ fn every_successful_write_leaves_the_tree_canonical_and_valid() {
     ops::propose(
         &context,
         &key("tandem.term.rota"),
-        Kind::Term,
+        Kind::Policy,
         "Rota",
         Some(term("tandem.term.rota", "Rota")),
     )
@@ -1153,7 +1168,7 @@ fn a_write_is_not_blocked_by_a_diagnostic_it_inherited() {
     let applied = ops::propose(
         &context,
         &target,
-        Kind::Term,
+        Kind::Policy,
         "Audit lane",
         Some(term("sys.term.audit-lane", "Audit lane")),
     )
@@ -1516,4 +1531,445 @@ fn detach_skips_a_slot_that_would_still_cite_scratch_and_follows_supported_by_on
         "verified_by stays on the revision that was observed"
     );
     sandbox.assert_canonical();
+}
+
+// -------------------------------------------------------------------------------------
+// retired kinds (D-046)
+// -------------------------------------------------------------------------------------
+
+#[test]
+fn propose_refuses_a_new_key_of_every_retired_kind_and_names_the_fold_target() {
+    let sandbox = Sandbox::save_your_skin();
+    let context = WriteContext::new(sandbox.akr_dir());
+    let before = sandbox.snapshot();
+
+    for kind in Kind::ALL.iter().copied().filter(|kind| kind.is_retired()) {
+        let target = key(&format!("sys.retired.new-{kind}"));
+        let refused = ops::propose(&context, &target, kind, "New", None)
+            .expect_err("a retired kind takes no new key");
+        assert_eq!(refused.code.as_str(), "AKR-T008", "{kind}");
+        let into = kind.folds_into().expect("retired kinds fold somewhere");
+        assert!(
+            refused
+                .help
+                .as_deref()
+                .is_some_and(|help| help.contains(&format!("`{into}`"))),
+            "the refusal for {kind} names {into}: {:?}",
+            refused.help
+        );
+
+        let batch = [RecordBuilder::new(&target.to_string(), 1, kind).build()];
+        let refused =
+            ops::propose_many(&context, &batch).expect_err("the bulk route is the same route");
+        assert_eq!(refused.code.as_str(), "AKR-T008", "{kind} via propose_many");
+    }
+    assert_eq!(sandbox.snapshot(), before, "a refusal writes nothing");
+}
+
+#[test]
+fn a_record_that_already_has_a_retired_kind_can_still_be_revised() {
+    // Retirement closes the door on new keys. A ledger that holds 98 requirements has
+    // to stay maintainable, so the ones that exist keep the whole write surface.
+    let sandbox = Sandbox::save_your_skin();
+    let context = WriteContext::new(sandbox.akr_dir());
+    let target = key("sys.term.playable-day");
+
+    ops::revise(
+        &context,
+        &target,
+        ReviseMode::Auto,
+        &Edits {
+            title: Some("Playable day (one in-game day)".to_owned()),
+            ..Edits::default()
+        },
+    )
+    .expect("an existing term is revised as before");
+
+    let head = sandbox.ledger().head(&target).expect("head").clone();
+    assert_eq!(head.kind, Kind::Term, "revising does not change the kind");
+    assert_eq!(head.id.revision, 2);
+}
+
+fn folded_observation() -> Record {
+    RecordBuilder::new("sys.obs.projection-gaps", 1, Kind::Observation)
+        .title("Projection gaps put the M3 date at risk")
+        .prose(
+            ContentSlot::Statement,
+            "Two of the five projections M3 needs have no renderer yet; at the measured pace the date slips by a week.",
+        )
+        .enum_value(ContentSlot::Method, "manual")
+        .enum_value(ContentSlot::Confidence, "medium")
+        .filled()
+        .build()
+}
+
+#[test]
+fn a_retired_kind_folds_into_its_replacement_by_an_ordinary_supersede() {
+    let sandbox = Sandbox::save_your_skin();
+    let context = WriteContext::new(sandbox.akr_dir());
+    let old_key = key("sys.assessment.projection-gaps");
+    let new_key = key("sys.obs.projection-gaps");
+
+    ops::supersede_into(
+        &context,
+        &old_key,
+        &new_key,
+        Some(ops::NewSuccessor {
+            title: String::new(),
+            template: Some(folded_observation()),
+        }),
+        &[],
+    )
+    .expect("an assessment folds into an observation in one write");
+
+    let ledger = sandbox.ledger();
+    let old = ledger.head(&old_key).expect("old head");
+    assert_eq!(old.kind, Kind::Assessment, "history keeps its kind");
+    assert_eq!(old.state, State::Superseded);
+    let new = ledger.head(&new_key).expect("successor");
+    assert_eq!(new.kind, Kind::Observation);
+    assert_eq!(
+        new.targets(Relation::Supersedes),
+        &[Reference::pinned(old_key, 1)]
+    );
+    assert!(
+        new.get(ContentSlot::Confidence).is_some(),
+        "confidence came over with the fold"
+    );
+    let diagnostics = akr_core::validate::validate_all(&ledger);
+    assert!(
+        diagnostics.is_empty(),
+        "the folded ledger validates: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn supersession_crosses_kinds_only_along_a_fold() {
+    let sandbox = Sandbox::save_your_skin();
+    let context = WriteContext::new(sandbox.akr_dir());
+    let before = sandbox.snapshot();
+
+    // An assessment does not fold into a policy.
+    let mut wrong = term("sys.policy.projection-gaps", "Projection gaps");
+    wrong.id = RevisionId::new(key("sys.policy.projection-gaps"), 1);
+    let refused = ops::supersede_into(
+        &context,
+        &key("sys.assessment.projection-gaps"),
+        &key("sys.policy.projection-gaps"),
+        Some(ops::NewSuccessor {
+            title: String::new(),
+            template: Some(wrong),
+        }),
+        &[],
+    )
+    .expect_err("only the fold target may replace a retired kind");
+    assert_eq!(refused.code.as_str(), "AKR-L031");
+    assert!(
+        refused
+            .help
+            .as_deref()
+            .is_some_and(|help| help.contains("`observation`")),
+        "{:?}",
+        refused.help
+    );
+
+    // And the fold does not run backwards: an observation is not replaced by a new
+    // assessment.
+    let backwards = RecordBuilder::new("sys.assessment.headroom", 1, Kind::Assessment)
+        .title("Headroom")
+        .prose(ContentSlot::Statement, "There is headroom.")
+        .build();
+    let refused = ops::supersede_into(
+        &context,
+        &key("lege.obs.frame-budget-headroom"),
+        &key("sys.assessment.headroom"),
+        Some(ops::NewSuccessor {
+            title: String::new(),
+            template: Some(backwards),
+        }),
+        &[],
+    )
+    .expect_err("a written kind is not replaced by a retired one");
+    assert_eq!(refused.code.as_str(), "AKR-L031");
+    assert_eq!(sandbox.snapshot(), before, "refusals write nothing");
+}
+
+// -------------------------------------------------------------------------------------
+// trace (D-047)
+// -------------------------------------------------------------------------------------
+
+fn trace_entries(record: &Record) -> Vec<String> {
+    match record.get(ContentSlot::Trace) {
+        Some(ContentValue::Strings(entries)) => entries.clone(),
+        _ => Vec::new(),
+    }
+}
+
+#[test]
+fn trace_appends_to_a_sealed_head_in_place_without_a_new_revision() {
+    let sandbox = Sandbox::save_your_skin();
+    let context = WriteContext::new(sandbox.akr_dir());
+    let target = key("lege.work.extract-render-graph");
+    let before_ledger = sandbox.ledger();
+    let before = before_ledger.head(&target).expect("head").clone();
+    let revisions_before = before_ledger.revisions_of(&target).len();
+    assert!(before.is_sealed(), "the point is that the head is sealed");
+
+    let applied = ops::trace_append(
+        &context,
+        &target,
+        &[
+            "split the graph out first: the viewer cannot be tested while it owns the passes"
+                .to_owned(),
+        ],
+    )
+    .expect("a reason is appended where the record stands");
+    assert_eq!(applied.operation, ops::Operation::Trace);
+    assert_eq!(applied.changes[0].kind, ops::ChangeKind::Edited);
+    assert!(
+        applied.lock_stale,
+        "the seal moved, so the lock needs a build"
+    );
+
+    ops::trace_append(
+        &context,
+        &target,
+        &["dropped the trait object: one implementor, and it hid the borrow".to_owned()],
+    )
+    .expect("and another");
+
+    let ledger = sandbox.ledger();
+    let after = ledger.head(&target).expect("head");
+    assert_eq!(after.id, before.id, "no revision was minted");
+    assert_eq!(after.state, before.state);
+    assert_eq!(trace_entries(after).len(), 2);
+    assert_eq!(
+        ledger.revisions_of(&target).len(),
+        revisions_before,
+        "the key has exactly the revisions it had"
+    );
+    sandbox.assert_canonical();
+}
+
+#[test]
+fn trace_refuses_what_is_not_a_reason_and_writes_nothing() {
+    let sandbox = Sandbox::save_your_skin();
+    let context = WriteContext::new(sandbox.akr_dir());
+    let before = sandbox.snapshot();
+    let work = key("lege.work.extract-render-graph");
+
+    let long = vec!["word"; 41].join(" ");
+    let refused = ops::trace_append(&context, &work, &[long]).expect_err("over the limit");
+    assert_eq!(refused.code.as_str(), "AKR-T024");
+
+    let refused = ops::trace_append(&context, &work, &["   ".to_owned()]).expect_err("empty");
+    assert_eq!(refused.code.as_str(), "AKR-C031");
+
+    let refused = ops::trace_append(
+        &context,
+        &key("sys.policy.tandem-work"),
+        &["a policy has a rationale, not a trace".to_owned()],
+    )
+    .expect_err("only work carries a trace");
+    assert_eq!(refused.code.as_str(), "AKR-T002");
+
+    assert_eq!(sandbox.snapshot(), before);
+}
+
+#[test]
+fn trace_notes_a_long_entry_and_ignores_a_repeated_one() {
+    let sandbox = Sandbox::save_your_skin();
+    let context = WriteContext::new(sandbox.akr_dir());
+    let work = key("lege.work.extract-render-graph");
+
+    let wordy = vec!["word"; 30].join(" ");
+    let applied =
+        ops::trace_append(&context, &work, std::slice::from_ref(&wordy)).expect("under 40");
+    assert!(
+        applied.notes.iter().any(|note| note.contains("30 words")),
+        "{:?}",
+        applied.notes
+    );
+
+    let refused =
+        ops::trace_append(&context, &work, &[wordy]).expect_err("a retried call adds nothing");
+    assert_eq!(refused.code.as_str(), "AKR-C031");
+    assert_eq!(
+        trace_entries(sandbox.ledger().head(&work).expect("head")).len(),
+        1
+    );
+}
+
+// -------------------------------------------------------------------------------------
+// a check's own recorded pass (D-048)
+// -------------------------------------------------------------------------------------
+
+fn pass_commit() -> Commit {
+    Commit::new("3f0a1c9d5b7e2648a0d4f1b8c36e9752ad014b6f").expect("a commit")
+}
+
+/// An active work record with one command check and one manual check.
+fn active_work_with_checks(context: &WriteContext, key_text: &str) -> akr_core::model::LogicalKey {
+    let target = key(key_text);
+    let mut record = RecordBuilder::new(key_text, 1, Kind::Work)
+        .title("Cache survives a restart")
+        .prose(ContentSlot::Intent, "Keep the cache warm across restarts.")
+        .check("suite", akr_core::model::CheckMethod::Command, &[])
+        .build();
+    record.acceptance.as_mut().expect("check").checks[0].command =
+        Some("cargo test -p cache".to_owned());
+    ops::propose(context, &target, Kind::Work, "", Some(record)).expect("proposed");
+    for state in [State::Ready, State::Active] {
+        ops::revise(
+            context,
+            &target,
+            ReviseMode::Auto,
+            &Edits {
+                state: Some(state),
+                ..Edits::default()
+            },
+        )
+        .expect("moves along the lifecycle");
+    }
+    target
+}
+
+#[test]
+fn complete_accepts_a_command_check_that_records_its_own_pass() {
+    let sandbox = Sandbox::save_your_skin();
+    let context = WriteContext::new(sandbox.akr_dir());
+    let target = active_work_with_checks(&context, "sys.work.cache-survives-restart");
+    let evidence_before = sandbox
+        .ledger()
+        .records()
+        .iter()
+        .filter(|r| r.kind == Kind::Evidence)
+        .count();
+
+    let refused = ops::complete(&context, &target, &[]).expect_err("nothing satisfies it yet");
+    assert_eq!(refused.code.as_str(), "AKR-R022");
+
+    let applied = ops::complete_with(
+        &context,
+        &target,
+        &[],
+        &[("suite".to_owned(), pass_commit())],
+    )
+    .expect("the check records its own pass");
+    assert!(
+        applied
+            .notes
+            .iter()
+            .any(|note| note.contains("empty trace")),
+        "completion with no trace is noted, never refused: {:?}",
+        applied.notes
+    );
+
+    let ledger = sandbox.ledger();
+    let head = ledger.head(&target).expect("head");
+    assert_eq!(head.state, State::Completed);
+    assert_eq!(
+        head.acceptance.as_ref().expect("checks").checks[0].passed_at,
+        Some(pass_commit())
+    );
+    assert_eq!(
+        ledger
+            .records()
+            .iter()
+            .filter(|r| r.kind == Kind::Evidence)
+            .count(),
+        evidence_before,
+        "no evidence record was minted for a routine pass"
+    );
+    sandbox.assert_canonical();
+}
+
+#[test]
+fn a_recorded_pass_is_refused_for_an_unknown_or_non_command_check() {
+    let sandbox = Sandbox::save_your_skin();
+    let context = WriteContext::new(sandbox.akr_dir());
+    let target = active_work_with_checks(&context, "sys.work.cache-survives-restart");
+    let before = sandbox.snapshot();
+
+    let refused = ops::complete_with(
+        &context,
+        &target,
+        &[],
+        &[("no-such-check".to_owned(), pass_commit())],
+    )
+    .expect_err("the check must exist");
+    assert_eq!(refused.code.as_str(), "AKR-L012");
+
+    // The M5 case again: a designer's sign-off is not a command.
+    let tandem = Sandbox::sys_tandem();
+    let refused = ops::complete_with(
+        &WriteContext::new(tandem.akr_dir()),
+        &key("tandem.milestone.m5-one-playable-day"),
+        &[],
+        &[("three-seed-designer-signoff".to_owned(), pass_commit())],
+    )
+    .expect_err("a manual check does not certify itself");
+    assert_eq!(refused.code.as_str(), "AKR-T013");
+    assert_eq!(sandbox.snapshot(), before);
+}
+
+#[test]
+fn redefining_a_record_drops_the_passes_it_had_recorded() {
+    // The stamp is only as good as the definition it was run against (D-048). A revision
+    // that changes the intent carries the checks forward and must not carry their passes.
+    let sandbox = Sandbox::save_your_skin();
+    let context = WriteContext::new(sandbox.akr_dir());
+    let target = active_work_with_checks(&context, "sys.work.cache-survives-restart");
+    ops::complete_with(
+        &context,
+        &target,
+        &[],
+        &[("suite".to_owned(), pass_commit())],
+    )
+    .expect("completed");
+
+    let head = sandbox.ledger().head(&target).expect("head").clone();
+    let mut redefined = head.clone();
+    redefined.state = State::Active;
+    redefined.content.insert(
+        ContentSlot::Intent,
+        ContentValue::prose("Keep the cache warm across restarts and across upgrades."),
+    );
+    let refused = ops::revise(
+        &context,
+        &target,
+        ReviseMode::NewRevision,
+        &Edits {
+            replace_with: Some(Box::new(redefined.clone())),
+            state: Some(State::Completed),
+            ..Edits::default()
+        },
+    )
+    .expect_err("a redefinition cannot stay completed on a pass run against the old intent");
+    assert!(
+        refused
+            .diagnostics
+            .iter()
+            .any(|d| d.code.as_str() == "AKR-R022"),
+        "{:?}",
+        refused.diagnostics
+    );
+
+    // A trace entry is not a redefinition: the pass stands.
+    ops::trace_append(
+        &context,
+        &target,
+        &["warm cache: cold start cost 4 s".to_owned()],
+    )
+    .expect("appended");
+    let head = sandbox.ledger().head(&target).expect("head").clone();
+    assert_eq!(
+        head.acceptance.as_ref().expect("checks").checks[0].passed_at,
+        Some(pass_commit())
+    );
+    assert!(
+        akr_core::validate::validate_all(&sandbox.ledger())
+            .iter()
+            .all(|d| d.code.as_str() != "AKR-R022")
+    );
 }

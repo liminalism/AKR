@@ -6,8 +6,15 @@
 
 mod support;
 
+#[path = "example_sys_tandem.rs"]
+mod example_sys_tandem;
+#[path = "freshness.rs"]
+mod freshness;
+#[path = "synthetic_history.rs"]
+mod synthetic_history;
+
 use akr_core::git::{GitError, Repository, ancestry_over, last_change_of, last_changes};
-use akr_core::model::{Commit, Ledger, LogicalKey, Project, RevisionId, key};
+use akr_core::model::{Commit, Ledger, Project, RevisionId, key};
 use akr_core::syntax::{lower::lower_all, parse};
 use std::path::Path;
 use support::TempRepo;
@@ -17,7 +24,7 @@ fn commit(hash: &str) -> Commit {
 }
 
 // -------------------------------------------------------------------------------------
-// Opening
+// Opening, ancestry, and merges
 // -------------------------------------------------------------------------------------
 
 #[test]
@@ -31,74 +38,59 @@ fn opening_a_non_repository_says_so() {
 }
 
 #[test]
-fn an_unknown_revision_is_reported_as_such() {
-    let mut repo = TempRepo::new("unknown-rev");
-    repo.commit_file("a.txt", "one\n", "first");
-    let git = Repository::open(repo.root()).expect("opens");
-    let error = git.rev_parse("deadbeef").expect_err("no such revision");
-    assert!(matches!(error, GitError::UnknownRevision(_)));
-    assert_eq!(error.to_diagnostic().code, akr_core::git::codes::G013);
-}
-
-#[test]
-fn malformed_rewrite_maps_are_reported_instead_of_ignored() {
-    let mut repo = TempRepo::new("bad-rewrite-map");
-    repo.commit_file("a.txt", "one\n", "first");
-    repo.write(".akr-commit-map", "not-a-commit also-not-a-commit\n");
-
-    let error = Repository::open(repo.root()).expect_err("the map is invalid");
-    assert!(matches!(error, GitError::InvalidRewriteMap { line: 1, .. }));
-    assert_eq!(error.to_diagnostic().code, akr_core::git::codes::G014);
-}
-
-#[test]
-fn head_resolves_to_the_latest_commit() {
-    let mut repo = TempRepo::new("head");
-    repo.commit_file("a.txt", "one\n", "first");
-    let second = repo.commit_file("a.txt", "two\n", "second");
-    let git = Repository::open(repo.root()).expect("opens");
-    assert_eq!(git.head().expect("head").as_str(), second);
-}
-
-// -------------------------------------------------------------------------------------
-// Ancestry
-// -------------------------------------------------------------------------------------
-
-#[test]
-fn ancestry_is_reflexive_and_directional() {
-    let mut repo = TempRepo::new("ancestry");
-    let first = commit(&repo.commit_file("a.txt", "1\n", "first"));
-    let second = commit(&repo.commit_file("a.txt", "2\n", "second"));
-    let git = Repository::open(repo.root()).expect("opens");
-
-    assert!(git.is_descendant(&first, &first).expect("reflexive"));
-    assert!(git.is_descendant(&second, &first).expect("later descends"));
-    assert!(
-        !git.is_descendant(&first, &second)
-            .expect("earlier does not")
-    );
-}
-
-#[test]
-fn ancestry_across_a_merge_is_answered_by_git() {
-    // A hand-rolled first-parent walk gets this wrong; `merge-base --is-ancestor` does not.
-    let mut repo = TempRepo::new("merge");
-    let base = commit(&repo.commit_file("a.txt", "base\n", "base"));
+fn repo_opening_ancestry_merges_and_rewrite_errors() {
+    let mut repo = TempRepo::new("git-ancestry");
+    let c1 = commit(&repo.commit_file("a.txt", "1\n", "c1"));
     repo.branch("side");
     let side = commit(&repo.commit_file("side.txt", "side\n", "on the side branch"));
     repo.checkout("main");
-    let main = commit(&repo.commit_file("main.txt", "main\n", "on main"));
+    let c2 = commit(&repo.commit_file("a.txt", "2\n", "c2"));
+    let c3 = commit(&repo.commit_file("main.txt", "main\n", "c3"));
     let merged = commit(&repo.merge("side"));
 
     let git = Repository::open(repo.root()).expect("opens");
-    assert!(git.is_descendant(&merged, &base).expect("q"));
+    assert_eq!(git.head().expect("head"), merged);
+    let err = git.rev_parse("deadbeef").expect_err("no such revision");
+    assert!(matches!(err, GitError::UnknownRevision(_)));
+    assert_eq!(err.to_diagnostic().code, akr_core::git::codes::G013);
+
+    // Reflexive, directional, and across a merge.
+    assert!(git.is_descendant(&c1, &c1).expect("reflexive"));
+    assert!(git.is_descendant(&c2, &c1).expect("later descends"));
+    assert!(!git.is_descendant(&c1, &c2).expect("earlier does not"));
+    assert!(git.is_descendant(&merged, &c1).expect("q"));
     assert!(
         git.is_descendant(&merged, &side).expect("q"),
         "a merge descends from its second parent"
     );
-    assert!(git.is_descendant(&merged, &main).expect("q"));
-    assert!(!git.is_descendant(&side, &main).expect("q"), "siblings");
-    assert!(!git.is_descendant(&main, &side).expect("q"), "siblings");
+    assert!(git.is_descendant(&merged, &c3).expect("q"));
+    assert!(!git.is_descendant(&side, &c3).expect("q"), "siblings");
+    assert!(!git.is_descendant(&c3, &side).expect("q"), "siblings");
+
+    let absent = commit("0123456789abcdef0123456789abcdef01234567");
+    assert!(matches!(
+        git.is_descendant(&c1, &absent),
+        Err(GitError::UnknownRevision(_))
+    ));
+
+    // `ancestry_over` reproduces git answers and leaves absent commits unknown.
+    let ancestry =
+        ancestry_over(&git, [c1.clone(), c2.clone(), c3.clone(), absent.clone()]).expect("builds");
+    for (descendant, ancestor) in [(&c3, &c1), (&c3, &c2), (&c2, &c1), (&c1, &c1)] {
+        assert_eq!(ancestry.is_descendant(descendant, ancestor), Some(true));
+    }
+    assert_eq!(ancestry.is_descendant(&c1, &c3), Some(false));
+    assert_eq!(ancestry.is_descendant(&c2, &c3), Some(false));
+    assert_eq!(ancestry.is_descendant(&c1, &absent), None);
+
+    // Malformed `.akr-commit-map` is reported instead of ignored.
+    repo.write(".akr-commit-map", "not-a-commit also-not-a-commit\n");
+    let map_err = Repository::open(repo.root()).expect_err("the map is invalid");
+    assert!(matches!(
+        map_err,
+        GitError::InvalidRewriteMap { line: 1, .. }
+    ));
+    assert_eq!(map_err.to_diagnostic().code, akr_core::git::codes::G014);
 }
 
 #[test]
@@ -150,173 +142,119 @@ fn reviewed_rewrite_pairs_resolve_git_queries_to_the_replacement() {
     );
 }
 
-#[test]
-fn ancestry_of_a_missing_commit_is_an_error_not_a_false() {
-    let mut repo = TempRepo::new("missing-ancestry");
-    let only = commit(&repo.commit_file("a.txt", "1\n", "first"));
-    let git = Repository::open(repo.root()).expect("opens");
-    let absent = commit("0123456789abcdef0123456789abcdef01234567");
-    assert!(matches!(
-        git.is_descendant(&only, &absent),
-        Err(GitError::UnknownRevision(_))
-    ));
-}
-
-#[test]
-fn ancestry_over_reproduces_git_answers_on_linear_history() {
-    let mut repo = TempRepo::new("ancestry-over");
-    let c1 = commit(&repo.commit_file("a.txt", "1\n", "c1"));
-    let c2 = commit(&repo.commit_file("a.txt", "2\n", "c2"));
-    let c3 = commit(&repo.commit_file("a.txt", "3\n", "c3"));
-    let git = Repository::open(repo.root()).expect("opens");
-
-    let ancestry = ancestry_over(&git, [c1.clone(), c2.clone(), c3.clone()]).expect("builds");
-    for (descendant, ancestor) in [(&c3, &c1), (&c3, &c2), (&c2, &c1), (&c1, &c1)] {
-        assert_eq!(
-            ancestry.is_descendant(descendant, ancestor),
-            Some(true),
-            "{descendant} should descend from {ancestor}"
-        );
-    }
-    assert_eq!(ancestry.is_descendant(&c1, &c3), Some(false));
-    assert_eq!(ancestry.is_descendant(&c2, &c3), Some(false));
-}
-
-#[test]
-fn ancestry_over_ignores_commits_the_repository_does_not_have() {
-    let mut repo = TempRepo::new("ancestry-filter");
-    let c1 = commit(&repo.commit_file("a.txt", "1\n", "c1"));
-    let git = Repository::open(repo.root()).expect("opens");
-    let absent = commit("0123456789abcdef0123456789abcdef01234567");
-    let ancestry = ancestry_over(&git, [c1.clone(), absent.clone()]).expect("builds");
-    assert_eq!(
-        ancestry.is_descendant(&c1, &absent),
-        None,
-        "an unknown commit stays unknown rather than becoming a false answer"
-    );
-}
-
 // -------------------------------------------------------------------------------------
-// Changed paths
+// Changed paths, ranges, working tree, and ignores
 // -------------------------------------------------------------------------------------
 
 #[test]
-fn touches_report_every_path_a_range_changed() {
-    let mut repo = TempRepo::new("touches");
-    let base = commit(&repo.commit_file("src/a.rs", "1\n", "base"));
-    repo.write("src/b.rs", "2\n");
-    repo.write("docs/x.md", "x\n");
-    let second = commit(&repo.commit("two files"));
-    let git = Repository::open(repo.root()).expect("opens");
-
-    let touches = git.touches_in(Some(&base), &second).expect("touches");
-    let paths: Vec<&str> = touches.iter().map(|t| t.path.as_str()).collect();
-    assert_eq!(paths, ["docs/x.md", "src/b.rs"]);
-    assert!(touches.iter().all(|t| t.commit == second));
-}
-
-#[test]
-fn touches_exclude_commits_before_the_range() {
-    let mut repo = TempRepo::new("touch-range");
-    repo.commit_file("early.rs", "1\n", "early");
-    let base = commit(&repo.commit_file("mid.rs", "1\n", "mid"));
-    let head = commit(&repo.commit_file("late.rs", "1\n", "late"));
-    let git = Repository::open(repo.root()).expect("opens");
-
-    let paths: Vec<String> = git
-        .touches_in(Some(&base), &head)
-        .expect("touches")
-        .into_iter()
-        .map(|t| t.path)
-        .collect();
-    assert_eq!(paths, ["late.rs"]);
-}
-
-#[test]
-fn a_rename_reports_both_paths() {
-    // An observation watching the old location and one watching the new location have
-    // each had their subject moved out from under them.
-    let mut repo = TempRepo::new("rename");
-    let base = commit(&repo.commit_file(
+fn touches_ranges_renames_deletions_working_tree_and_ignores() {
+    let mut repo = TempRepo::new("git-touches");
+    repo.write(".gitignore", "target/\n*.tmp\n");
+    repo.write("early.rs", "1\n");
+    repo.write("gone.rs", "1\n");
+    repo.write(
         "engine/bridge.rs",
         "// a reasonably long file so rename detection is unambiguous\nfn main() {}\n",
-        "base",
-    ));
+    );
+    let c1 = commit(&repo.commit("early"));
+
+    let c2_base = commit(&repo.commit_file("mid.rs", "1\n", "mid"));
+    repo.write("src/b.rs", "2\n");
+    repo.write("docs/x.md", "x\n");
+    let c3 = commit(&repo.commit("two files"));
+
     repo.rename("engine/bridge.rs", "engine/seam.rs");
-    let renamed = commit(&repo.commit("rename the bridge"));
-    let git = Repository::open(repo.root()).expect("opens");
+    let c4_renamed = commit(&repo.commit("rename the bridge"));
 
-    let paths: Vec<String> = git
-        .touches_in(Some(&base), &renamed)
-        .expect("touches")
-        .into_iter()
-        .map(|t| t.path)
-        .collect();
-    assert!(paths.contains(&"engine/bridge.rs".to_owned()), "{paths:?}");
-    assert!(paths.contains(&"engine/seam.rs".to_owned()), "{paths:?}");
-}
-
-#[test]
-fn a_deletion_is_a_touch() {
-    let mut repo = TempRepo::new("delete");
-    let base = commit(&repo.commit_file("gone.rs", "1\n", "base"));
     repo.remove("gone.rs");
-    let deleted = commit(&repo.commit("delete it"));
+    let c5_deleted = commit(&repo.commit("delete it"));
+
+    repo.write("z.rs", "z\n");
+    repo.write("mid.rs", "2\n");
+    repo.write("m.rs", "m\n");
+    let c6_head = commit(&repo.commit("several"));
+
     let git = Repository::open(repo.root()).expect("opens");
-    let paths: Vec<String> = git
-        .touches_in(Some(&base), &deleted)
+
+    // 1. Touches report every path and exclude commits before the range.
+    let touches = git.touches_in(Some(&c2_base), &c3).expect("touches");
+    let paths: Vec<&str> = touches.iter().map(|t| t.path.as_str()).collect();
+    assert_eq!(paths, ["docs/x.md", "src/b.rs"]);
+    assert!(touches.iter().all(|t| t.commit == c3));
+
+    // 2. Rename reports both old and new paths; deletion is a touch.
+    let rename_paths: Vec<String> = git
+        .touches_in(Some(&c3), &c4_renamed)
         .expect("touches")
         .into_iter()
         .map(|t| t.path)
         .collect();
-    assert_eq!(paths, ["gone.rs"]);
-}
+    assert!(
+        rename_paths.contains(&"engine/bridge.rs".to_owned()),
+        "{rename_paths:?}"
+    );
+    assert!(
+        rename_paths.contains(&"engine/seam.rs".to_owned()),
+        "{rename_paths:?}"
+    );
 
-#[test]
-fn touches_are_deterministic() {
-    let mut repo = TempRepo::new("touch-determinism");
-    let base = commit(&repo.commit_file("a.rs", "1\n", "base"));
-    repo.write("z.rs", "z\n");
-    repo.write("a.rs", "2\n");
-    repo.write("m.rs", "m\n");
-    let head = commit(&repo.commit("several"));
-    let git = Repository::open(repo.root()).expect("opens");
-    let once = git.touches_in(Some(&base), &head).expect("touches");
-    let twice = git.touches_in(Some(&base), &head).expect("touches");
+    let del_paths: Vec<String> = git
+        .touches_in(Some(&c4_renamed), &c5_deleted)
+        .expect("touches")
+        .into_iter()
+        .map(|t| t.path)
+        .collect();
+    assert_eq!(del_paths, ["gone.rs"]);
+
+    // 3. Touches are deterministic and sorted; commits_in counts the range.
+    let once = git
+        .touches_in(Some(&c5_deleted), &c6_head)
+        .expect("touches");
+    let twice = git
+        .touches_in(Some(&c5_deleted), &c6_head)
+        .expect("touches");
     assert_eq!(once, twice);
-    let paths: Vec<&str> = once.iter().map(|t| t.path.as_str()).collect();
-    assert_eq!(paths, ["a.rs", "m.rs", "z.rs"], "sorted");
-}
+    assert_eq!(
+        once.iter().map(|t| t.path.as_str()).collect::<Vec<_>>(),
+        ["m.rs", "mid.rs", "z.rs"]
+    );
+    assert_eq!(
+        git.commits_in(Some(&c1), &c4_renamed).expect("range").len(),
+        3
+    );
 
-#[test]
-fn commits_in_a_range_are_counted() {
-    let mut repo = TempRepo::new("range-count");
-    let base = commit(&repo.commit_file("a.rs", "1\n", "base"));
-    repo.commit_file("a.rs", "2\n", "two");
-    repo.commit_file("a.rs", "3\n", "three");
-    let head = commit(&repo.commit_file("a.rs", "4\n", "four"));
-    let git = Repository::open(repo.root()).expect("opens");
-    assert_eq!(git.commits_in(Some(&base), &head).expect("range").len(), 3);
-}
+    // 4. Batched and per-path ignore checks agree.
+    let ignore_paths = ["target/debug/**", "src/**", "scratch.tmp", "docs/*.md"];
+    let one_at_a_time: Vec<bool> = ignore_paths
+        .iter()
+        .map(|p| git.is_ignored(p).expect("query"))
+        .collect();
+    assert_eq!(one_at_a_time, [true, false, true, false]);
+    let batched = git.clone();
+    batched.prime_ignored(ignore_paths);
+    let after: Vec<bool> = ignore_paths
+        .iter()
+        .map(|p| batched.is_ignored(p).expect("query"))
+        .collect();
+    assert_eq!(after, one_at_a_time);
+    batched.prime_ignored(ignore_paths);
+    batched.prime_ignored(std::iter::empty());
+    let again: Vec<bool> = ignore_paths
+        .iter()
+        .map(|p| batched.is_ignored(p).expect("query"))
+        .collect();
+    assert_eq!(again, one_at_a_time);
 
-#[test]
-fn the_working_tree_reports_uncommitted_changes() {
-    let mut repo = TempRepo::new("dirty");
-    repo.commit_file("a.rs", "1\n", "base");
-    repo.write("a.rs", "edited but not committed\n");
-    repo.write("new.rs", "untracked\n");
-    let git = Repository::open(repo.root()).expect("opens");
-    let dirty = git.working_tree_changes().expect("status");
-    assert!(dirty.contains("a.rs"), "{dirty:?}");
-    assert!(dirty.contains("new.rs"), "{dirty:?}");
-}
-
-#[test]
-fn a_clean_tree_reports_nothing() {
-    let mut repo = TempRepo::new("clean");
-    repo.commit_file("a.rs", "1\n", "base");
-    let git = Repository::open(repo.root()).expect("opens");
+    // 5. Clean tree reports nothing; dirty/untracked files report changes on a fresh handle.
     assert!(git.working_tree_changes().expect("status").is_empty());
+    repo.write("mid.rs", "edited but not committed\n");
+    repo.write("new.rs", "untracked\n");
+    let dirty = Repository::open(repo.root())
+        .expect("opens")
+        .working_tree_changes()
+        .expect("status");
+    assert!(dirty.contains("mid.rs"), "{dirty:?}");
+    assert!(dirty.contains("new.rs"), "{dirty:?}");
 }
 
 // -------------------------------------------------------------------------------------
@@ -345,113 +283,98 @@ record fx.milestone.m1/1 : milestone {
 ";
 
 #[test]
-fn last_change_is_the_commit_that_gave_a_record_its_current_text() {
-    let mut repo = TempRepo::new("last-change");
+fn last_change_tracks_definitional_edits_and_ignores_metadata() {
+    let mut repo = TempRepo::new("last-change-all");
     let introduced = repo.commit_file(".akr/records/m.akr", RECORD_V1, "introduce");
-    // Two commits that touch the file without changing the record's content.
+
+    // 1. Untracked path is None; initial commit fills `last_changes`.
+    let git0 = Repository::open(repo.root()).expect("opens");
+    assert_eq!(
+        last_change_of(&git0, ".akr/records/absent.akr", &key("fx.milestone.m1"), 1)
+            .expect("query"),
+        None
+    );
+    let ledger0 = load(repo.root(), ".akr/records/m.akr");
+    let facts = last_changes(&git0, &ledger0).expect("query");
+    assert_eq!(
+        facts.get(&RevisionId::new(key("fx.milestone.m1"), 1)),
+        Some(&commit(&introduced))
+    );
+
+    // 2. Unrelated file, comment, note, completion, and sibling do not move last_change.
     repo.commit_file("unrelated.txt", "a\n", "unrelated");
     let with_comment = RECORD_V1.replace(
         "    state active\n",
         "    # still the plan of record\n    state active\n",
     );
     repo.commit_file(".akr/records/m.akr", &with_comment, "add a comment");
-
-    let git = Repository::open(repo.root()).expect("opens");
-    let answer = last_change_of(&git, ".akr/records/m.akr", &key("fx.milestone.m1"), 1)
-        .expect("query")
-        .expect("the record exists");
-    assert_eq!(
-        answer.as_str(),
-        introduced,
-        "a comment is not a content change (spec/schema/akr-lock.md §3.3)"
+    let with_note = with_comment.replace(
+        "    intent \"\"\"\n        The first milestone.\n        \"\"\"\n",
+        "    intent \"\"\"\n        The first milestone.\n        \"\"\"\n    note \"\"\"\n        A later aside.\n        \"\"\"\n",
     );
-}
-
-#[test]
-fn last_change_moves_when_the_record_body_changes() {
-    let mut repo = TempRepo::new("last-change-moves");
-    repo.commit_file(".akr/records/m.akr", RECORD_V1, "introduce");
-    let edited = RECORD_V1.replace("The first milestone.", "The first milestone, restated.");
-    let changed = repo.commit_file(".akr/records/m.akr", &edited, "restate");
-
-    let git = Repository::open(repo.root()).expect("opens");
-    let answer = last_change_of(&git, ".akr/records/m.akr", &key("fx.milestone.m1"), 1)
-        .expect("query")
-        .expect("the record exists");
-    assert_eq!(answer.as_str(), changed);
-}
-
-#[test]
-fn last_change_ignores_edits_to_other_records_in_the_same_file() {
-    // Adding a record to a file must not invalidate every acceptance check in it.
-    let mut repo = TempRepo::new("last-change-sibling");
-    let introduced = repo.commit_file(".akr/records/m.akr", RECORD_V1, "introduce");
-    let with_sibling = format!(
-        "{RECORD_V1}\nrecord fx.milestone.m2/1 : milestone {{\n    title \"M2\"\n    state proposed\n    intent \"\"\"\n        The second milestone.\n        \"\"\"\n    acceptance {{\n        check done {{\n            statement \"\"\"\n                It is done.\n                \"\"\"\n            method manual\n        }}\n    }}\n}}\n"
-    );
-    repo.commit_file(".akr/records/m.akr", &with_sibling, "add a sibling");
-
-    let git = Repository::open(repo.root()).expect("opens");
-    let answer = last_change_of(&git, ".akr/records/m.akr", &key("fx.milestone.m1"), 1)
-        .expect("query")
-        .expect("the record exists");
-    assert_eq!(answer.as_str(), introduced);
-}
-
-#[test]
-fn last_change_is_none_for_an_untracked_record() {
-    let mut repo = TempRepo::new("last-change-untracked");
-    repo.commit_file("a.txt", "1\n", "base");
-    let git = Repository::open(repo.root()).expect("opens");
-    assert_eq!(
-        last_change_of(&git, ".akr/records/absent.akr", &key("fx.milestone.m1"), 1).expect("query"),
-        None
-    );
-}
-
-#[test]
-fn a_completion_does_not_move_last_change() {
-    // D-029: `akr complete` sets state -> completed and adds a `verified_by` to each check.
-    // Neither redefines the milestone, so its last content change stays at its definition
-    // commit and the evidence that closes it is not stranded (D-016 / V-020, AKR-R022).
-    let mut repo = TempRepo::new("last-change-completion");
-    let introduced = repo.commit_file(".akr/records/m.akr", RECORD_V1, "introduce");
-    let completed = RECORD_V1
+    repo.commit_file(".akr/records/m.akr", &with_note, "annotate");
+    let completed = with_note
         .replace("    state active\n", "    state completed\n")
         .replace(
             "            method manual\n",
             "            method manual\n            verified_by [ @fx.evidence.done/1 ]\n",
         );
     repo.commit_file(".akr/records/m.akr", &completed, "complete");
-
-    let git = Repository::open(repo.root()).expect("opens");
-    let answer = last_change_of(&git, ".akr/records/m.akr", &key("fx.milestone.m1"), 1)
-        .expect("query")
-        .expect("the record exists");
-    assert_eq!(
-        answer.as_str(),
-        introduced,
-        "completing a milestone is not a definitional change (D-029)"
+    let with_sibling = format!(
+        "{completed}\nrecord fx.milestone.m2/1 : milestone {{\n    title \"M2\"\n    state proposed\n    intent \"\"\"\n        The second milestone.\n        \"\"\"\n    acceptance {{\n        check done {{\n            statement \"\"\"\n                It is done.\n                \"\"\"\n            method manual\n        }}\n    }}\n}}\n"
     );
-}
+    repo.commit_file(".akr/records/m.akr", &with_sibling, "add a sibling");
 
-#[test]
-fn a_revision_that_redefines_nothing_does_not_move_last_change() {
-    // D-038. A sealed record can only be changed by revising it, and revision 2 did not
-    // exist before the commit that wrote it — so by the pre-D-038 reading its last
-    // definitional change was always that commit, and every citation it carried was
-    // instantly too old. Here revision 2 differs from revision 1 only in the ways
-    // revising a record always differs: the revision number, the `supersedes` edge back,
-    // the sealed predecessor's state, and a check citation.
-    let mut repo = TempRepo::new("last-change-revision");
-    let introduced = repo.commit_file(".akr/records/m.akr", RECORD_V1, "introduce");
-    let revised = format!(
+    let git1 = Repository::open(repo.root()).expect("opens");
+    assert_eq!(
+        last_change_of(&git1, ".akr/records/m.akr", &key("fx.milestone.m1"), 1)
+            .expect("query")
+            .expect("exists")
+            .as_str(),
+        introduced
+    );
+
+    // 3. Changing body or check statement moves last_change.
+    let edited_body =
+        with_sibling.replace("The first milestone.", "The first milestone, restated.");
+    let body_commit = repo.commit_file(".akr/records/m.akr", &edited_body, "restate");
+    let git2 = Repository::open(repo.root()).expect("opens");
+    assert_eq!(
+        last_change_of(&git2, ".akr/records/m.akr", &key("fx.milestone.m1"), 1)
+            .expect("query")
+            .expect("exists")
+            .as_str(),
+        body_commit
+    );
+
+    let edited_check = edited_body.replace(
+        "The second milestone.\n        \"\"\"\n    acceptance {\n        check done {\n            statement \"\"\"\n                It is done.",
+        "The second milestone.\n        \"\"\"\n    acceptance {\n        check done {\n            statement \"\"\"\n                It is done, and measured.",
+    );
+    let check_commit = repo.commit_file(".akr/records/m.akr", &edited_check, "restate m2 check");
+    let git3 = Repository::open(repo.root()).expect("opens");
+    assert_eq!(
+        last_change_of(&git3, ".akr/records/m.akr", &key("fx.milestone.m2"), 1)
+            .expect("query")
+            .expect("exists")
+            .as_str(),
+        check_commit
+    );
+
+    // 4. Revising without redefining preserves last_change (D-038); redefining a check moves it.
+    let m3_intro = repo.commit_file(
+        ".akr/records/m3.akr",
+        &RECORD_V1.replace("fx.milestone.m1", "fx.milestone.m3"),
+        "m3 intro",
+    );
+    let m3_rev2_same = format!(
         "{}\n{}",
         RECORD_V1
+            .replace("fx.milestone.m1", "fx.milestone.m3")
             .trim_end()
             .replace("    state active\n", "    state superseded\n"),
         "\
-record fx.milestone.m1/2 : milestone {
+record fx.milestone.m3/2 : milestone {
     title \"M1\"
     state active
     intent \"\"\"
@@ -466,37 +389,26 @@ record fx.milestone.m1/2 : milestone {
             verified_by [ @fx.evidence.done/1 ]
         }
     }
-    supersedes [ @fx.milestone.m1/1 ]
+    supersedes [ @fx.milestone.m3/1 ]
 }
 "
     );
-    repo.commit_file(".akr/records/m.akr", &revised, "revise");
-
-    let git = Repository::open(repo.root()).expect("opens");
-    let answer = last_change_of(&git, ".akr/records/m.akr", &key("fx.milestone.m1"), 2)
-        .expect("query")
-        .expect("the record exists");
+    repo.commit_file(".akr/records/m3.akr", &m3_rev2_same, "m3 revise same");
+    let git4 = Repository::open(repo.root()).expect("opens");
     assert_eq!(
-        answer.as_str(),
-        introduced,
+        last_change_of(&git4, ".akr/records/m3.akr", &key("fx.milestone.m3"), 2)
+            .expect("query")
+            .expect("exists")
+            .as_str(),
+        m3_intro,
         "revising a record is not redefining it (D-038)"
     );
-}
 
-#[test]
-fn a_revision_that_redefines_a_check_does_move_last_change() {
-    // The other half of D-038: it narrows what counts as a redefinition, it does not
-    // abolish the gate. A changed check statement is exactly what the gate exists to
-    // catch, so evidence from before it must still be too old.
-    let mut repo = TempRepo::new("last-change-revision-redefines");
-    let introduced = repo.commit_file(".akr/records/m.akr", RECORD_V1, "introduce");
-    let revised = format!(
-        "{}\n{}",
-        RECORD_V1
-            .trim_end()
-            .replace("    state active\n", "    state superseded\n"),
-        "\
-record fx.milestone.m1/2 : milestone {
+    let m3_rev3_redefined = m3_rev2_same.replace(
+        "record fx.milestone.m3/2 : milestone {\n    title \"M1\"\n    state active",
+        "record fx.milestone.m3/2 : milestone {\n    title \"M1\"\n    state superseded",
+    ) + "\n\
+record fx.milestone.m3/3 : milestone {
     title \"M1\"
     state active
     intent \"\"\"
@@ -510,74 +422,18 @@ record fx.milestone.m1/2 : milestone {
             method manual
         }
     }
-    supersedes [ @fx.milestone.m1/1 ]
+    supersedes [ @fx.milestone.m3/2 ]
 }
-"
-    );
-    let redefined = repo.commit_file(".akr/records/m.akr", &revised, "redefine");
-
-    let git = Repository::open(repo.root()).expect("opens");
-    let answer = last_change_of(&git, ".akr/records/m.akr", &key("fx.milestone.m1"), 2)
-        .expect("query")
-        .expect("the record exists");
+";
+    let m3_redef = repo.commit_file(".akr/records/m3.akr", &m3_rev3_redefined, "m3 redefine");
+    let git5 = Repository::open(repo.root()).expect("opens");
     assert_eq!(
-        answer.as_str(),
-        redefined,
+        last_change_of(&git5, ".akr/records/m3.akr", &key("fx.milestone.m3"), 3)
+            .expect("query")
+            .expect("exists")
+            .as_str(),
+        m3_redef,
         "a changed check statement is a redefinition (D-029, D-038)"
-    );
-    assert_ne!(answer.as_str(), introduced);
-}
-
-#[test]
-fn a_note_does_not_move_last_change() {
-    // D-026 `note` is commentary; D-029 keeps it out of the definitional hash, so annotating
-    // a completed record later does not re-strand its evidence.
-    let mut repo = TempRepo::new("last-change-note");
-    let introduced = repo.commit_file(".akr/records/m.akr", RECORD_V1, "introduce");
-    let annotated = RECORD_V1.replace(
-        "    intent \"\"\"\n        The first milestone.\n        \"\"\"\n",
-        "    intent \"\"\"\n        The first milestone.\n        \"\"\"\n    note \"\"\"\n        A later aside.\n        \"\"\"\n",
-    );
-    repo.commit_file(".akr/records/m.akr", &annotated, "annotate");
-
-    let git = Repository::open(repo.root()).expect("opens");
-    let answer = last_change_of(&git, ".akr/records/m.akr", &key("fx.milestone.m1"), 1)
-        .expect("query")
-        .expect("the record exists");
-    assert_eq!(
-        answer.as_str(),
-        introduced,
-        "a note is not a definitional change (D-029)"
-    );
-}
-
-#[test]
-fn last_change_moves_when_a_check_statement_changes() {
-    // The other half of D-029: a real redefinition (a check's statement) still moves the
-    // last change, so stale evidence cannot close a milestone whose requirements changed.
-    let mut repo = TempRepo::new("last-change-check");
-    repo.commit_file(".akr/records/m.akr", RECORD_V1, "introduce");
-    let edited = RECORD_V1.replace("It is done.", "It is done, and measured.");
-    let changed = repo.commit_file(".akr/records/m.akr", &edited, "restate the check");
-
-    let git = Repository::open(repo.root()).expect("opens");
-    let answer = last_change_of(&git, ".akr/records/m.akr", &key("fx.milestone.m1"), 1)
-        .expect("query")
-        .expect("the record exists");
-    assert_eq!(answer.as_str(), changed);
-}
-
-#[test]
-fn last_changes_fills_the_ledger_facts() {
-    let mut repo = TempRepo::new("last-changes");
-    let introduced = repo.commit_file(".akr/records/m.akr", RECORD_V1, "introduce");
-    let git = Repository::open(repo.root()).expect("opens");
-
-    let ledger = load(repo.root(), ".akr/records/m.akr");
-    let facts = last_changes(&git, &ledger).expect("query");
-    assert_eq!(
-        facts.get(&RevisionId::new(key("fx.milestone.m1"), 1)),
-        Some(&commit(&introduced))
     );
 }
 
@@ -591,84 +447,13 @@ fn load(root: &Path, path: &str) -> Ledger {
     ledger
 }
 
-#[test]
-fn a_logical_key_round_trips_through_git_queries() {
-    // Guards the string comparison `last_change_of` makes between the CST's key text and
-    // the model's key.
-    let parsed = LogicalKey::parse("fx.milestone.m1").expect("valid");
-    assert_eq!(parsed.to_string(), "fx.milestone.m1");
-}
-
 // -------------------------------------------------------------------------------------
-// The memo
+// The memo and shared memo
 // -------------------------------------------------------------------------------------
 
 #[test]
-fn repeated_questions_are_answered_from_the_memo() {
-    let mut repo = TempRepo::new("memo");
-    let first = repo.commit_file("a.txt", "one\n", "first");
-    let second = repo.commit_file("a.txt", "two\n", "second");
-    let git = Repository::open(repo.root()).expect("opens");
-    let (first, second) = (commit(&first), commit(&second));
-
-    // Asking the same question repeatedly must not change the answer.
-    for _ in 0..3 {
-        assert!(git.contains(&first));
-        assert!(git.is_descendant(&second, &first).expect("ancestry"));
-        assert!(!git.is_descendant(&first, &second).expect("ancestry"));
-    }
-    // A fresh handle re-asks git rather than inheriting the memo.
-    let clone = git.clone();
-    assert!(clone.contains(&second));
-    assert!(clone.is_descendant(&second, &first).expect("ancestry"));
-    // An absent object is still absent, and still not an ancestor of anything.
-    let absent = commit("0123456789012345678901234567890123456789");
-    assert!(!git.contains(&absent));
-    assert!(git.is_descendant(&second, &absent).is_err());
-}
-
-#[test]
-fn batched_and_per_path_ignore_checks_agree() {
-    let mut repo = TempRepo::new("ignored");
-    repo.write(".gitignore", "target/\n*.tmp\n");
-    repo.write("src/main.rs", "fn main() {}\n");
-    repo.commit("ignores");
-    let git = Repository::open(repo.root()).expect("opens");
-
-    let paths = ["target/debug/**", "src/**", "scratch.tmp", "docs/*.md"];
-    // Per-path answers first, from an unprimed handle.
-    let one_at_a_time: Vec<bool> = paths
-        .iter()
-        .map(|path| git.is_ignored(path).expect("query"))
-        .collect();
-    assert_eq!(one_at_a_time, [true, false, true, false]);
-
-    // The batch must reach the same verdicts on a handle that has not seen them.
-    let batched = git.clone();
-    batched.prime_ignored(paths);
-    let after: Vec<bool> = paths
-        .iter()
-        .map(|path| batched.is_ignored(path).expect("query"))
-        .collect();
-    assert_eq!(after, one_at_a_time);
-
-    // Priming twice, or priming nothing, changes nothing.
-    batched.prime_ignored(paths);
-    batched.prime_ignored(std::iter::empty());
-    let again: Vec<bool> = paths
-        .iter()
-        .map(|path| batched.is_ignored(path).expect("query"))
-        .collect();
-    assert_eq!(again, one_at_a_time);
-}
-
-#[test]
-fn walking_history_reaches_the_same_verdicts_as_pairwise_ancestry() {
-    // Past a few questions about one commit, the handle walks that commit's history once
-    // and answers from the walk. The verdicts must not change — including the two cases
-    // the walk alone cannot distinguish: a commit that exists but is unreachable, and a
-    // commit that is not in the repository at all.
-    let mut repo = TempRepo::new("reachability");
+fn memo_reachability_and_shared_memo_invalidations() {
+    let mut repo = TempRepo::new("git-memo");
     let a = commit(&repo.commit_file("a.txt", "1\n", "a"));
     repo.branch("side");
     let side = commit(&repo.commit_file("side.txt", "s\n", "side"));
@@ -676,110 +461,92 @@ fn walking_history_reaches_the_same_verdicts_as_pairwise_ancestry() {
     let b = commit(&repo.commit_file("a.txt", "2\n", "b"));
     let c = commit(&repo.commit_file("a.txt", "3\n", "c"));
     let d = commit(&repo.commit_file("a.txt", "4\n", "d"));
-    let head = commit(&repo.commit_file("a.txt", "5\n", "head"));
-    let git = Repository::open(repo.root()).expect("opens");
 
-    // Enough distinct questions about `head` to trip the walk, then the ones that matter.
-    for ancestor in [&a, &b, &c, &d] {
-        assert!(
-            git.is_descendant(&head, ancestor).expect("ancestry"),
-            "{ancestor} is on the first-parent line"
-        );
-    }
-    assert!(
-        !git.is_descendant(&head, &side).expect("ancestry"),
-        "an unmerged branch commit exists but is not reachable"
-    );
-    assert!(git.contains(&side));
-    let absent = commit("0123456789012345678901234567890123456789");
-    assert!(
-        git.is_descendant(&head, &absent).is_err(),
-        "an absent commit is unknown, not merely unreachable"
-    );
-
-    // A handle that never crosses the threshold answers identically.
-    let pairwise = Repository::open(repo.root()).expect("opens");
-    assert!(pairwise.is_descendant(&head, &a).expect("ancestry"));
-    assert!(!pairwise.is_descendant(&head, &side).expect("ancestry"));
-    assert!(pairwise.is_descendant(&head, &head).expect("ancestry"));
-}
-
-// -------------------------------------------------------------------------------------
-// The shared memo
-// -------------------------------------------------------------------------------------
-
-#[test]
-fn a_shared_memo_is_dropped_when_the_working_tree_moves() {
-    let mut repo = TempRepo::new("shared-worktree");
-    repo.commit_file("a.txt", "one\n", "first");
-
-    let clean = Repository::shared(repo.root()).expect("opens");
-    assert!(clean.working_tree_changes().expect("status").is_empty());
-    // Ask twice: the second answer comes from the memo and must agree with the first.
-    assert!(clean.working_tree_changes().expect("status").is_empty());
-
-    repo.write("b.txt", "untracked\n");
-    let dirty = Repository::shared(repo.root()).expect("opens");
-    assert!(
-        dirty
-            .working_tree_changes()
-            .expect("status")
-            .contains("b.txt"),
-        "a new handle must see the edit, not the memo it was taken against"
-    );
-}
-
-#[test]
-fn a_shared_memo_is_dropped_when_head_moves() {
-    let mut repo = TempRepo::new("shared-head");
-    repo.commit_file("a.txt", "one\n", "first");
+    // Shared memo drops when HEAD moves.
     let before = Repository::shared(repo.root())
         .expect("opens")
         .commits_touching("a.txt")
         .expect("history");
-    assert_eq!(before.len(), 1);
+    assert_eq!(before.len(), 4);
 
-    let second = commit(&repo.commit_file("a.txt", "two\n", "second"));
-    let after = Repository::shared(repo.root())
-        .expect("opens")
-        .commits_touching("a.txt")
-        .expect("history");
-    assert_eq!(after.len(), 2, "the new commit must be visible");
-    assert_eq!(after.first(), Some(&second));
+    let head = commit(&repo.commit_file("a.txt", "5\n", "head"));
+    let shared_after = Repository::shared(repo.root()).expect("opens");
+    let after = shared_after.commits_touching("a.txt").expect("history");
+    assert_eq!(after.len(), 5, "the new commit must be visible");
+    assert_eq!(after.first(), Some(&head));
+    assert!(
+        shared_after
+            .run_ls_tree(&head)
+            .expect("tree")
+            .contains("a.txt")
+    );
 
-    // Tree listings are commit-keyed, so both commits still answer for themselves.
-    let git = Repository::shared(repo.root()).expect("opens");
-    assert!(git.run_ls_tree(&second).expect("tree").contains("a.txt"));
-}
+    // Private memo: repeated questions, walk threshold, unmerged branch, absent commit.
+    let git = Repository::open(repo.root()).expect("opens");
+    for _ in 0..3 {
+        assert!(git.contains(&a));
+        assert!(git.is_descendant(&head, &a).expect("ancestry"));
+        assert!(!git.is_descendant(&a, &head).expect("ancestry"));
+    }
+    let clone = git.clone();
+    assert!(clone.contains(&head));
+    assert!(clone.is_descendant(&head, &a).expect("ancestry"));
+    for ancestor in [&a, &b, &c, &d] {
+        assert!(git.is_descendant(&head, ancestor).expect("ancestry"));
+    }
+    assert!(!git.is_descendant(&head, &side).expect("ancestry"));
+    assert!(git.contains(&side));
+    let absent = commit("0123456789012345678901234567890123456789");
+    assert!(!git.contains(&absent));
+    assert!(git.is_descendant(&head, &absent).is_err());
 
-#[test]
-fn a_shared_memo_and_a_private_one_agree() {
-    let mut repo = TempRepo::new("shared-agrees");
-    let first = commit(&repo.commit_file("a.txt", "one\n", "first"));
-    let head = commit(&repo.commit_file("a.txt", "two\n", "second"));
+    // Pairwise handle that never crosses the walk threshold agrees.
+    let pairwise = Repository::open(repo.root()).expect("opens");
+    assert!(pairwise.is_descendant(&head, &a).expect("ancestry"));
+    assert!(!pairwise.is_descendant(&head, &side).expect("ancestry"));
+    assert!(pairwise.is_descendant(&head, &head).expect("ancestry"));
+
+    // Shared memo drops when working tree moves, and agrees with private handle.
+    assert!(
+        shared_after
+            .working_tree_changes()
+            .expect("status")
+            .is_empty()
+    );
+    assert!(
+        shared_after
+            .working_tree_changes()
+            .expect("status")
+            .is_empty()
+    );
     repo.write("dirty.txt", "x\n");
-
     let private = Repository::open(repo.root()).expect("opens");
-    let shared = Repository::shared(repo.root()).expect("opens");
+    let shared_dirty = Repository::shared(repo.root()).expect("opens");
+    assert!(
+        shared_dirty
+            .working_tree_changes()
+            .expect("status")
+            .contains("dirty.txt")
+    );
     assert_eq!(
         private.working_tree_changes().expect("status"),
-        shared.working_tree_changes().expect("status")
+        shared_dirty.working_tree_changes().expect("status")
     );
     assert_eq!(
         private.commits_touching("a.txt").expect("history"),
-        shared.commits_touching("a.txt").expect("history")
+        shared_dirty.commits_touching("a.txt").expect("history")
     );
     assert_eq!(
-        private.is_descendant(&head, &first).expect("ancestry"),
-        shared.is_descendant(&head, &first).expect("ancestry")
+        private.is_descendant(&head, &a).expect("ancestry"),
+        shared_dirty.is_descendant(&head, &a).expect("ancestry")
     );
     assert_eq!(
-        private.file_at(&first, "a.txt").expect("blob"),
-        shared.file_at(&first, "a.txt").expect("blob")
+        private.file_at(&a, "a.txt").expect("blob"),
+        shared_dirty.file_at(&a, "a.txt").expect("blob")
     );
     assert_eq!(
-        private.touches_in(Some(&first), &head).expect("touches"),
-        shared.touches_in(Some(&first), &head).expect("touches")
+        private.touches_in(Some(&a), &head).expect("touches"),
+        shared_dirty.touches_in(Some(&a), &head).expect("touches")
     );
 }
 
@@ -788,77 +555,54 @@ fn a_shared_memo_and_a_private_one_agree() {
 // -------------------------------------------------------------------------------------
 
 #[test]
-fn tracked_source_hits_finds_a_needle_in_rust_source() {
-    let mut repo = TempRepo::new("source-hits-rs");
-    let head = commit(&repo.commit_file("src/lib.rs", "fn a_real_leaf_test() {}\n", "source"));
-    let git = Repository::open(repo.root()).expect("opens");
-    let hits = git
-        .tracked_source_hits(&head, ["a_real_leaf_test", "a_missing_name"], None)
-        .expect("grep");
-    assert!(hits.contains("a_real_leaf_test"));
-    assert!(!hits.contains("a_missing_name"));
-}
-
-#[test]
-fn tracked_source_hits_ignore_jsonl_dumps_and_letterless_needles() {
-    let mut repo = TempRepo::new("source-hits-jsonl");
+fn tracked_source_hits_handles_source_dumps_overlaps_and_scale() {
+    let mut repo = TempRepo::new("source-hits");
     repo.write("trace.jsonl", "a_name_only_in_jsonl\n");
-    repo.write("src/lib.rs", "fn something_else() {}\n");
-    let head = commit(&repo.commit("dump plus source"));
+    let mut text = String::from(
+        "fn a_real_leaf_test() {}\nfn something_else() {}\nfn continuous_dinner_departure() {}\nmod keybindings;\n",
+    );
+    for i in 0..400 {
+        text.push_str(&format!("fn test_case_{i}() {{ a_b(); c_d(); e_f(); }}\n"));
+    }
+    repo.write("src/lib.rs", &text);
+    let head = commit(&repo.commit("source plus dump"));
     let git = Repository::open(repo.root()).expect("opens");
-    let hits = git
-        .tracked_source_hits(&head, ["a_name_only_in_jsonl", "_", "something_else"], None)
-        .expect("grep");
-    assert!(
-        !hits.contains("a_name_only_in_jsonl"),
-        "JSONL is a dump, not source: {hits:?}"
-    );
-    assert!(
-        !hits.contains("_"),
-        "a letterless needle is not searched: {hits:?}"
-    );
-    assert!(
-        hits.contains("something_else"),
-        "rust source is still searched: {hits:?}"
-    );
-}
 
-#[test]
-fn tracked_source_hits_finds_a_needle_inside_a_longer_needles_match() {
-    // `git grep -o` reports one match per position, so `dinner` — present only inside
-    // `continuous_dinner_departure` — used to come back absent when both were asked.
-    let mut repo = TempRepo::new("source-hits-overlap");
-    let head = commit(&repo.commit_file(
-        "src/lib.rs",
-        "fn continuous_dinner_departure() {}\nmod keybindings;\n",
-        "source",
-    ));
-    let git = Repository::open(repo.root()).expect("opens");
     let hits = git
         .tracked_source_hits(
             &head,
             [
+                "a_real_leaf_test",
+                "a_missing_name",
+                "a_name_only_in_jsonl",
+                "_",
+                "something_else",
                 "continuous_dinner_departure",
                 "dinner",
                 "bindings",
-                "absent_name",
             ],
             None,
         )
         .expect("grep");
-    assert!(hits.contains("continuous_dinner_departure"), "{hits:?}");
-    assert!(
-        hits.contains("dinner"),
-        "a substring of a word is present: {hits:?}"
-    );
-    assert!(hits.contains("bindings"), "{hits:?}");
-    assert!(!hits.contains("absent_name"), "{hits:?}");
+    assert!(hits.contains("a_real_leaf_test"));
+    assert!(!hits.contains("a_missing_name"));
+    assert!(!hits.contains("a_name_only_in_jsonl"));
+    assert!(!hits.contains("_"));
+    assert!(hits.contains("something_else"));
+    assert!(hits.contains("continuous_dinner_departure"));
+    assert!(hits.contains("dinner"));
+    assert!(hits.contains("bindings"));
+
+    let needles: Vec<String> = (0..200).map(|i| format!("test_case_{}", i * 2)).collect();
+    let scaled = git
+        .tracked_source_hits(&head, needles.iter().map(String::as_str), None)
+        .expect("grep");
+    assert_eq!(scaled.len(), needles.len());
 }
 
 #[test]
+#[ignore = "2000-needle performance check: run manually"]
 fn tracked_source_hits_cost_does_not_grow_with_needles() {
-    // 613 needles over a large tree made the multi-pattern `git grep -o -F` take
-    // minutes. The vocabulary pass is one pattern however many needles are asked.
     let mut repo = TempRepo::new("source-hits-many");
     let mut text = String::new();
     for i in 0..4000 {

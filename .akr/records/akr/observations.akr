@@ -80,6 +80,22 @@ record akr.observation.concurrent-writes-are-silently-lost/2 : observation {
     verified_by [ @akr.evidence.one-writer-at-a-time-holds-20260908/1 ]
 }
 
+record akr.observation.ledgers-restate-diffs-not-reasons/1 : observation {
+    title "Three months of ledgers restate diffs, mint an evidence record per test run, and are not linked to commits"
+    state verified
+    statement """
+        An audit of 4,467 records and 1,181 commits in SYS, Lege-ecosystem and nail-salon over 2026-08-18 to 2026-11-18 (docs/19-ledger-usage-and-reasoning-audit.md) found: 72.9% of completed SYS work records name no rejected alternative or trade-off; evidence is 45.3% of all records and about half have title equal to summary; under 6% of work keys were ever named by an AKR-Work trailer and none after 2026-10-15; term, track, assessment, constraint and requirement together are 4.9% of records, with none created in two of the three projects in the period. The at-the-time reasoning that does exist is in observation records and in the context and consequences of decisions. Three causes are in AKR itself: evidence title defaulted to the whole summary, the generated commit message copied the work record's intent, and no surface said what a prose slot is for. Falsified by a later audit showing work records that explain why.
+        """
+    observed_at git:bdf87fbed1dc493a87b8d95f0bd84824ca9c6117
+    method manual
+    review_after 2027-02-18
+    author "dk"
+    source {
+        kind internal
+        path "docs/19-ledger-usage-and-reasoning-audit.md"
+    }
+}
+
 record akr.observation.sys-build-cost-breakdown/1 : observation {
     title "On SYS, most of every akr command's cost is re-deriving git history facts"
     state superseded

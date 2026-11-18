@@ -78,6 +78,8 @@ pub enum Operation {
     Import,
     /// A validated edit of the project configuration.
     Configure,
+    /// A reasoning step appended to a work record's trace, in place (D-047).
+    Trace,
 }
 
 impl Operation {
@@ -92,6 +94,7 @@ impl Operation {
             Self::Abandon => "abandon",
             Self::Import => "import",
             Self::Configure => "config",
+            Self::Trace => "trace",
         }
     }
 }
@@ -318,6 +321,7 @@ pub fn propose(
         )
         .with_help(format!("use `akr revise {key}` to change it")));
     }
+    refuse_retired_kind(Operation::Propose, key, kind)?;
 
     let id = RevisionId::new(key.clone(), 1);
     let mut record = template.unwrap_or_else(|| blank(&id, kind));
@@ -345,6 +349,27 @@ pub fn propose(
         &record,
         ChangeKind::Created,
     )
+}
+
+/// Refuses to create a new key with a retired kind (D-046, `AKR-T008`).
+///
+/// This is a check on the write, not a validation rule, because the ledger alone cannot
+/// tell a record that predates the retirement from one written after it: both are
+/// revision 1 of some key. A rule would turn every existing ledger red for holding its
+/// own history. The write pipeline knows which keys it is creating, so the refusal lives
+/// where that knowledge is — and every route that mints a key passes through here.
+fn refuse_retired_kind(operation: Operation, key: &LogicalKey, kind: Kind) -> Result<(), Refused> {
+    let Some(into) = kind.folds_into() else {
+        return Ok(());
+    };
+    Err(Refused::new(
+        operation,
+        codes::T008,
+        format!("{key}: `{kind}` is a retired kind; no new record may take it"),
+    )
+    .with_help(format!(
+        "write it as a `{into}` (D-046); `akr explain {into}` lists its slots. Records that already have a retired kind stay readable and may still be revised"
+    )))
 }
 
 /// Creates several revision-one records in one atomic pipeline pass.
@@ -377,6 +402,7 @@ pub fn propose_many(context: &WriteContext, templates: &[Record]) -> WriteResult
             )
             .with_help(format!("use `akr revise {key}` to change it")));
         }
+        refuse_retired_kind(Operation::Propose, key, template.kind)?;
 
         let mut record = template.clone();
         record.id = RevisionId::new(key.clone(), 1);
@@ -1130,7 +1156,17 @@ pub fn supersede_into(
                 old.id, old.kind
             ),
         )
+        .with_help(match old.kind.folds_into() {
+            Some(into) => format!(
+                "`{}` is retired; it may be replaced by another `{}` or folded into a `{into}` (D-046)",
+                old.kind, old.kind
+            ),
+            None => "the one exception is a retired kind, which may be replaced by the kind it folds into (D-046)".to_owned(),
+        })
     };
+    // D-046: like replaces like, and a retired kind may also be replaced by its fold
+    // target. `Range::SameKind` is the single statement of that; V-005 reads the same one.
+    let replaces = |kind: Kind| Relation::Supersedes.range().accepts(kind, old.kind);
 
     let mut edits: Vec<(PathBuf, Record, ChangeKind)> = Vec::new();
     let mut notes = Vec::new();
@@ -1168,9 +1204,10 @@ pub fn supersede_into(
         (Some(successor), false) => {
             let id = RevisionId::new(new_key.clone(), 1);
             let mut record = successor.template.unwrap_or_else(|| blank(&id, old.kind));
-            if record.kind != old.kind {
+            if !replaces(record.kind) {
                 return Err(like_with_like(&id, record.kind));
             }
+            refuse_retired_kind(operation, new_key, record.kind)?;
             record.id = id;
             if !successor.title.is_empty() {
                 record.title = successor.title;
@@ -1178,16 +1215,16 @@ pub fn supersede_into(
             if record.title.is_empty() {
                 record.title = new_key.to_string();
             }
-            if !old.kind.class().states().contains(&record.state) {
-                record.state = old.kind.class().initial()[0];
+            if !record.kind.class().states().contains(&record.state) {
+                record.state = record.kind.class().initial()[0];
             }
             record.dispositions.clear();
-            created_file = Some(conventional_file(new_key, old.kind));
+            created_file = Some(conventional_file(new_key, record.kind));
             record
         }
         (None, true) => {
             let replacement = head_of(&staged, new_key, operation)?.clone();
-            if replacement.kind != old.kind {
+            if !replaces(replacement.kind) {
                 return Err(like_with_like(&replacement.id, replacement.kind));
             }
             if replacement.state == State::Proposed {
@@ -1409,6 +1446,25 @@ pub fn complete(
     key: &LogicalKey,
     check_evidence: &[(String, Reference)],
 ) -> WriteResult {
+    complete_with(context, key, check_evidence, &[])
+}
+
+/// [`complete`], with checks that record their own pass (D-048).
+///
+/// Each `(check, commit)` in `passes` stamps that check's `passed_at`. Only a `command`
+/// check may be stamped: its command is already on the check, so the commit is the one
+/// fact a separate evidence record would have added. A manual or observational check has
+/// no recorded procedure, and what was seen has to be written down — that is evidence.
+///
+/// # Errors
+/// As [`complete`]; also refuses a pass for a check that does not exist or whose method
+/// is not `command`.
+pub fn complete_with(
+    context: &WriteContext,
+    key: &LogicalKey,
+    check_evidence: &[(String, Reference)],
+    passes: &[(String, crate::model::Commit)],
+) -> WriteResult {
     let (mut staged, _write_lock) = load_locked(context, Operation::Complete)?;
     let head = head_of(&staged, key, Operation::Complete)?.clone();
     let file = file_of(&staged, &head.id, Operation::Complete)?;
@@ -1433,6 +1489,37 @@ pub fn complete(
                 check.verified_by.push(reference.clone());
             }
         }
+    }
+    for (id, commit) in passes {
+        let check = record
+            .acceptance
+            .as_mut()
+            .and_then(|acceptance| acceptance.checks.iter_mut().find(|c| c.id.as_str() == id));
+        let Some(check) = check else {
+            return Err(Refused::new(
+                Operation::Complete,
+                codes::L012,
+                format!("{} has no acceptance check `{id}`", head.id),
+            )
+            .with_help(format!(
+                "`akr get {key}` lists its checks; a pass names one of them"
+            )));
+        };
+        if check.method != crate::model::CheckMethod::Command {
+            return Err(Refused::new(
+                Operation::Complete,
+                codes::T013,
+                format!(
+                    "check `{id}` of {} is `method {}`; only a `command` check records its own pass",
+                    head.id,
+                    check.method.name()
+                ),
+            )
+            .with_help(format!(
+                "record what was seen with `akr evidence add`, then `akr complete {key} --check {id}=<evidence-ref>` (D-048)"
+            )));
+        }
+        check.passed_at = Some(commit.clone());
     }
     record.state = State::Completed;
 
@@ -1466,7 +1553,10 @@ pub fn complete(
                 unsatisfied.len()
             ),
         )
-        .with_help("record the evidence, then rerun with --check <id>=<evidence-ref>");
+        .with_help(
+            "for a `command` check that passed, rerun with --pass <id>; otherwise record the \
+             evidence and rerun with --check <id>=<evidence-ref>",
+        );
         refusal.diagnostics = probe;
         refusal.unsatisfied_checks = unsatisfied;
         return Err(refusal);
@@ -1497,6 +1587,130 @@ pub fn complete(
             "{} completed with no acceptance checks; nothing was verified",
             record.id
         ));
+    }
+    // D-047: never a refusal. A completed work record with no trace answers "what" and
+    // leaves "why" to whoever reads the diff later, which is the reader the ledger is for.
+    if record.kind == Kind::Work && trace_of(&record).is_empty() {
+        applied.notes.push(format!(
+            "{} completed with an empty trace; the next reader will not know why it was done this way. `akr trace {key} \"<why, in a line>\"` still appends (MCP: knowledge.trace)",
+            record.id
+        ));
+    }
+    Ok(applied)
+}
+
+/// A work record's trace entries, in order.
+fn trace_of(record: &Record) -> Vec<String> {
+    match record.get(ContentSlot::Trace) {
+        Some(ContentValue::Strings(entries)) => entries.clone(),
+        _ => Vec::new(),
+    }
+}
+
+/// Appends reasoning steps to a work record's trace, in place (D-047).
+///
+/// The head is edited where it stands, sealed or not: a trace entry is bookkeeping under
+/// D-029, so it mints no revision, moves no definitional hash and puts no acceptance
+/// check back in question. `akr.lock` is stale afterwards exactly as it is after
+/// `akr complete`, and V-024 reports an appended trace as lock drift (`AKR-R052`), not as
+/// a modified seal.
+///
+/// An entry over [`validate::TRACE_ENTRY_SOFT_WORDS`] words draws a note. An entry over
+/// [`validate::TRACE_ENTRY_HARD_WORDS`] is refused here as well as by V-026, because the
+/// rule judges live records and a reason added to finished work deserves the same bound.
+///
+/// # Errors
+/// Refuses on an unknown key, a kind other than `work`, an empty or over-long entry, or
+/// a resulting ledger that does not validate.
+pub fn trace_append(context: &WriteContext, key: &LogicalKey, entries: &[String]) -> WriteResult {
+    let operation = Operation::Trace;
+    let (mut staged, _write_lock) = load_locked(context, operation)?;
+    let head = head_of(&staged, key, operation)?.clone();
+    let file = file_of(&staged, &head.id, operation)?;
+
+    if head.kind != Kind::Work {
+        return Err(Refused::new(
+            operation,
+            codes::T002,
+            format!(
+                "{} is a {}; only a work record carries a trace",
+                head.id, head.kind
+            ),
+        )
+        .with_help(
+            "reasoning for a choice that binds the project belongs in a decision's `context`; \
+             a finding belongs in an observation",
+        ));
+    }
+    let cleaned: Vec<String> = entries
+        .iter()
+        .map(|entry| entry.split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect();
+    if cleaned.is_empty() || cleaned.iter().any(String::is_empty) {
+        return Err(Refused::new(
+            operation,
+            cli::C031,
+            "a trace entry needs text",
+        ));
+    }
+    let mut notes = Vec::new();
+    for entry in &cleaned {
+        let words = validate::trace_entry_words(entry);
+        if words > validate::TRACE_ENTRY_HARD_WORDS {
+            return Err(Refused::new(
+                operation,
+                codes::T024,
+                format!(
+                    "trace entry is {words} words; the limit is {}",
+                    validate::TRACE_ENTRY_HARD_WORDS
+                ),
+            )
+            .with_help(
+                "say why, not what: one reason or one dead end per entry, and split a longer \
+                 thought into two",
+            ));
+        }
+        if words > validate::TRACE_ENTRY_SOFT_WORDS {
+            notes.push(format!(
+                "trace entry is {words} words; aim for {} — the reason, not the change",
+                validate::TRACE_ENTRY_SOFT_WORDS
+            ));
+        }
+    }
+
+    let mut trace = trace_of(&head);
+    let before = trace.len();
+    for entry in cleaned {
+        // Saying the same thing twice in a row is a retried call, not a second reason.
+        if trace.last() != Some(&entry) {
+            trace.push(entry);
+        }
+    }
+    if trace.len() == before {
+        return Err(Refused::new(
+            operation,
+            cli::C031,
+            format!(
+                "{} already ends with that trace entry; nothing was written",
+                head.id
+            ),
+        ));
+    }
+    let mut record = head.clone();
+    record
+        .content
+        .insert(ContentSlot::Trace, ContentValue::Strings(trace));
+
+    let mut applied = apply(
+        context,
+        staged_mut(&mut staged),
+        operation,
+        &file,
+        &record,
+        ChangeKind::Edited,
+    )?;
+    for (index, note) in notes.into_iter().enumerate() {
+        applied.notes.insert(index, note);
     }
     Ok(applied)
 }
@@ -1760,6 +1974,7 @@ pub fn import(context: &WriteContext, request: &ImportRequest) -> WriteResult {
             method: CheckMethod::Manual,
             command: None,
             verified_by: Vec::new(),
+            passed_at: None,
         })
         .collect();
 
@@ -1938,7 +2153,80 @@ fn apply_many(
     operation: Operation,
     edits: &[(PathBuf, Record, ChangeKind)],
 ) -> WriteResult {
-    apply_inner(context, staged, operation, edits)
+    // D-048: a check's own recorded pass is only as good as the definition it was run
+    // against. `complete` and `trace` change no definition; every other write that does
+    // drops the stamps it would otherwise carry forward, so that a stamp found on a
+    // record was always written against the definition beside it.
+    if matches!(operation, Operation::Complete | Operation::Trace) {
+        return apply_inner(context, staged, operation, edits);
+    }
+    let mut edits = edits.to_vec();
+    let mut notes = Vec::new();
+    for (_, record, _) in &mut edits {
+        let stamped = record
+            .acceptance
+            .as_ref()
+            .is_some_and(|acceptance| acceptance.checks.iter().any(|c| c.passed_at.is_some()));
+        if !stamped {
+            continue;
+        }
+        let previous = staged.ledger.get(&record.id).or_else(|| {
+            record
+                .id
+                .revision
+                .checked_sub(1)
+                .filter(|revision| *revision > 0)
+                .and_then(|revision| {
+                    staged
+                        .ledger
+                        .get(&RevisionId::new(record.id.key.clone(), revision))
+                })
+        });
+        let Some(previous) = previous else { continue };
+        if definition_of(previous, &staged.project) == definition_of(record, &staged.project) {
+            continue;
+        }
+        if let Some(acceptance) = record.acceptance.as_mut() {
+            for check in &mut acceptance.checks {
+                check.passed_at = None;
+            }
+        }
+        notes.push(format!(
+            "{} changes what {} requires, so the passes its checks had recorded were dropped; rerun the commands and `akr complete --pass` again (D-048)",
+            record.id, previous.id
+        ));
+    }
+    let mut applied = apply_inner(context, staged, operation, &edits)?;
+    applied.notes.extend(notes);
+    Ok(applied)
+}
+
+/// A record's definition as canonical text: everything but lifecycle and completion
+/// bookkeeping, and but the mechanics of being a revision.
+///
+/// The model-level counterpart of `resolve::source::revision_independent_definitional_text`
+/// (D-029, D-038), for comparing a record with the one a write is about to replace.
+fn definition_of(record: &Record, project: &str) -> String {
+    let mut definition = record.clone();
+    let own_key = definition.id.key.clone();
+    definition.id.revision = 0;
+    definition.state = definition.kind.class().initial()[0];
+    definition.content.remove(&ContentSlot::Note);
+    definition.content.remove(&ContentSlot::Trace);
+    definition.relations.remove(&Relation::VerifiedBy);
+    if let Some(targets) = definition.relations.get_mut(&Relation::Supersedes) {
+        targets.retain(|target| target.key != own_key);
+    }
+    definition
+        .relations
+        .retain(|_, targets| !targets.is_empty());
+    if let Some(acceptance) = definition.acceptance.as_mut() {
+        for check in &mut acceptance.checks {
+            check.verified_by.clear();
+            check.passed_at = None;
+        }
+    }
+    crate::syntax::record_text(&definition, project)
 }
 
 /// Steps 2 through 5 of `docs/07` §4.
@@ -2044,7 +2332,7 @@ fn finish_staged(
         .map_err(|error| write_refusal(operation, error))?;
 
     changes.sort_by(|a, b| a.id.cmp(&b.id));
-    let lock_stale = operation == Operation::Configure
+    let lock_stale = matches!(operation, Operation::Configure | Operation::Trace)
         || changes
             .iter()
             .any(|c| !matches!(c.kind, ChangeKind::Edited));
@@ -2053,6 +2341,18 @@ fn finish_staged(
         notes.push(inherited_note(&inherited));
     }
     notes.extend(acceptance_notes(&staged.ledger, operation, edits));
+    if matches!(
+        operation,
+        Operation::Propose | Operation::Revise | Operation::Supersede
+    ) {
+        for (_, record, change) in edits {
+            if !matches!(change, ChangeKind::StateChanged { .. })
+                && let Some(note) = restatement_note(record)
+            {
+                notes.push(note);
+            }
+        }
+    }
     if let Some(root) = context.akr_dir.parent() {
         for (_, record, _) in edits {
             if record.kind == Kind::Evidence
@@ -2082,6 +2382,78 @@ fn finish_staged(
     })
 }
 
+/// An advisory note when a record's prose names source files or code paths (D-049).
+///
+/// An audit of three projects found work and decision prose restating what a commit
+/// changed — module inventories, function lists — which git already holds and which
+/// rots as soon as a file moves. The check is deliberately crude: a path under a
+/// directory, a Rust path, or a source-file name. It is a note and never a diagnostic,
+/// because a path is sometimes exactly the point and a warning would refuse the write
+/// under the strict profile. `scope` is where paths belong, and is not looked at.
+fn restatement_note(record: &Record) -> Option<String> {
+    const SLOTS: &[ContentSlot] = &[
+        ContentSlot::Intent,
+        ContentSlot::Decision,
+        ContentSlot::Note,
+    ];
+    if !matches!(record.kind, Kind::Work | Kind::Decision) {
+        return None;
+    }
+    let mut found: Vec<(&'static str, String)> = Vec::new();
+    for slot in SLOTS {
+        let Some(ContentValue::Prose(text) | ContentValue::Text(text)) = record.get(*slot) else {
+            continue;
+        };
+        let mentions: Vec<&str> = text
+            .split(|c: char| c.is_whitespace() || matches!(c, '(' | ')' | ',' | ';' | '`'))
+            .map(|word| word.trim_end_matches(['.', ':']))
+            .filter(|word| looks_like_code_location(word))
+            .collect();
+        if mentions.len() >= 2 {
+            found.push((slot.name(), mentions[..2].join(", ")));
+        }
+    }
+    let (slot, examples) = found.first()?;
+    Some(format!(
+        "{}: `{slot}` names code ({examples}, …). Git already records what changed and where; say why it was needed and what was rejected. Paths belong in `scope`{}",
+        record.id,
+        if record.kind == Kind::Work {
+            ", reasons in `akr trace`"
+        } else {
+            ", reasons in `context`"
+        }
+    ))
+}
+
+/// Whether a word reads as a source location rather than as prose.
+fn looks_like_code_location(word: &str) -> bool {
+    const EXTENSIONS: &[&str] = &[
+        ".rs", ".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".c", ".h", ".cpp", ".hpp", ".cs",
+        ".java", ".kt", ".swift", ".wgsl", ".glsl", ".toml", ".sql",
+    ];
+    if word.len() < 4 || word.starts_with("http") {
+        return false;
+    }
+    let is_identifier = |part: &str| {
+        !part.is_empty()
+            && part
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    };
+    if EXTENSIONS.iter().any(|extension| word.ends_with(extension)) {
+        return true;
+    }
+    if word.contains("::") {
+        return word.split("::").all(is_identifier);
+    }
+    // A relative path: at least two separators and only path-ish segments.
+    let segments: Vec<&str> = word.split('/').collect();
+    segments.len() >= 3
+        && segments
+            .iter()
+            .all(|part| is_identifier(part) || *part == "**" || *part == "*")
+}
+
 fn write_refusal(operation: Operation, error: std::io::Error) -> Refused {
     let kind = error.kind();
     let refusal = Refused::new(operation, cli::C031, format!("write failed: {error}"));
@@ -2096,6 +2468,7 @@ fn write_refusal(operation: Operation, error: std::io::Error) -> Refused {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod write_error_tests {
     use super::*;
 

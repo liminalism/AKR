@@ -1,5 +1,48 @@
-//! Exit criterion 2: every rule `V-001`..`V-025` has at least one passing and one
+//! Exit criterion 2: every rule `V-001`..`V-026` has at least one passing and one
 //! failing case, built entirely from model builders with no text format in sight.
+
+#[path = "codes_registry.rs"]
+mod codes_registry;
+#[path = "emit.rs"]
+mod emit;
+#[path = "evidence_attachment.rs"]
+mod evidence_attachment;
+#[path = "fixture_corpus.rs"]
+mod fixture_corpus;
+#[path = "fixtures_format.rs"]
+mod fixtures_format;
+#[path = "fixtures_parse.rs"]
+mod fixtures_parse;
+#[path = "graph_determinism.rs"]
+mod graph_determinism;
+#[path = "hashing.rs"]
+mod hashing;
+#[path = "import_extract.rs"]
+mod import_extract;
+#[path = "lexer_fuzz.rs"]
+mod lexer_fuzz;
+#[path = "lifecycle_properties.rs"]
+mod lifecycle_properties;
+#[path = "lock_roundtrip.rs"]
+mod lock_roundtrip;
+#[path = "lowering.rs"]
+mod lowering;
+#[path = "no_text_format.rs"]
+mod no_text_format;
+#[path = "render.rs"]
+mod render;
+#[path = "render_roadmap.rs"]
+mod render_roadmap;
+#[path = "resolved_model.rs"]
+mod resolved_model;
+#[path = "round_trip.rs"]
+mod round_trip;
+#[path = "scope_properties.rs"]
+mod scope_properties;
+#[path = "vocabulary.rs"]
+mod vocabulary;
+#[path = "worked_example.rs"]
+mod worked_example;
 
 use akr_core::diagnostics::{Code, Diagnostic, codes as c};
 use akr_core::model::{
@@ -235,7 +278,52 @@ fn v005_fails_when_a_kind_is_out_of_domain() {
             .rel(Relation::Implements, "@fx.req.something")
             .build(),
     ]);
-    assert_raises(&validate::v005_targets_kind_correct(&l), c::L032);
+    let found = validate::v005_targets_kind_correct(&l);
+    assert_raises(&found, c::L032);
+    let diagnostic = found
+        .iter()
+        .find(|diagnostic| diagnostic.code == c::L032)
+        .expect("out-of-domain relation is diagnosed");
+    assert_eq!(
+        diagnostic.message,
+        "a term may not declare `implements`; its domain is work, decision"
+    );
+    assert_eq!(
+        diagnostic.help.as_deref(),
+        Some("valid term relations for these targets: depends_on, contradicts, derived_from")
+    );
+}
+
+#[test]
+fn v005_milestone_implements_names_domain_and_work_alternative() {
+    let l = ledger(vec![
+        rec("fx.req.something", 1, Kind::Requirement).build(),
+        rec("fx.ms.phase", 1, Kind::Milestone)
+            .rel(Relation::Implements, "@fx.req.something")
+            .build(),
+    ]);
+    let found = validate::v005_targets_kind_correct(&l);
+    assert_raises(&found, c::L032);
+    let diagnostic = found
+        .iter()
+        .find(|diagnostic| diagnostic.code == c::L032)
+        .expect("milestone implements is diagnosed");
+    assert!(
+        diagnostic.message.contains("its domain is work, decision"),
+        "{}",
+        diagnostic.message
+    );
+    let help = diagnostic.help.as_deref().unwrap_or("");
+    assert!(
+        help.contains(
+            "valid milestone relations for these targets: depends_on, contradicts, derived_from"
+        ),
+        "{help}"
+    );
+    assert!(
+        help.contains("put `implements` on `work` items (`part_of` / `plan_of_record`)"),
+        "{help}"
+    );
 }
 
 #[test]
@@ -1661,4 +1749,188 @@ fn v020_believes_the_off_branch_fact_over_the_topological_order() {
         "{}",
         found[0].message
     );
+}
+
+// ---------------------------------------------------------------------------------
+// V-020 and a check's own recorded pass (D-048)
+// ---------------------------------------------------------------------------------
+
+const PASS_COMMIT: &str = "3f0a1c9d5b7e2648a0d4f1b8c36e9752ad014b6f";
+
+fn completed_work_with_pass(method: CheckMethod, stamped: bool) -> Ledger {
+    let mut work = rec("fx.work.stamped", 1, Kind::Work)
+        .state(State::Completed)
+        .check("suite", method, &[])
+        .build();
+    if stamped {
+        let acceptance = work.acceptance.as_mut().expect("the check");
+        acceptance.checks[0].passed_at =
+            Some(akr_core::model::Commit::new(PASS_COMMIT).expect("a commit"));
+    }
+    ledger(vec![work])
+}
+
+#[test]
+fn v020_passes_when_a_command_check_recorded_its_own_pass() {
+    assert_clean(&validate::v020_acceptance_satisfied(
+        &completed_work_with_pass(CheckMethod::Command, true),
+    ));
+}
+
+#[test]
+fn v020_fails_when_a_recorded_pass_is_on_a_check_that_is_not_a_command() {
+    // A manual check has no procedure on the record, so a bare commit says nothing
+    // about what was seen. That is what an evidence record is for.
+    for method in [CheckMethod::Manual, CheckMethod::Observation] {
+        assert_raises(
+            &validate::v020_acceptance_satisfied(&completed_work_with_pass(method, true)),
+            c::R022,
+        );
+    }
+    assert_raises(
+        &validate::v020_acceptance_satisfied(&completed_work_with_pass(
+            CheckMethod::Command,
+            false,
+        )),
+        c::R022,
+    );
+}
+
+// ---------------------------------------------------------------------------------
+// V-024 and bookkeeping written in place (D-047, D-048)
+// ---------------------------------------------------------------------------------
+
+fn hash_of(record: &Record) -> ContentHash {
+    akr_core::hash::content_hash(&akr_core::syntax::record_text(record, "fixtures"))
+}
+
+fn traced(entries: &[&str]) -> Record {
+    let mut work = rec("fx.work.traced", 1, Kind::Work)
+        .state(State::Active)
+        .check("suite", CheckMethod::Command, &[])
+        .build();
+    if !entries.is_empty() {
+        work.content.insert(
+            ContentSlot::Trace,
+            ContentValue::Strings(entries.iter().map(|e| (*e).to_owned()).collect()),
+        );
+    }
+    work
+}
+
+/// A ledger holding `now`, whose lock recorded `then` in state `then_state`.
+fn drifted(then: &Record, then_state: State, now: Record) -> Ledger {
+    let mut l = ledger(vec![now.clone()]);
+    l.facts.lock_present = true;
+    l.facts.seals.insert(
+        now.id.clone(),
+        SealFact {
+            recorded: Some(hash_of(then)),
+            recorded_state: Some(then_state),
+            computed: Some(hash_of(&now)),
+        },
+    );
+    l
+}
+
+#[test]
+fn v024_reports_an_appended_trace_as_lock_drift_not_a_broken_seal() {
+    let then = traced(&["chose the file cache because the memo is lost on restart"]);
+    let now = traced(&[
+        "chose the file cache because the memo is lost on restart",
+        "dropped the mmap attempt: Windows holds the handle across a rename",
+    ]);
+    let found = validate::v024_seals_match(&drifted(&then, State::Active, now));
+    assert_raises(&found, c::R052);
+    assert!(
+        !found.iter().any(|d| d.code == c::R051),
+        "{:?}",
+        codes_of(&found)
+    );
+
+    // The first entry ever written is the same drift: the lock recorded no trace.
+    let found = validate::v024_seals_match(&drifted(
+        &traced(&[]),
+        State::Active,
+        traced(&["one reason"]),
+    ));
+    assert_raises(&found, c::R052);
+    assert!(!found.iter().any(|d| d.code == c::R051));
+}
+
+#[test]
+fn v024_still_calls_a_reworded_trace_entry_a_modified_seal() {
+    // Append-only is the whole contract. An entry that changed, or one that vanished
+    // from the middle, matches no prefix of the trace and is not bookkeeping.
+    let then = traced(&["first reason", "second reason"]);
+    for now in [
+        traced(&["first reason, reworded", "second reason"]),
+        traced(&["second reason"]),
+        traced(&["second reason", "first reason"]),
+    ] {
+        let found = validate::v024_seals_match(&drifted(&then, State::Active, now));
+        assert_raises(&found, c::R051);
+    }
+}
+
+#[test]
+fn v024_reports_completion_with_a_recorded_pass_and_a_trace_as_lock_drift() {
+    // What `akr complete --pass` leaves behind: the state moved, a check gained
+    // `passed_at`, and a trace entry may have been appended in the same session.
+    let then = traced(&["first reason"]);
+    let mut now = traced(&["first reason", "second reason"]);
+    now.state = State::Completed;
+    now.acceptance.as_mut().expect("check").checks[0].passed_at =
+        Some(akr_core::model::Commit::new(PASS_COMMIT).expect("a commit"));
+    let found = validate::v024_seals_match(&drifted(&then, State::Active, now));
+    assert_raises(&found, c::R052);
+    assert!(
+        !found.iter().any(|d| d.code == c::R051),
+        "{:?}",
+        codes_of(&found)
+    );
+}
+
+#[test]
+fn v024_does_not_excuse_a_changed_intent_because_a_trace_was_also_appended() {
+    let then = traced(&["first reason"]);
+    let mut now = traced(&["first reason", "second reason"]);
+    now.content.insert(
+        ContentSlot::Intent,
+        ContentValue::prose("A different intent altogether."),
+    );
+    let found = validate::v024_seals_match(&drifted(&then, State::Active, now));
+    assert_raises(&found, c::R051);
+}
+
+// ---------------------------------------------------------------------------------
+// V-026
+// ---------------------------------------------------------------------------------
+
+fn words(count: usize) -> String {
+    vec!["word"; count].join(" ")
+}
+
+#[test]
+fn v026_fails_on_a_trace_entry_over_forty_words() {
+    let l = ledger(vec![traced(&["short and to the point", &words(41)])]);
+    let found = validate::v026_trace_entry_bounded(&l);
+    assert_raises(&found, c::T024);
+    assert_eq!(found.len(), 1, "only the long entry is reported");
+    assert!(found[0].message.contains("entry 2"), "{}", found[0].message);
+}
+
+#[test]
+fn v026_passes_at_the_limit_and_ignores_history() {
+    // Forty is the limit, not thirty-nine; between 25 and 40 is a note at write time,
+    // never a diagnostic.
+    assert_clean(&validate::v026_trace_entry_bounded(&ledger(vec![traced(
+        &[&words(40), &words(26)],
+    )])));
+
+    // A superseded revision is history; a rule that judged it could not be satisfied by
+    // any write.
+    let mut old = traced(&[&words(60)]);
+    old.state = State::Superseded;
+    assert_clean(&validate::v026_trace_entry_bounded(&ledger(vec![old])));
 }

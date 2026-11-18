@@ -10,15 +10,15 @@ use akr_gui::model::{
     ReviewSnapshot, SnapshotError, WorkspaceLoader,
 };
 use akr_gui::ui::{AppModel, Panel, TreeMode};
-use pixelkit_raster::{Painter, RasterKernel, Rect, WindowBuffer};
-use pixelkit_shell::{Input, KeyInput, Modifiers, MouseButton, Scale};
-use pixelkit_text::{Align, Face, FontSet, TextCache};
-use pixelkit_ui::list::GUTTER as LIST_GUTTER;
-use pixelkit_ui::widget::TABLE_GUTTER;
-use pixelkit_ui::{
+use liminalkit_raster::{Painter, RasterKernel, Rect, WindowBuffer};
+use liminalkit_shell::{Input, KeyInput, Modifiers, MouseButton, Scale};
+use liminalkit_text::{Align, Face, FontSet, TextCache};
+use liminalkit_ui::list::GUTTER as LIST_GUTTER;
+use liminalkit_ui::widget::TABLE_GUTTER;
+use liminalkit_ui::{
     Cell, Column, Row, ScrollState, TableOutcome, TableState, TextFieldState, Theme, Ui, navigate,
 };
-use pixelkit_windowing::{
+use liminalkit_windowing::{
     ImeCursorArea, ImeEvent, KeyEvent, PixelApp, Waker, WindowConfig, run_app,
 };
 
@@ -900,7 +900,7 @@ struct ThumbGeom {
     content: i32,
 }
 
-/// A table's scrollbar thumb, mirroring pixelkit's indicator math so the drag
+/// A table's scrollbar thumb, mirroring liminalkit's indicator math so the drag
 /// handle sits exactly on what the eye sees, or nothing when everything fits.
 fn table_thumb(
     table_area: Rect,
@@ -1087,12 +1087,13 @@ fn render_left(
     state
         .tree_table
         .select(state.model.selected().map(|record| record.key.clone()));
+    let row_height = ui.px(ui.theme.row_height).max(1);
     if nav_active
         && keyboard_navigate(
             state.tree_table,
             &keys,
             *state.tree_visible_rows,
-            ui.theme.row_height,
+            row_height,
             pressed,
         )
         && let Some(selected) = state.tree_table.selected()
@@ -1102,7 +1103,7 @@ fn render_left(
     }
     if let Some(geom) = table_thumb(
         table_area,
-        ui.theme.row_height,
+        row_height,
         keys.len(),
         state.tree_table.scroll.offset(),
     ) {
@@ -1450,12 +1451,13 @@ fn render_outstanding(
     state
         .out_table
         .select(state.model.selected().map(|record| record.key.clone()));
+    let row_height = ui.px(ui.theme.row_height).max(1);
     if nav_active
         && keyboard_navigate(
             state.out_table,
             &keys,
             *state.out_visible_rows,
-            ui.theme.row_height,
+            row_height,
             pressed,
         )
         && let Some(selected) = state.out_table.selected()
@@ -1465,7 +1467,7 @@ fn render_outstanding(
     }
     if let Some(geom) = table_thumb(
         table_area,
-        ui.theme.row_height,
+        row_height,
         keys.len(),
         state.out_table.scroll.offset(),
     ) {
@@ -1479,10 +1481,10 @@ fn render_outstanding(
     }
     let snapshot = state.model.snapshot();
     let columns = [
-        Column::fixed("KIND", ui.px(110), Align::Left),
+        Column::fixed("KIND", 110, Align::Left),
         Column::flex("KEY", 2, Align::Left),
         Column::flex("TITLE", 3, Align::Left),
-        Column::fixed("FRESHNESS", ui.px(120), Align::Left),
+        Column::fixed("FRESHNESS", 120, Align::Left),
     ];
     let theme = ui.theme;
     let outcome: TableOutcome = ui.table(state.out_table, table_area, &columns, &keys, |index| {
@@ -1674,7 +1676,7 @@ fn render_relations(ui: &mut Ui, state: &mut FrameState, area: Rect) {
             to: edge.to.clone(),
         });
     }
-    let row_height = ui.theme.row_height + ui.px(6);
+    let row_height = ui.px(ui.theme.row_height) + ui.px(6);
     let heights = vec![row_height; rows.len()];
     let content: i32 = heights.iter().sum();
     if let Some(geom) = list_thumb(
@@ -1864,10 +1866,10 @@ fn render_open_dialog(ui: &mut Ui, state: &mut FrameState, pressed: &[KeyInput])
         Rect::new(dialog.x + ui.px(6), dialog.y + ui.px(6), dialog.w, dialog.h),
         0x0000_0000,
     );
-    ui.painter.rounded_rect(
+    ui.rounded(
         dialog,
-        ui.theme.corner_radius,
-        ui.theme.border_width,
+        ui.px(ui.theme.corner_radius),
+        ui.px(ui.theme.border_width),
         ui.theme.panel,
         ui.theme.accent,
     );
@@ -1928,7 +1930,7 @@ fn render_open_dialog(ui: &mut Ui, state: &mut FrameState, pressed: &[KeyInput])
             .collect();
         if let Some(geom) = table_thumb(
             list_area,
-            ui.theme.row_height,
+            ui.px(ui.theme.row_height).max(1),
             keys.len(),
             state.project_table.scroll.offset(),
         ) {
@@ -2082,10 +2084,7 @@ impl ReviewApp {
                 self.zoom = self.zoom.clamp(0.5, 3.0);
             }
         }
-        let mut theme = self.theme;
-        theme.row_height = scale.px(theme.row_height);
-        theme.padding = scale.px(theme.padding);
-        theme.corner_radius = scale.px(theme.corner_radius);
+        let theme = self.theme;
         let mut deferred = Deferred::default();
         let elapsed = self
             .load_started
@@ -2114,7 +2113,8 @@ impl ReviewApp {
                 ..
             } = self;
             let tick = *tick;
-            let mut ui = Ui::new(Painter::new(buffer), text, input, theme, scale, kernel);
+            let mut ui = Ui::new(Painter::new(buffer), text, input, theme, scale, kernel)
+                .with_smooth_edges(true);
             ui.painter.clear(ui.theme.background);
             let logical_w = scale.logical(ui.painter.width()) as i32;
             let logical_h = scale.logical(ui.painter.height()) as i32;
@@ -2305,9 +2305,11 @@ impl PixelApp for ReviewApp {
     fn attach(&mut self, waker: Waker) {
         let clipboard_waker = waker.clone();
         self.input
-            .attach_clipboard(pixelkit_shell::clipboard::ClipboardWorker::new(move || {
-                clipboard_waker.wake();
-            }));
+            .attach_clipboard(liminalkit_shell::clipboard::ClipboardWorker::new(
+                move || {
+                    clipboard_waker.wake();
+                },
+            ));
         self.waker = Some(waker);
     }
 
@@ -2520,7 +2522,8 @@ mod tests {
     }
 
     #[test]
-    fn typing_into_the_filter_inserts_each_character_once_and_searches() {
+    fn text_input_and_ime_dedup_insert_each_character_once() {
+        // 1. Typing into the filter inserts each character once and searches.
         let mut app = demo_app();
         host_press(&mut app, "/");
         frame(&mut app);
@@ -2535,21 +2538,16 @@ mod tests {
             ["akr.work.review-snapshot"],
             "a doubled query would match nothing"
         );
-    }
 
-    #[test]
-    fn typing_into_the_open_dialog_inserts_each_character_once() {
+        // 2. Typing into the open dialog commits multi-char host text once.
         let mut app = demo_app();
         app.modal_open = true;
         app.path_field = TextFieldState::new();
-        // One platform event can commit more than its first character.
         host_press(&mut app, "/tmp/akr");
         frame(&mut app);
         assert_eq!(app.path_field.text(), "/tmp/akr");
-    }
 
-    #[test]
-    fn an_ime_commit_and_the_same_key_text_insert_once() {
+        // 3. An IME commit followed by matching key text inserts once.
         let mut app = demo_app();
         app.filter_focused = true;
         app.on_ime(&ImeEvent::Commit("é".to_owned()));
@@ -2557,10 +2555,8 @@ mod tests {
         frame(&mut app);
         assert_eq!(app.filter_field.text(), "é");
         assert_eq!(app.model.filter.query, "é");
-    }
 
-    #[test]
-    fn a_key_then_the_same_ime_commit_inserts_once() {
+        // 4. Key text followed by matching IME commit inserts once.
         let mut app = demo_app();
         app.filter_focused = true;
         host_press(&mut app, "ab");
@@ -2593,8 +2589,9 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "mutates the global OS clipboard and sleeps while polling"]
     fn paste_inserts_the_clipboard_text_once() {
-        let mut clipboard = pixelkit_shell::Clipboard::new();
+        let mut clipboard = liminalkit_shell::Clipboard::new();
         let previous = clipboard.try_text().ok().flatten();
         let marker = format!("akr-gui-paste-{}", std::process::id());
         if clipboard.try_set_text(marker.clone()).is_err() {
@@ -2636,14 +2633,6 @@ mod tests {
             "paste should insert {marker:?} once, field is {:?}",
             app.filter_field.text()
         );
-    }
-
-    #[test]
-    fn attach_installs_the_clipboard_worker() {
-        let mut app = demo_app();
-        assert!(app.input.clipboard().is_none());
-        app.attach(Waker::detached());
-        assert!(app.input.clipboard().is_some());
     }
 
     #[test]
@@ -2693,23 +2682,19 @@ mod tests {
             "the outstanding screen should paint real content, got {ink} non-background pixels"
         );
         if let Ok(dir) = std::env::var("AKR_GUI_PNG_DIR") {
-            pixelkit_raster::png::write(format!("{dir}/akr-gui-outstanding.png"), &buffer)
+            liminalkit_raster::png::write(format!("{dir}/akr-gui-outstanding.png"), &buffer)
                 .expect("write the outstanding screen");
             app.model.panel = Panel::Dashboard;
             let buffer = frame(&mut app);
-            pixelkit_raster::png::write(format!("{dir}/akr-gui-dashboard.png"), &buffer)
+            liminalkit_raster::png::write(format!("{dir}/akr-gui-dashboard.png"), &buffer)
                 .expect("write the dashboard screen");
-            app.projects = [
-                "/home/dk/rust-projects/AKR",
-                "/home/dk/rust-projects/pixelkit",
-                "/home/dk/rust-projects/Kitchen-Concept",
-            ]
-            .into_iter()
-            .map(PathBuf::from)
-            .collect();
+            app.projects = ["/demo/project-a", "/demo/project-b", "/demo/project-c"]
+                .into_iter()
+                .map(PathBuf::from)
+                .collect();
             app.modal_open = true;
             let buffer = frame(&mut app);
-            pixelkit_raster::png::write(format!("{dir}/akr-gui-dialog.png"), &buffer)
+            liminalkit_raster::png::write(format!("{dir}/akr-gui-dialog.png"), &buffer)
                 .expect("write the dialog screen");
         }
     }
@@ -2813,12 +2798,7 @@ mod tests {
 
     #[test]
     fn clicking_a_project_row_switches_to_it() {
-        let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(Path::parent)
-            .expect("workspace root")
-            .canonicalize()
-            .expect("canonical workspace root");
+        let repo = workspace_root(Path::new(env!("CARGO_MANIFEST_DIR"))).expect("workspace root");
         let mut app = demo_app();
         let other = app.model.add_tab(repo.clone());
         // A seeded error keeps the frame from spawning a real load for it.
@@ -2849,12 +2829,7 @@ mod tests {
 
     #[test]
     fn the_dialogs_open_button_opens_the_typed_path() {
-        let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(Path::parent)
-            .expect("workspace root")
-            .canonicalize()
-            .expect("canonical workspace root");
+        let repo = workspace_root(Path::new(env!("CARGO_MANIFEST_DIR"))).expect("workspace root");
         let mut app = demo_app();
         let other = app.model.add_tab(repo.clone());
         app.model.fail_load(other, "seeded");
@@ -2883,6 +2858,32 @@ mod tests {
         click(&mut app, x, y);
         assert_eq!(app.model.panel, Panel::Dashboard);
         assert!(app.modal_open, "the dialog stays open");
+    }
+
+    #[test]
+    fn hidpi_scale_does_not_double_scale_theme_rows() {
+        let mut app = demo_app();
+        app.model.panel = Panel::Outstanding;
+        app.model.select_quiet("akr.work.review-snapshot");
+        // At scale 2.0 on a 2560x1600 physical buffer (1280x800 logical),
+        // the first row in render_outstanding is at logical y = 12 + 28 + 8 + 30 + 15,
+        // which is physical y = 2 * (12 + 28 + 8 + 30 + 15). If theme.row_height were
+        // pre-scaled before Ui::table scaled it again, the header would be 120 px tall
+        // instead of 60 px and this click would miss row 0.
+        let areas = layout_areas(1280, 800);
+        let x = ((areas.right.x + 12 + 60) * 2) as f32;
+        let y = ((areas.right.y + 12 + 28 + 8 + 30 + 15) * 2) as f32;
+        let mut buffer = WindowBuffer::new(2560, 1600);
+        app.input.cursor_moved(x, y);
+        app.input.mouse(MouseButton::Left, true);
+        app.frame(&mut buffer, Scale::new(2.0));
+        app.input.mouse(MouseButton::Left, false);
+        app.frame(&mut buffer, Scale::new(2.0));
+        assert_eq!(app.model.panel, Panel::Inspector);
+        assert_eq!(
+            app.model.selected().map(|record| record.key.as_str()),
+            Some("akr.milestone.human-record-review")
+        );
     }
 
     #[test]

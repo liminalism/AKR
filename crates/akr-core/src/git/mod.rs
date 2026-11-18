@@ -265,7 +265,7 @@ fn load_rewrites(root: &Path) -> Result<BTreeMap<String, Commit>, GitError> {
 /// This matters more than it looks: freshness asks the same ancestry questions once per
 /// record per watched path, and on Windows every answer that is not memoised costs a
 /// process creation — hundreds of them, which is seconds of wall clock.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct Memo {
     /// Object name -> does it resolve.
     exists: BTreeMap<String, bool>,
@@ -302,8 +302,18 @@ struct Memo {
     session: Option<(CommitBrief, Option<CommitBrief>)>,
 }
 
+impl Memo {
+    /// Drops only working-tree and movable-ref entries, keeping immutable commit-graph
+    /// and object-store facts anchored to the same `HEAD`.
+    fn clear_worktree(&mut self) {
+        self.worktree = None;
+        self.ignored.clear();
+        self.revisions.retain(|k, _| k == "HEAD");
+    }
+}
+
 /// The commits of one range `(from, to]` and their parents, from a single `rev-list`.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct RangeGraph {
     /// The range it describes, as the `rev-list` argument.
     range: String,
@@ -413,6 +423,11 @@ static SHARED: Mutex<BTreeMap<PathBuf, SharedMemo>> = Mutex::new(BTreeMap::new()
 struct SharedMemo {
     /// `HEAD` plus the working-tree state that the memo was built against.
     key: String,
+    /// `HEAD` commit hash when known, used to share immutable commit-graph memos across
+    /// working-tree edits and cloned fixtures at the same commit.
+    head: Option<String>,
+    /// Reviewed rewrite pairs active for this memo.
+    rewrites: Arc<BTreeMap<String, Commit>>,
     memo: Arc<Mutex<Memo>>,
 }
 
@@ -436,21 +451,56 @@ impl Repository {
     /// As [`Repository::open`].
     pub fn shared(path: &Path) -> Result<Self, GitError> {
         let (probe, head) = Self::open_with_head(path)?;
-        let (key, status) = probe.worktree_key(head);
+        let (key, status) = probe.worktree_key(head.clone());
         let mut registry = SHARED.lock().unwrap_or_else(|error| error.into_inner());
-        let entry = registry
-            .entry(probe.root.clone())
-            .or_insert_with(|| SharedMemo {
-                key: key.clone(),
-                memo: Arc::default(),
-            });
-        if entry.key != key {
-            entry.key = key;
-            entry.memo = Arc::default();
-        }
+        let memo = if let Some(entry) = registry.get_mut(&probe.root) {
+            if entry.key != key {
+                entry.key = key;
+                if entry.head == head && head.is_some() && entry.rewrites == probe.rewrites {
+                    entry
+                        .memo
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .clear_worktree();
+                } else {
+                    entry.head = head;
+                    entry.rewrites = probe.rewrites.clone();
+                    entry.memo = Arc::default();
+                }
+            }
+            entry.memo.clone()
+        } else {
+            let seeded = if head.is_some() {
+                registry
+                    .values()
+                    .find(|existing| existing.head == head && existing.rewrites == probe.rewrites)
+                    .map(|existing| {
+                        let mut cloned = existing
+                            .memo
+                            .lock()
+                            .unwrap_or_else(|error| error.into_inner())
+                            .clone();
+                        cloned.clear_worktree();
+                        Arc::new(Mutex::new(cloned))
+                    })
+            } else {
+                None
+            };
+            let memo = seeded.unwrap_or_default();
+            registry.insert(
+                probe.root.clone(),
+                SharedMemo {
+                    key,
+                    head,
+                    rewrites: probe.rewrites.clone(),
+                    memo: memo.clone(),
+                },
+            );
+            memo
+        };
         let repository = Self {
             root: probe.root,
-            memo: entry.memo.clone(),
+            memo,
             rewrites: probe.rewrites,
             facts: None,
         };
@@ -2290,6 +2340,86 @@ pub fn ancestry_over(
     Ok(crate::model::Ancestry::from_pairs(pairs))
 }
 
+/// The commit that introduced each entry of a work record's trace (D-047).
+///
+/// `entries` is the trace as the working tree holds it. The answer for entry *i* is the
+/// oldest commit touching `path` at which some revision of `key` already carried the
+/// first *i + 1* entries, or `None` when no commit does — an entry written and not yet
+/// committed.
+///
+/// This is how a reason refers to a commit without the ledger storing a commit id, which
+/// D-032 rules out: a hash cannot be written into a record contained in that same commit,
+/// and a rebase would invalidate it anyway. Derived, it survives both.
+///
+/// A trace is append-only, so along a path's history the number of entries already
+/// present never falls. That makes each boundary a binary search: about `log2(commits)`
+/// reads of the file per entry, every one of them memoised on the [`Repository`]. No
+/// persistent cache is involved, so there is nothing here that could serve a stale
+/// answer.
+///
+/// # Errors
+/// [`GitError`] when git cannot walk the path's history or read a version of the file.
+pub fn trace_introductions(
+    repository: &Repository,
+    path: &str,
+    key: &crate::model::LogicalKey,
+    entries: &[String],
+) -> Result<Vec<Option<Commit>>, GitError> {
+    let mut out = vec![None; entries.len()];
+    if entries.is_empty() {
+        return Ok(out);
+    }
+    // Oldest first.
+    let mut history = repository.commits_touching(path)?;
+    history.reverse();
+
+    // How many leading entries the key's revisions hold at one commit.
+    let mut held: BTreeMap<usize, usize> = BTreeMap::new();
+    let mut held_at = |index: usize| -> Result<usize, GitError> {
+        if let Some(known) = held.get(&index) {
+            return Ok(*known);
+        }
+        let mut present: BTreeSet<String> = BTreeSet::new();
+        if let Some(text) = repository.file_at(&history[index], path)?
+            && let Some(file) = crate::syntax::parse(&text, crate::diagnostics::FileId(0)).file
+        {
+            let (ledger, _) = crate::syntax::lower_all(&[(path.to_owned(), file)]);
+            for record in ledger.revisions_of(key) {
+                if let Some(crate::model::ContentValue::Strings(found)) =
+                    record.get(crate::model::ContentSlot::Trace)
+                {
+                    present.extend(found.iter().cloned());
+                }
+            }
+        }
+        let count = entries
+            .iter()
+            .take_while(|entry| present.contains(*entry))
+            .count();
+        held.insert(index, count);
+        Ok(count)
+    };
+
+    let mut from = 0;
+    for wanted in 1..=entries.len() {
+        let (mut low, mut high) = (from, history.len());
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if held_at(middle)? >= wanted {
+                high = middle;
+            } else {
+                low = middle + 1;
+            }
+        }
+        if low == history.len() {
+            break; // this entry, and every later one, is not committed yet
+        }
+        out[wanted - 1] = Some(history[low].clone());
+        from = low;
+    }
+    Ok(out)
+}
+
 /// The last commit at which a record's canonical text reached its current value.
 ///
 /// This is the `last_change` of D-016 — the commit an acceptance check's evidence must
@@ -2596,11 +2726,13 @@ pub fn definition_facts_cached(
                         out.last_change.insert(id, commit);
                     }
                     None => {
-                        if at_head.is_none() {
+                        if timeline.is_some() && at_head.is_none() {
                             at_head = Some(head_maps(repository, &path, &keys)?);
                         }
-                        let maps = at_head.as_ref().expect("filled just above");
-                        if !held_at(maps, &key, revision, &hash) {
+                        let held = at_head
+                            .as_ref()
+                            .is_some_and(|maps| held_at(maps, &key, revision, &hash));
+                        if !held {
                             out.uncommitted.insert(id);
                         }
                     }

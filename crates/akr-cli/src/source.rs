@@ -14,6 +14,14 @@ use akr_core::source::{
 };
 use std::path::{Path, PathBuf};
 
+fn resolve_in_workspace(root: &Path, path: &Path) -> PathBuf {
+    if path.is_relative() {
+        root.join(path)
+    } else {
+        path.to_path_buf()
+    }
+}
+
 /// `akr source add <path> ...`
 pub fn add(
     session: &Session,
@@ -24,7 +32,9 @@ pub fn add(
     observed_at: Option<&str>,
     scope: Option<&str>,
 ) -> Result<Output, EnvError> {
+    crate::secrets::public_input(&session.root, path)?;
     let workspace_root = session.root.clone();
+    let resolved_path = resolve_in_workspace(&workspace_root, path);
     let origin = origin.unwrap_or("external");
     let origin_ty = SourceOrigin::from_str(origin).ok_or_else(|| {
         EnvError::new(
@@ -33,15 +43,19 @@ pub fn add(
         )
     })?;
 
-    let bytes = std::fs::read(path)
-        .map_err(|e| EnvError::new("AKR-C042", format!("cannot read {}: {e}", path.display())))?;
-    require_text(path, &bytes)?;
+    let bytes = std::fs::read(&resolved_path).map_err(|e| {
+        EnvError::new(
+            "AKR-C042",
+            format!("cannot read {}: {e}", resolved_path.display()),
+        )
+    })?;
+    require_text(&resolved_path, &bytes)?;
     let content_hash = source::hash_bytes(&bytes);
     let byte_len = bytes.len() as u64;
 
     let stem = id
         .map(ToOwned::to_owned)
-        .unwrap_or_else(|| derive_id(path, &bytes));
+        .unwrap_or_else(|| derive_id(&resolved_path, &bytes));
     let safe_id = sanitize_id(&stem);
     if safe_id.is_empty() {
         return Err(EnvError::new("AKR-C004", "source id must be non-empty"));
@@ -608,6 +622,7 @@ pub fn supersede(
     new_path: &Path,
     new_id: Option<&str>,
 ) -> Result<Output, EnvError> {
+    crate::secrets::public_input(&session.root, new_path)?;
     let workspace_root = session.root.clone();
     let mut catalog = source::load_catalog(&workspace_root).map_err(to_env)?;
     let old = catalog
@@ -616,13 +631,14 @@ pub fn supersede(
         .ok_or_else(|| EnvError::new("AKR-C042", format!("source {old_id:?} not found")))?
         .clone();
 
-    let bytes = std::fs::read(new_path).map_err(|e| {
+    let resolved_new_path = resolve_in_workspace(&workspace_root, new_path);
+    let bytes = std::fs::read(&resolved_new_path).map_err(|e| {
         EnvError::new(
             "AKR-C042",
-            format!("cannot read {}: {e}", new_path.display()),
+            format!("cannot read {}: {e}", resolved_new_path.display()),
         )
     })?;
-    require_text(new_path, &bytes)?;
+    require_text(&resolved_new_path, &bytes)?;
     let content_hash = source::hash_bytes(&bytes);
     let byte_len = bytes.len() as u64;
 

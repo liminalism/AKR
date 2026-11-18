@@ -4,7 +4,7 @@
 //! cannot substitute, and what a child is not silently told. So most of these run the
 //! binary and assert on absence.
 
-mod support;
+use crate::support;
 
 use support::Example;
 

@@ -32,7 +32,7 @@ use crate::git::{GitError, IndexEntry, Repository};
 use crate::hash::Sha256;
 use crate::model::Commit;
 use crate::model::{Ledger, RevisionId, State};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 mod message;
@@ -134,6 +134,10 @@ pub struct ChangeIntent {
     pub implementation_note: Option<String>,
     /// Why a material change carries no work reference.
     pub untracked_reason: Option<String>,
+    /// Reasons given with `--why` (D-047). Each was appended to the primary work
+    /// record's trace when it was given; they are kept here as well so the commit still
+    /// carries them if that record file was left out of the staged tree.
+    pub why: Vec<String>,
     /// The staged tree this transaction was prepared against, once it has been.
     pub prepared_tree: Option<String>,
     /// The implementation digest of that staged tree.
@@ -157,6 +161,7 @@ impl ChangeIntent {
             related_work: Vec::new(),
             implementation_note: None,
             untracked_reason: None,
+            why: Vec::new(),
             prepared_tree: None,
             prepared_digest: None,
         }
@@ -199,6 +204,9 @@ impl ChangeIntent {
         }
         if let Some(reason) = &self.untracked_reason {
             line("untracked_reason", reason);
+        }
+        for why in &self.why {
+            line("why", why);
         }
         if let Some(tree) = &self.prepared_tree {
             line("prepared_tree", tree);
@@ -243,6 +251,7 @@ impl ChangeIntent {
             related_work: fields.get("related_work").cloned().unwrap_or_default(),
             implementation_note: one("implementation_note"),
             untracked_reason: one("untracked_reason"),
+            why: fields.get("why").cloned().unwrap_or_default(),
             prepared_tree: one("prepared_tree"),
             prepared_digest: one("prepared_digest"),
         })
@@ -286,6 +295,13 @@ pub enum ChangeError {
     PrimaryRequired(Vec<String>),
     /// A work reference does not resolve in the staged ledger.
     UnknownWork(String),
+    /// A work reference names a record that is not a `work` record.
+    NotWork {
+        /// The reference as given.
+        reference: String,
+        /// The kind it resolved to.
+        kind: String,
+    },
     /// A material change carries neither a work reference nor an exemption.
     Untracked,
     /// Git said no.
@@ -330,6 +346,11 @@ impl std::fmt::Display for ChangeError {
                 f,
                 "{key} does not resolve in the staged ledger; stage the record that \
                  defines it, or correct the reference"
+            ),
+            Self::NotWork { reference, kind } => write!(
+                f,
+                "{reference} is a {kind}, not a work record; a commit advances work — name \
+                 the work record that implements it, or use --untracked-reason"
             ),
             Self::Untracked => write!(
                 f,
@@ -472,11 +493,22 @@ pub struct SemanticDelta {
     pub transitions: Vec<Transition>,
     /// Evidence records this change introduces.
     pub evidence: Vec<RevisionId>,
+    /// Trace entries this change adds to work records (D-047), in ledger order.
+    pub trace: Vec<TraceStep>,
     /// Implementation files this change touches, excluding AKR metadata and generated
     /// views. What the index *changes*, never what it merely holds.
     pub code: Vec<String>,
     /// AKR files this change touches.
     pub ledger_files: Vec<String>,
+}
+
+/// One reasoning step a change adds to a work record's trace (D-047).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraceStep {
+    /// The work revision whose trace gained it.
+    pub id: RevisionId,
+    /// The entry.
+    pub entry: String,
 }
 
 impl SemanticDelta {
@@ -549,6 +581,40 @@ pub fn delta(base: Option<&Ledger>, staged: &Ledger, changed: &[String]) -> Sema
         }
     }
 
+    // D-047: the trace entries a head carries that no revision of its key carried at the
+    // base. Compared by key and not by revision, so an entry that rode along onto
+    // revision n+1 is not reported as new a second time.
+    let mut base_trace: BTreeMap<String, BTreeSet<&str>> = BTreeMap::new();
+    for record in base.iter().flat_map(|ledger| ledger.records()) {
+        if let Some(crate::model::ContentValue::Strings(entries)) =
+            record.get(crate::model::ContentSlot::Trace)
+        {
+            base_trace
+                .entry(record.id.key.to_string())
+                .or_default()
+                .extend(entries.iter().map(String::as_str));
+        }
+    }
+    for record in staged.records() {
+        if !staged.head(&record.id.key).is_ok_and(|h| h.id == record.id) {
+            continue;
+        }
+        let Some(crate::model::ContentValue::Strings(entries)) =
+            record.get(crate::model::ContentSlot::Trace)
+        else {
+            continue;
+        };
+        let known = base_trace.get(&record.id.key.to_string());
+        for entry in entries {
+            if known.is_none_or(|known| !known.contains(entry.as_str())) {
+                out.trace.push(TraceStep {
+                    id: record.id.clone(),
+                    entry: entry.clone(),
+                });
+            }
+        }
+    }
+
     for path in changed {
         if is_akr_metadata(path) {
             if path.starts_with(".akr/") {
@@ -576,7 +642,10 @@ pub fn staged_akr_files(
 ) -> Result<Vec<(String, String)>, ChangeError> {
     let mut out = Vec::new();
     for entry in entries {
-        if entry.path.starts_with(".akr/") && entry.path.ends_with(".akr") {
+        if entry.path.starts_with(".akr/")
+            && entry.path.ends_with(".akr")
+            && !crate::secrets::is_private_path(&entry.path)
+        {
             out.push((entry.path.clone(), repository.blob(&entry.blob)?));
         }
     }
@@ -595,6 +664,7 @@ pub fn akr_files_at(
     for path in repository.run_ls_tree(commit)? {
         if path.starts_with(".akr/")
             && path.ends_with(".akr")
+            && !crate::secrets::is_private_path(&path)
             && let Some(text) = repository.file_at(commit, &path)?
         {
             out.push((path, text));

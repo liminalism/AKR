@@ -5,6 +5,16 @@ humans and AI agents. It gives project decisions, requirements, observations,
 evidence, questions, and work items stable identities, lifecycle states,
 scope, typed relations, freshness, and Git provenance.
 
+Version 0.7.0 makes the ledger say *why* rather than restate a diff: a work record
+carries a short reasoning `trace`, a passing command check records itself instead of
+minting an evidence record, five little-used kinds are retired, and one agent brief is
+installed everywhere. Existing ledgers need no changes; see
+[upgrading to 0.7](docs/20-upgrading-to-0.7.md) and the
+[audit that prompted it](docs/19-ledger-usage-and-reasoning-audit.md).
+
+Version 0.6.5 added [local-only secrets and opaque citations](docs/18-private-secrets.md):
+keep developer paths and private values off Git while public ledger text renders `[*]`.
+
 The Rust workspace currently includes the compiler and validator, the `akr`
 CLI, the `knowledge.*` MCP server, full-text search and migration tooling, and
 a read-only native desktop review workbench. The project is under active

@@ -18,11 +18,25 @@
 
 #![allow(dead_code)]
 
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use akr_core::json::{Value, parse};
+
 static COUNTER: AtomicU32 = AtomicU32::new(0);
+static SAVE_YOUR_SKIN_TEMPLATE: OnceLock<Template> = OnceLock::new();
+static SYS_TANDEM_TEMPLATE: OnceLock<Template> = OnceLock::new();
+
+struct Template {
+    root: PathBuf,
+    snapshot: PathBuf,
+    commits: Vec<String>,
+    substitutions: Vec<(String, String)>,
+    today: &'static str,
+}
 
 /// One worked example's synthetic history and the invented hashes its records cite.
 pub struct Fixture {
@@ -211,94 +225,34 @@ impl Example {
 
     /// The same, for a named fixture.
     ///
+    /// Built once per fixture per test binary via [`OnceLock`], then cloned by directory
+    /// copy so individual tests pay zero `git` or `akr` setup subprocesses.
+    ///
     /// # Panics
     /// As [`Example::materialise`].
     pub fn of(fixture: &Fixture, name: &str) -> Self {
+        let template = match fixture.name {
+            "save-your-skin" => SAVE_YOUR_SKIN_TEMPLATE.get_or_init(|| build_template(fixture)),
+            "sys-tandem" => SYS_TANDEM_TEMPLATE.get_or_init(|| build_template(fixture)),
+            _ => panic!("unknown fixture `{}`", fixture.name),
+        };
         let unique = COUNTER.fetch_add(1, Ordering::SeqCst);
         let root =
             std::env::temp_dir().join(format!("akr-p6-{name}-{}-{unique}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).expect("temp directory");
+        copy_dir(&template.root, &root);
 
-        git(&root, &["init", "--quiet", "--initial-branch=main"]);
-        git(&root, &["config", "user.name", "AKR Test"]);
-        git(&root, &["config", "user.email", "test@example.invalid"]);
-        git(&root, &["config", "commit.gpgsign", "false"]);
-        git(&root, &["config", "gc.auto", "0"]);
-
-        let mut commits = Vec::new();
-        for (day, (message, writes)) in fixture.steps.iter().enumerate() {
-            for (path, contents) in *writes {
-                write(&root.join(path), contents);
-            }
-            let stamp = format!("2026-01-{:02}T12:00:00+00:00", day + 1);
-            git(&root, &["add", "-A"]);
-            let output = Command::new("git")
-                .args(["commit", "--quiet", "-m", message])
-                .current_dir(&root)
-                .env("GIT_AUTHOR_DATE", &stamp)
-                .env("GIT_COMMITTER_DATE", &stamp)
-                .output()
-                .expect("git runs");
-            assert!(output.status.success(), "git commit failed for {message}");
-            commits.push(git(&root, &["rev-parse", "HEAD"]).trim().to_owned());
-        }
-
-        let source = examples_dir().join(fixture.name);
-        copy_dir(&source.join(".akr"), &root.join(".akr"));
-        std::fs::create_dir_all(root.join("docs/generated")).expect("views directory");
-        if let Ok(views) = std::fs::read_dir(source.join("docs/generated")) {
-            for entry in views {
-                let entry = entry.expect("view").path();
-                if entry.extension().is_some_and(|e| e == "md") {
-                    let name = entry.file_name().expect("file name");
-                    std::fs::copy(&entry, root.join("docs/generated").join(name))
-                        .expect("copy view");
-                }
-            }
-        }
-
-        // Repoint every cited commit at the real one. This changes the record bytes, so
-        // the seals and the source-graph hash change with them; both are regenerated
-        // below rather than patched, because regenerating is what the tool does.
-        let mut substitutions = Vec::new();
-        for (index, invented) in fixture.commits.iter().enumerate() {
-            let real = &commits[index];
-            rewrite_tree(&root.join(".akr"), invented, real);
-            substitutions.push((real.clone(), (*invented).to_owned()));
-            substitutions.push((real[..8].to_owned(), invented[..8].to_owned()));
-        }
-
-        let example = Self {
-            root,
-            commits,
-            substitutions,
-            today: fixture.today,
-            snapshot: PathBuf::new(),
-        };
-        example.run(&["lock"]);
-        example.run(&["build"]);
-
-        // The one derived value the substitutions above cannot cover: the source graph is
-        // a hash of the rewritten bytes, so it is read back and mapped to the hash the
-        // committed example carries.
-        let mut example = example;
-        let committed = source_graph_of(
-            &std::fs::read_to_string(source.join(".akr/akr.lock")).expect("committed lock"),
-        );
-        let rebuilt = source_graph_of(
-            &std::fs::read_to_string(example.root.join(".akr/akr.lock")).expect("rebuilt lock"),
-        );
-        example.substitutions.push((rebuilt, committed));
-
-        // A snapshot of the built tree, so a transcript's `git checkout <path>` can be
-        // honoured without adding a commit. Committing the workspace would move HEAD off
-        // C5 and invalidate every hash the transcripts quote.
-        let snapshot = example.root.with_extension("snapshot");
+        let snapshot = root.with_extension("snapshot");
         let _ = std::fs::remove_dir_all(&snapshot);
-        copy_dir(&example.root.join("docs/generated"), &snapshot);
-        example.snapshot = snapshot;
-        example
+        copy_dir(&template.snapshot, &snapshot);
+
+        Self {
+            root,
+            commits: template.commits.clone(),
+            substitutions: template.substitutions.clone(),
+            today: template.today,
+            snapshot,
+        }
     }
 
     /// Runs a transcript's non-`akr` shell line: `sed`, `git checkout`, `cd`.
@@ -342,25 +296,34 @@ impl Example {
         &self.root
     }
 
+    /// The frozen evaluation date for this example.
+    pub fn today(&self) -> &str {
+        self.today
+    }
+
     /// The real commit standing in for the manifest's Cn, 1-based.
     pub fn commit(&self, n: usize) -> &str {
         &self.commits[n - 1]
     }
 
-    /// Runs `akr` in the workspace with the frozen `--today`, returning stdout, stderr and
-    /// the exit status.
-    ///
-    /// # Panics
-    /// If the binary cannot be executed.
+    /// Runs `akr` in-process in the workspace with the frozen `--today`, returning stdout,
+    /// stderr and the exit status.
     pub fn run(&self, args: &[&str]) -> Run {
-        let mut command = Command::new(akr_binary());
-        command.arg("--today").arg(self.today);
-        command.args(args).current_dir(&self.root);
-        let output = command.output().expect("the akr binary runs");
+        let mut argv = Vec::with_capacity(args.len() + 4);
+        if !args.contains(&"--dir") {
+            argv.push("--dir".to_owned());
+            argv.push(self.root.to_string_lossy().into_owned());
+        }
+        if !args.contains(&"--today") {
+            argv.push("--today".to_owned());
+            argv.push(self.today.to_owned());
+        }
+        argv.extend(args.iter().map(|s| (*s).to_owned()));
+        let execution = akr_cli::execute(&argv);
         Run {
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-            code: output.status.code().unwrap_or(-1),
+            stdout: execution.stdout,
+            stderr: execution.stderr,
+            code: execution.exit as i32,
         }
     }
 
@@ -582,4 +545,161 @@ fn git(root: &Path, args: &[&str]) -> String {
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+fn build_template(fixture: &Fixture) -> Template {
+    let root = std::env::temp_dir().join(format!(
+        "akr-mcp-tpl-{}-{}",
+        fixture.name,
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("temp directory");
+
+    git(&root, &["init", "--quiet", "--initial-branch=main"]);
+    git(&root, &["config", "user.name", "AKR Test"]);
+    git(&root, &["config", "user.email", "test@example.invalid"]);
+    git(&root, &["config", "commit.gpgsign", "false"]);
+    git(&root, &["config", "gc.auto", "0"]);
+
+    let mut commits = Vec::new();
+    for (day, (message, writes)) in fixture.steps.iter().enumerate() {
+        for (path, contents) in *writes {
+            write(&root.join(path), contents);
+        }
+        let stamp = format!("2026-01-{:02}T12:00:00+00:00", day + 1);
+        git(&root, &["add", "-A"]);
+        let output = Command::new("git")
+            .args(["commit", "--quiet", "-m", message])
+            .current_dir(&root)
+            .env("GIT_AUTHOR_DATE", &stamp)
+            .env("GIT_COMMITTER_DATE", &stamp)
+            .output()
+            .expect("git runs");
+        assert!(output.status.success(), "git commit failed for {message}");
+        commits.push(git(&root, &["rev-parse", "HEAD"]).trim().to_owned());
+    }
+
+    let source = examples_dir().join(fixture.name);
+    copy_dir(&source.join(".akr"), &root.join(".akr"));
+    std::fs::create_dir_all(root.join("docs/generated")).expect("views directory");
+    if let Ok(views) = std::fs::read_dir(source.join("docs/generated")) {
+        for entry in views {
+            let entry = entry.expect("view").path();
+            if entry.extension().is_some_and(|e| e == "md") {
+                let name = entry.file_name().expect("file name");
+                std::fs::copy(&entry, root.join("docs/generated").join(name)).expect("copy view");
+            }
+        }
+    }
+
+    let mut substitutions = Vec::new();
+    for (index, invented) in fixture.commits.iter().enumerate() {
+        let real = &commits[index];
+        rewrite_tree(&root.join(".akr"), invented, real);
+        substitutions.push((real.clone(), (*invented).to_owned()));
+        substitutions.push((real[..8].to_owned(), invented[..8].to_owned()));
+    }
+
+    for subcommand in ["lock", "build"] {
+        let argv = [
+            "--dir".to_owned(),
+            root.to_string_lossy().into_owned(),
+            "--today".to_owned(),
+            fixture.today.to_owned(),
+            subcommand.to_owned(),
+        ];
+        let execution = akr_cli::execute(&argv);
+        assert_eq!(
+            execution.exit as i32, 0,
+            "template setup `akr {subcommand}` failed: {}{}",
+            execution.stdout, execution.stderr
+        );
+    }
+
+    let committed = source_graph_of(
+        &std::fs::read_to_string(source.join(".akr/akr.lock")).expect("committed lock"),
+    );
+    let rebuilt = source_graph_of(
+        &std::fs::read_to_string(root.join(".akr/akr.lock")).expect("rebuilt lock"),
+    );
+    substitutions.push((rebuilt, committed));
+
+    let snapshot = root.with_extension("snapshot");
+    let _ = std::fs::remove_dir_all(&snapshot);
+    copy_dir(&root.join("docs/generated"), &snapshot);
+
+    Template {
+        root,
+        snapshot,
+        commits,
+        substitutions,
+        today: fixture.today,
+    }
+}
+
+/// Runs newline-delimited JSON-RPC requests in-process against a fresh [`akr_mcp::Server`].
+pub fn mcp_rpc(root: &Path, requests: &str) -> Vec<Value> {
+    mcp_rpc_at(root, None, requests)
+}
+
+/// Runs newline-delimited JSON-RPC requests in-process with an optional frozen `today` date.
+pub fn mcp_rpc_at(root: &Path, today: Option<&str>, requests: &str) -> Vec<Value> {
+    let today = today.map(|text| akr_core::model::Date::parse(text).expect("valid test date"));
+    let server = akr_mcp::Server::new(root).with_today(today);
+    let mut output = Vec::new();
+    akr_mcp::serve(&server, Cursor::new(requests.as_bytes()), &mut output)
+        .expect("in-process MCP server runs");
+    String::from_utf8_lossy(&output)
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| parse(line).expect("a JSON-RPC response"))
+        .collect()
+}
+
+/// Runs one `tools/call` in-process and returns `(structuredContent, text, isError)`.
+pub fn mcp_call_raw(root: &Path, tool: &str, arguments: &str) -> (Value, String, bool) {
+    mcp_call_raw_at(root, None, tool, arguments)
+}
+
+/// Runs one `tools/call` in-process at a frozen date and returns `(structuredContent, text, isError)`.
+pub fn mcp_call_raw_at(
+    root: &Path,
+    today: Option<&str>,
+    tool: &str,
+    arguments: &str,
+) -> (Value, String, bool) {
+    let arguments = one_line(arguments);
+    let request = format!(
+        "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\
+         \"params\":{{\"name\":\"{tool}\",\"arguments\":{arguments}}}}}\n"
+    );
+    let responses = mcp_rpc_at(root, today, &request);
+    let result = responses
+        .first()
+        .and_then(|value| value.get("result"))
+        .unwrap_or_else(|| panic!("no JSON-RPC result for {tool}: {responses:?}"));
+    let is_error = result
+        .get("isError")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let structured = result
+        .get("structuredContent")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let text = result
+        .get("content")
+        .and_then(Value::as_array)
+        .and_then(|content| content.first())
+        .and_then(|item| item.get("text"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    (structured, text, is_error)
+}
+
+/// Runs one `tools/call` in-process and returns `(structuredContent, isError)`.
+pub fn mcp_call(root: &Path, tool: &str, arguments: &str) -> (Value, bool) {
+    let (structured, _, is_error) = mcp_call_raw(root, tool, arguments);
+    (structured, is_error)
 }

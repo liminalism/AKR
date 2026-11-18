@@ -11,7 +11,7 @@
 //! what the write pipeline actually put on disk, because the formatter re-emits every
 //! record and could paraphrase an excerpt without any extraction test noticing.
 
-mod support;
+use crate::support;
 
 use support::Example;
 
@@ -64,9 +64,9 @@ fn a_document_imports_with_one_record_per_heading() {
     assert_eq!(dry.code, 0, "{}", dry.output());
     for line in [
         "4 durable claims",
-        "would propose  sys.requirement.determinism",
+        "would propose  sys.policy.determinism",
         "would propose  sys.decision.snapshot-boundary",
-        "would propose  sys.track.ambient-occlusion",
+        "would propose  sys.policy.ambient-occlusion",
         "would propose  sys.policy.nightly-soak",
         "4 checks to @sys.work.old-notes-import",
         "nothing written (--dry-run)",
@@ -83,8 +83,8 @@ fn a_document_imports_with_one_record_per_heading() {
     let real = import(&example, &[]);
     assert_eq!(real.code, 0, "{}", real.output());
     for line in [
-        "created sys.requirement.determinism/1",
-        "created sys.track.ambient-occlusion/1",
+        "created sys.policy.determinism/1",
+        "created sys.policy.ambient-occlusion/1",
         "created sys.work.old-notes-import/1",
         "akr.lock is now stale",
     ] {
@@ -350,10 +350,7 @@ fn import_works_when_run_from_a_non_workspace_directory() {
     let out = String::from_utf8_lossy(&output.stdout);
     let err = String::from_utf8_lossy(&output.stderr);
     assert_eq!(status, 0, "{out}{err}");
-    assert!(
-        out.contains("created sys.requirement.determinism/1"),
-        "{out}"
-    );
+    assert!(out.contains("created sys.policy.determinism/1"), "{out}");
 }
 
 // -------------------------------------------------------------------------------------

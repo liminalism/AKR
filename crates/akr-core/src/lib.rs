@@ -50,6 +50,7 @@ pub mod papercut;
 pub mod render;
 pub mod resolve;
 pub mod scratch;
+pub mod secrets;
 pub mod source;
 pub mod store;
 pub mod syntax;

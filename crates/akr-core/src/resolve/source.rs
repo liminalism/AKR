@@ -101,7 +101,7 @@ pub struct Workspace {
 /// Returns any I/O error from walking or reading.
 pub fn load_workspace(root: &Path, akr_dir: &Path) -> io::Result<Workspace> {
     let mut paths = Vec::new();
-    collect_akr_files(akr_dir, &mut paths)?;
+    collect_akr_files(akr_dir, akr_dir, &mut paths)?;
     paths.sort();
 
     let mut sources = Vec::new();
@@ -312,7 +312,13 @@ fn strip_bookkeeping(body: &mut Vec<BodyItem>) {
 
 /// The slot names that are lifecycle or completion bookkeeping, never definition.
 fn is_bookkeeping(name: &str) -> bool {
-    matches!(name, "state" | "note" | "verified_by")
+    // D-047 adds `trace` (appended reasoning) and D-048 `passed_at` (a check recording its
+    // own pass): both are written while the work is done and neither changes what the
+    // record requires.
+    matches!(
+        name,
+        "state" | "note" | "verified_by" | "trace" | "passed_at"
+    )
 }
 
 /// Indexes the spans of one record: the revision itself, then each slot and block.
@@ -371,7 +377,7 @@ fn slot_ref(name: &str) -> Option<SlotRef> {
 }
 
 /// Recursively collects `.akr` files, including `akr.lock`.
-fn collect_akr_files(dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
+fn collect_akr_files(dir: &Path, base: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
     if !dir.is_dir() {
         return Ok(());
     }
@@ -382,12 +388,21 @@ fn collect_akr_files(dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
         .collect();
     entries.sort();
     for entry in entries {
+        // Private category is not a source, regardless of the extensions kept inside.
+        // Skip before metadata or traversal so an unavailable private store is harmless.
+        if dir == base
+            && entry
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case("secrets"))
+        {
+            continue;
+        }
         if entry.is_dir() {
             // The index cache is generated and never a source (D-019).
             if entry.file_name().is_some_and(|n| n == "cache") {
                 continue;
             }
-            collect_akr_files(&entry, out)?;
+            collect_akr_files(&entry, base, out)?;
         } else if entry.extension().is_some_and(|e| e == "akr" || e == "lock") {
             out.push(entry);
         }

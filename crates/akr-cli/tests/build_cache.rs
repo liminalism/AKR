@@ -5,9 +5,9 @@
 //! byte `akr build` writes must be identical whether `.akr/cache/facts` was full or
 //! empty — before a commit, and after one the warm cache has to extend over.
 
-mod support;
+use crate::support;
 
-use support::{Example, SAVE_YOUR_SKIN, SYS_TANDEM};
+use support::{Example, SAVE_YOUR_SKIN};
 
 const COMMANDS: &[&[&str]] = &[
     &["check"],
@@ -56,44 +56,40 @@ fn facts_written(example: &Example) -> bool {
 
 #[test]
 fn cold_and_warm_caches_produce_byte_identical_output() {
-    for (fixture, name) in [
-        (&SAVE_YOUR_SKIN, "save-your-skin"),
-        (&SYS_TANDEM, "sys-tandem"),
-    ] {
-        let example = Example::of(fixture, &format!("cache-parity-{name}"));
+    let name = "save-your-skin";
+    let example = Example::of(&SAVE_YOUR_SKIN, &format!("cache-parity-{name}"));
 
-        // As materialised: the examples' history is synthetic and holds no record file.
-        clear(&example);
-        let cold = observe(&example);
-        let warm = observe(&example);
-        assert_eq!(cold, warm, "{name}: warm output differs from cold");
+    // As materialised: the examples' history is synthetic and holds no record file.
+    clear(&example);
+    let cold = observe(&example);
+    let warm = observe(&example);
+    assert_eq!(cold, warm, "{name}: warm output differs from cold");
 
-        // The ledger committed: now every record file has a history to cache. The cache
-        // itself is ignored, as `akr init` arranges, so it never enters history.
-        example.write_file(".gitignore", ".akr/cache/\n");
-        example.git(&["add", "-A"]);
-        example.git(&["commit", "--quiet", "-m", "ledger"]);
-        clear(&example);
-        let cold = observe(&example);
-        assert!(
-            facts_written(&example),
-            "{name}: a cold run fills the cache"
-        );
-        let warm = observe(&example);
-        assert_eq!(cold, warm, "{name}: warm output differs from cold");
+    // The ledger committed: now every record file has a history to cache. The cache
+    // itself is ignored, as `akr init` arranges, so it never enters history.
+    example.write_file(".gitignore", ".akr/cache/\n");
+    example.git(&["add", "-A"]);
+    example.git(&["commit", "--quiet", "-m", "ledger"]);
+    clear(&example);
+    let cold = observe(&example);
+    assert!(
+        facts_written(&example),
+        "{name}: a cold run fills the cache"
+    );
+    let warm = observe(&example);
+    assert_eq!(cold, warm, "{name}: warm output differs from cold");
 
-        // A commit to one record file: the warm cache extends over it.
-        let logged = example.run(&["papercut", "-m", "test", "a cache parity papercut"]);
-        assert_eq!(logged.code, 0, "{name}: {}", logged.output());
-        example.run(&["build"]);
-        example.git(&["add", "-A"]);
-        example.git(&["commit", "--quiet", "-m", "papercut"]);
-        let extended = observe(&example);
-        clear(&example);
-        let rebuilt = observe(&example);
-        assert_eq!(
-            extended, rebuilt,
-            "{name}: output after extending the cache differs from a cold build"
-        );
-    }
+    // A commit to one record file: the warm cache extends over it.
+    let logged = example.run(&["papercut", "-m", "test", "a cache parity papercut"]);
+    assert_eq!(logged.code, 0, "{name}: {}", logged.output());
+    example.run(&["build"]);
+    example.git(&["add", "-A"]);
+    example.git(&["commit", "--quiet", "-m", "papercut"]);
+    let extended = observe(&example);
+    clear(&example);
+    let rebuilt = observe(&example);
+    assert_eq!(
+        extended, rebuilt,
+        "{name}: output after extending the cache differs from a cold build"
+    );
 }

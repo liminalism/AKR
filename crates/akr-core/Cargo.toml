@@ -6,6 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
+autotests = false
 
 [lints]
 workspace = true
@@ -36,3 +37,19 @@ fts5 = []
 [dev-dependencies]
 serde_json = "1"
 rusqlite = { version = "0.40", features = ["bundled"] }
+
+[[test]]
+name = "v_rules"
+path = "tests/v_rules.rs"
+
+[[test]]
+name = "ops_write"
+path = "tests/ops_write.rs"
+
+[[test]]
+name = "git_queries"
+path = "tests/git_queries.rs"
+
+[[test]]
+name = "build_cache"
+path = "tests/build_cache.rs"

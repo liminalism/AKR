@@ -199,6 +199,9 @@ pub fn assemble(session: &Session, budget: Option<usize>) -> Result<Handoff, Env
     } else {
         text.push_str("recent AKR  (no reachable AKR-Work commit)\n");
     }
+    if let Some(line) = hooks_line(session) {
+        text.push_str(&line);
+    }
     if !focus.is_empty() {
         text.push_str("focus\n");
         for record in &focus {
@@ -582,7 +585,7 @@ fn attention_records(
 
 fn verdict_name(verdict: &Verdict) -> &'static str {
     match verdict {
-        Verdict::Satisfied { .. } => "satisfied",
+        Verdict::Satisfied { .. } | Verdict::Passed { .. } => "satisfied",
         Verdict::NoEvidence => "no evidence",
         Verdict::Unresolved => "unresolved evidence",
         Verdict::Failing { .. } => "failing evidence",
@@ -639,4 +642,21 @@ fn refs_json(ids: &[RevisionId], limit: usize) -> Value {
 
 fn short(hash: &str) -> &str {
     hash.get(..8).unwrap_or(hash)
+}
+
+/// One line when this repository has no AKR pre-commit hook, and nothing otherwise.
+///
+/// A hook lives in the git directory and is never cloned, so a fresh checkout of a
+/// workspace that had them has none, silently. The session head is the one place every
+/// session looks; it says so and names the remedy (D-049).
+fn hooks_line(session: &Session) -> Option<String> {
+    let repository = session.repository.as_ref()?;
+    match crate::change::hooks_installed(repository) {
+        Some(false) => Some(
+            "hooks       absent — `akr git install-hooks`; commit with `akr change begin`, \
+             `akr change prepare --staged`, `akr git commit`\n"
+                .to_owned(),
+        ),
+        _ => None,
+    }
 }

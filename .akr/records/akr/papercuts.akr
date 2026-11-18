@@ -244,6 +244,18 @@ record akr.papercut.after-an-immediate-akr-check-akr-77-records-88/2 : papercut 
     created_at 2026-08-11
 }
 
+record akr.papercut.agents-md-and-scripts-agent-section-md-document/1 : papercut {
+    title "AGENTS.md and scripts/agent-section.md document akr start with [--paths…"
+    state verified
+    statement """
+        AGENTS.md and scripts/agent-section.md document akr start with [--paths glob...], which implies space-separated globs after a single --paths, but the CLI parser rejects positional args after --paths with AKR-C002 and requires repeated --paths or comma separation.
+        """
+    observed_at git:cfb4289a5c92b9e7ee1863195cb503db21c0320d
+    about "akr"
+    author "gemini-4-argon-high"
+    created_at 2026-11-18
+}
+
 record akr.papercut.agents-md-maps-knowledge-propose-to-akr-propose/1 : papercut {
     title "AGENTS.md maps knowledge.propose to 'akr propose <key> --from <file>',…"
     state superseded
@@ -3060,6 +3072,18 @@ record akr.papercut.i-tried-assuming-get-supported-a-source/2 : papercut {
     created_at 2026-08-09
 }
 
+record akr.papercut.in-crates-akr-gui-src-main-rs-two-unit-tests/1 : papercut {
+    title "In crates/akr-gui/src/main.rs, two unit tests seeded tabs via…"
+    state verified
+    statement """
+        In crates/akr-gui/src/main.rs, two unit tests seeded tabs via Path::canonicalize() (which retains the \\?\ prefix on Windows) while open_workspace normalized paths via workspace_root() (which strips \\?\), causing tab-deduplication assertions to fail on Windows until the tests used workspace_root().
+        """
+    observed_at git:cfb4289a5c92b9e7ee1863195cb503db21c0320d
+    about "akr"
+    author "gemini-4-argon-high"
+    created_at 2026-11-18
+}
+
 record akr.papercut.investigating-an-agent-report-that-akr/1 : papercut {
     title "Investigating an agent report that AKR knowledge.* tools were…"
     state superseded
@@ -3596,6 +3620,18 @@ record akr.papercut.papercut-baseline-reset-on-2026-09-18/1 : papercut {
     created_at 2026-09-18
 }
 
+record akr.papercut.private-citation-implementation-proposal-needed/1 : papercut {
+    title "Private citation implementation: proposal needed a retry because work…"
+    state verified
+    statement """
+        Private citation implementation: proposal needed a retry because work uses intent rather than objective; the valid-slot error was useful. A batched inspection also failed before running because PowerShell rejects Bash brace-expanded path lists.
+        """
+    observed_at git:cfb4289a5c92b9e7ee1863195cb503db21c0320d
+    about "akr"
+    author "codex"
+    created_at 2026-11-10
+}
+
 record akr.papercut.release-verification-after-a-commit-fails-akr/1 : papercut {
     title "Release verification after a commit fails akr build --check solely…"
     state superseded
@@ -3890,6 +3926,18 @@ record akr.papercut.v-105-akr-g024-is-skipped-silently-whenever-any/2 : papercut
     supersedes [ @akr.papercut.v-105-akr-g024-is-skipped-silently-whenever-any/1 ]
     author "claude"
     created_at 2026-10-22
+}
+
+record akr.papercut.verification-on-windows-cargo-succeeds-but/1 : papercut {
+    title "0.6.5 verification on Windows: cargo succeeds but repeatedly cannot…"
+    state verified
+    statement """
+        0.6.5 verification on Windows: cargo succeeds but repeatedly cannot finalize incremental session directories (Access is denied). Strict Clippy also stops on two existing lints in hash/mod.rs and ops/mod.rs with this Rust toolchain; allowing only those lints makes all workspace targets pass.
+        """
+    observed_at git:cfb4289a5c92b9e7ee1863195cb503db21c0320d
+    about "rust"
+    author "codex"
+    created_at 2026-11-10
 }
 
 record akr.papercut.while-beginning-a-change-transaction-the/1 : papercut {

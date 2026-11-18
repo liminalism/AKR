@@ -52,6 +52,13 @@ against a declared section set (§10) rather than adding a case to the renderer.
 
 These hold in every view, and they are what make the output diffable.
 
+**Private citations render as `[*]`.** Inline `{{secret:<32 lowercase hex digits>}}`
+tokens are redacted without opening private storage, even on developer machines. No
+generated public view expands private values or links to the secret directory. This is
+separate from the public `@key` reference system. Canonical source retrieval preserves
+opaque citation tokens; explicit local resolution is described in
+[private secrets](18-private-secrets.md).
+
 **Headings come from `title`.** Every record carries a required `title` slot (D-012), and
 that string, verbatim, is the heading. Nothing is derived from prose, truncated from a
 statement, or synthesised. Two selected records with the same title in one view produce
@@ -84,6 +91,12 @@ order is total ([`06-compiler-pipeline.md`](06-compiler-pipeline.md) §11).
 
 **Empty sections are printed with `_(none)_`.** A missing heading would be ambiguous
 between "nothing here" and "not generated".
+
+**The one exception is a retired kind (D-046).** The `Terms`, `Constraints`,
+`Requirements` and `Assessments` sections of `CURRENT-STATE.md`, and the `Tracks` section
+and table of `ROADMAP.md`, are printed only when the ledger holds such records. A project
+that never wrote a `term` is not told that it has none; one that did keeps the section
+exactly as it was.
 
 **A terminal planning record renders its `note` slot.** `work`, `milestone` and `track`
 carry an optional `note` (D-026): free-form operator commentary with no validation

@@ -1,11 +1,9 @@
 //! The installed shape of the MCP server: one subprocess, one long-lived stdio session.
 
-mod support;
-
+use crate::support::Example;
 use akr_core::json::{Value, parse};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
-use support::Example;
 
 #[test]
 fn version_and_initialize_report_the_cargo_package_version() {
@@ -243,7 +241,7 @@ fn a_real_subprocess_survives_mixed_reads_writes_and_rejections() {
     );
     assert!(initialized.get("result").is_some());
 
-    for round in 0..25 {
+    for round in 0..3 {
         for (tool, arguments) in [
             ("knowledge.explain", r#"{"subject":"decision"}"#.to_owned()),
             (

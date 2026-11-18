@@ -122,6 +122,9 @@ pub struct Check {
     pub command: Option<String>,
     /// Evidence records that satisfy it. The relation runs this way only.
     pub verified_by: Vec<Reference>,
+    /// The commit at which a `command` check was run and passed (D-048): the check
+    /// recording its own pass, in place of an evidence record that would restate it.
+    pub passed_at: Option<Commit>,
 }
 
 /// What "done" means for a planning record.

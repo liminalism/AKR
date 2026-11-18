@@ -1,7 +1,7 @@
 [package]
 name = "akr-gui"
 description = "Read-only native desktop review workbench for AKR ledgers."
-version = "0.7.0"
+version = "0.8.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -28,13 +28,13 @@ path = "src/main.rs"
 default = ["fts5"]
 fts5 = ["akr-cli/fts5"]
 
-# Presentation is pixelkit: software rasterizer, TrueType text, immediate-mode
+# Presentation is liminalkit: software rasterizer, TrueType text, immediate-mode
 # widgets, and the winit/softbuffer window host. Pinned to a revision so
 # every checkout builds the same pixels.
 [dependencies]
 akr-cli = { path = "../akr-cli", default-features = false }
-pixelkit-raster = { git = "https://github.com/liminalism/pixelkit.git", rev = "614c9c6e84ce3cd0bc6c81988f636b493b30a497" }
-pixelkit-text = { git = "https://github.com/liminalism/pixelkit.git", rev = "614c9c6e84ce3cd0bc6c81988f636b493b30a497" }
-pixelkit-shell = { git = "https://github.com/liminalism/pixelkit.git", rev = "614c9c6e84ce3cd0bc6c81988f636b493b30a497" }
-pixelkit-ui = { git = "https://github.com/liminalism/pixelkit.git", rev = "614c9c6e84ce3cd0bc6c81988f636b493b30a497" }
-pixelkit-windowing = { git = "https://github.com/liminalism/pixelkit.git", rev = "614c9c6e84ce3cd0bc6c81988f636b493b30a497" }
+liminalkit-raster = { git = "https://github.com/liminalism/liminalkit.git", rev = "b60e4cea168f51e082e48d0058cef6aa9c2b94da" }
+liminalkit-text = { git = "https://github.com/liminalism/liminalkit.git", rev = "b60e4cea168f51e082e48d0058cef6aa9c2b94da" }
+liminalkit-shell = { git = "https://github.com/liminalism/liminalkit.git", rev = "b60e4cea168f51e082e48d0058cef6aa9c2b94da" }
+liminalkit-ui = { git = "https://github.com/liminalism/liminalkit.git", rev = "b60e4cea168f51e082e48d0058cef6aa9c2b94da" }
+liminalkit-windowing = { git = "https://github.com/liminalism/liminalkit.git", rev = "b60e4cea168f51e082e48d0058cef6aa9c2b94da" }

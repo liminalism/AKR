@@ -6,6 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
+autotests = false
 
 [lints]
 workspace = true
@@ -17,6 +18,14 @@ path = "src/lib.rs"
 [[bin]]
 name = "akr"
 path = "src/main.rs"
+
+[[test]]
+name = "writes"
+path = "tests/writes.rs"
+
+[[test]]
+name = "search_degraded"
+path = "tests/search_degraded.rs"
 
 # No runtime dependencies of its own. Argument parsing and JSON writing are both small
 # enough to own outright, and `docs/13-implementation-roadmap.md` §4 keeps the dependency

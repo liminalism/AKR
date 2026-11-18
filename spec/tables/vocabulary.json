@@ -1,6 +1,6 @@
 {
-  "$comment": "AKR frozen vocabulary spine. Machine-readable form of decisions D-001, D-002, D-004, D-005, D-010, D-012, D-013, D-016 and D-017 in docs/DECISIONS.md. Human-readable tables in docs/02-data-model.md are checked against this file by tools/check-design.py. This file is authoritative for names; the prose documents are authoritative for meaning.",
-  "vocabulary_version": "0.2",
+  "$comment": "AKR frozen vocabulary spine. Machine-readable form of decisions D-001, D-002, D-004, D-005, D-010, D-012, D-013, D-016, D-017, D-046, D-047 and D-048 in docs/DECISIONS.md. Human-readable tables in docs/02-data-model.md are checked against this file by tools/check-design.py. This file is authoritative for names; the prose documents are authoritative for meaning.",
+  "vocabulary_version": "0.3",
   "grammar_version": "0.1",
 
   "value_types": {
@@ -158,6 +158,8 @@
   "kinds": {
     "term": {
       "class": "normative",
+      "retired": true,
+      "folds_into": "policy",
       "purpose": "Fixes the project's meaning for a word that would otherwise drift.",
       "content_slots": [
         {"name": "definition", "type": "prose", "required": true},
@@ -166,6 +168,8 @@
     },
     "requirement": {
       "class": "normative",
+      "retired": true,
+      "folds_into": "policy",
       "purpose": "States something the delivered system must do or must be.",
       "content_slots": [
         {"name": "statement", "type": "prose", "required": true},
@@ -174,16 +178,24 @@
     },
     "policy": {
       "class": "normative",
-      "purpose": "States a standing rule about how the project works, not about what it delivers.",
+      "purpose": "States a standing rule, requirement or limit the project must respect (D-046).",
       "content_slots": [
-        {"name": "rule", "type": "prose", "required": true},
-        {"name": "rationale", "type": "prose", "required": false},
+        {"name": "rule", "type": "prose", "required": true,
+         "doc": "The standing rule, requirement or limit, stated so a reader can tell whether a change breaks it."},
+        {"name": "rationale", "type": "prose", "required": false,
+         "doc": "Why the rule exists: what it protects, and what was seen without it."},
         {"name": "exceptions", "type": "ref[]", "required": false,
-         "range": ["milestone", "track", "work", "constraint"]}
+         "range": ["milestone", "track", "work", "constraint", "policy"]},
+        {"name": "measure", "type": "string", "required": false,
+         "doc": "The limit as a number or a testable condition, when there is one."},
+        {"name": "aliases", "type": "string[]", "required": false,
+         "doc": "Other words a reader might search for this rule, or for the word it defines."}
       ]
     },
     "constraint": {
       "class": "normative",
+      "retired": true,
+      "folds_into": "policy",
       "purpose": "States a limit the project must respect but did not choose.",
       "content_slots": [
         {"name": "statement", "type": "prose", "required": true},
@@ -195,21 +207,28 @@
       "class": "normative",
       "purpose": "Records a choice made between alternatives, and what follows from it.",
       "content_slots": [
-        {"name": "decision", "type": "prose", "required": true},
-        {"name": "context", "type": "prose", "required": false},
-        {"name": "consequences", "type": "prose", "required": false}
+        {"name": "decision", "type": "prose", "required": true,
+         "doc": "The choice, in a sentence or two. Not a list of the files it changed."},
+        {"name": "context", "type": "prose", "required": false,
+         "doc": "What forced the choice: the measurement, failure or ruling, and the alternatives rejected and why."},
+        {"name": "consequences", "type": "prose", "required": false,
+         "doc": "What follows: the trade-off accepted, what must not be undone, what was deliberately left out."}
       ]
     },
     "observation": {
       "class": "empirical",
-      "purpose": "Records what was found to be true of the system at a specific commit.",
+      "purpose": "Records what was found to be true of the system at a specific commit, or a judgement drawn from such findings.",
       "content_slots": [
-        {"name": "statement", "type": "prose", "required": true},
+        {"name": "statement", "type": "prose", "required": true,
+         "doc": "What was found, with the numbers, and why the obvious explanation or fix is wrong when it is."},
         {"name": "observed_at", "type": "commit", "required": true},
         {"name": "method", "type": "enum", "required": false,
          "values": ["manual", "command", "instrumented", "observation"]},
         {"name": "watches", "type": "glob[]", "required": false},
-        {"name": "review_after", "type": "date", "required": false}
+        {"name": "review_after", "type": "date", "required": false},
+        {"name": "confidence", "type": "enum", "required": false,
+         "values": ["low", "medium", "high"],
+         "doc": "How far the finding can be trusted, when it is a judgement rather than a measurement."}
       ]
     },
     "evidence": {
@@ -223,12 +242,15 @@
         {"name": "observed_at", "type": "commit", "required": true},
         {"name": "command", "type": "string", "required": false},
         {"name": "artifact", "type": "string", "required": false},
-        {"name": "summary", "type": "prose", "required": false}
+        {"name": "summary", "type": "prose", "required": false,
+         "doc": "What was observed, when the title does not already say it. Omit it rather than repeat the title."}
       ],
       "note": "Evidence never declares what it verifies; verified_by runs from the verified thing to the evidence (D-016)."
     },
     "assessment": {
       "class": "empirical",
+      "retired": true,
+      "folds_into": "observation",
       "purpose": "Records a judgement drawn from observations, distinct from the observations themselves.",
       "content_slots": [
         {"name": "statement", "type": "prose", "required": true},
@@ -256,7 +278,8 @@
       "class": "planning",
       "purpose": "A named point at which a defined set of acceptance checks passes.",
       "content_slots": [
-        {"name": "intent", "type": "prose", "required": true},
+        {"name": "intent", "type": "prose", "required": true,
+         "doc": "The outcome wanted and what makes it necessary. Not a list of files or functions: the diff shows those."},
         {"name": "target", "type": "date", "required": false},
         {"name": "note", "type": "prose", "required": false,
          "doc": "Free-form operator commentary. Informational only; no validation consequence. Rendered by views for records in terminal states (D-026)."}
@@ -267,15 +290,20 @@
       "class": "planning",
       "purpose": "A unit of intended change. A work record designated plan_of_record is a plan (D-001).",
       "content_slots": [
-        {"name": "intent", "type": "prose", "required": true},
+        {"name": "intent", "type": "prose", "required": true,
+         "doc": "The outcome wanted and what makes it necessary. Not a list of files or functions: the diff shows those."},
         {"name": "target", "type": "date", "required": false},
         {"name": "note", "type": "prose", "required": false,
-         "doc": "Free-form operator commentary. Informational only; no validation consequence. Rendered by views for records in terminal states (D-026)."}
+         "doc": "Free-form operator commentary. Informational only; no validation consequence. Rendered by views for records in terminal states (D-026)."},
+        {"name": "trace", "type": "string[]", "required": false,
+         "doc": "Reasoning steps, one short line each, appended as the work proceeds: why this approach, what the code as found forced, what was tried and dropped. Aim for 25 words an entry; 40 is the limit. Append with `akr trace`; never restate the diff (D-047)."}
       ],
       "optional_blocks": ["acceptance", "disposition"]
     },
     "track": {
       "class": "planning",
+      "retired": true,
+      "folds_into": "milestone",
       "purpose": "Standing, non-terminating work that milestones do not contain.",
       "content_slots": [
         {"name": "intent", "type": "prose", "required": true},
@@ -322,9 +350,11 @@
         {"name": "method", "type": "enum", "required": true,
          "values": ["manual", "command", "observation"]},
         {"name": "command", "type": "string", "required": false},
-        {"name": "verified_by", "type": "ref[]", "required": false, "range": ["evidence"]}
+        {"name": "verified_by", "type": "ref[]", "required": false, "range": ["evidence"]},
+        {"name": "passed_at", "type": "commit", "required": false,
+         "doc": "The commit at which a command check was run and passed; an alternative to an evidence record (D-048)."}
       ],
-      "doc": "Satisfied when a referenced evidence record has result pass and an observed_at commit descended from the work item's last content change (D-016)."
+      "doc": "Satisfied when a referenced evidence record has result pass and an observed_at commit descended from the work item's last content change (D-016), or, for a command check, when passed_at names such a commit (D-048)."
     },
     "source": {
       "head": null,
@@ -361,7 +391,7 @@
 
   "relations": {
     "supported_by": {
-      "domain": ["term", "requirement", "policy", "constraint", "decision", "assessment", "milestone", "work", "track", "question"],
+      "domain": ["term", "requirement", "policy", "constraint", "decision", "observation", "assessment", "milestone", "work", "track", "question"],
       "range": ["observation", "evidence", "assessment"],
       "cardinality": "many",
       "acyclic": true,
@@ -380,7 +410,7 @@
     },
     "supersedes": {
       "domain": "any",
-      "range": "same kind as domain",
+      "range": "same kind as domain, or a retired kind that folds into it (D-046)",
       "cardinality": "many",
       "acyclic": true,
       "propagates_staleness": false,
@@ -425,7 +455,7 @@
       "enforced_by": "V-015"
     },
     "part_of": {
-      "domain": ["work", "milestone", "requirement", "question"],
+      "domain": ["work", "milestone", "requirement", "policy", "question"],
       "range": ["milestone", "track", "work"],
       "cardinality": "one",
       "acyclic": true,
@@ -443,7 +473,7 @@
       "enforced_by": "V-016"
     },
     "blocks": {
-      "domain": ["question", "work", "observation", "constraint"],
+      "domain": ["question", "work", "observation", "constraint", "policy"],
       "range": ["milestone", "work", "decision"],
       "cardinality": "many",
       "acyclic": true,
@@ -452,7 +482,7 @@
       "enforced_by": "V-015"
     },
     "verified_by": {
-      "domain": ["milestone", "work", "requirement", "assessment", "observation", "check"],
+      "domain": ["milestone", "work", "requirement", "policy", "assessment", "observation", "check"],
       "range": ["evidence"],
       "cardinality": "many",
       "acyclic": true,
@@ -473,7 +503,7 @@
 
   "scope_terms": [
     {"form": "all", "doc": "Project-wide. Overlaps everything."},
-    {"form": "ref <ref>", "range": ["milestone", "track", "constraint"],
+    {"form": "ref <ref>", "range": ["milestone", "track", "constraint", "policy"],
      "doc": "Organisational scope. Two ref terms overlap if equal or connected by part_of."},
     {"form": "path <glob>",
      "doc": "Code scope. Two path terms overlap if their literal prefixes are prefix-comparable, ** matching any run of segments."}
@@ -504,7 +534,8 @@
     "V-022": {"title": "A verified observation has provenance", "stage": "resolve", "code": "AKR-R032", "doc": "docs/05-validation-rules.md"},
     "V-023": {"title": "A declared contradiction is resolved or acknowledged", "stage": "resolve", "code": "AKR-R041", "doc": "docs/05-validation-rules.md"},
     "V-024": {"title": "A sealed revision matches its content hash in akr.lock", "stage": "resolve", "code": "AKR-R051", "doc": "docs/05-validation-rules.md"},
-    "V-025": {"title": "An evidence artifact is cited from a durable path", "stage": "type", "code": "AKR-T023", "doc": "docs/05-validation-rules.md"}
+    "V-025": {"title": "An evidence artifact is cited from a durable path", "stage": "type", "code": "AKR-T023", "doc": "docs/05-validation-rules.md"},
+    "V-026": {"title": "A trace entry is at most forty words", "stage": "type", "code": "AKR-T024", "doc": "docs/05-validation-rules.md"}
   },
 
   "rule_id_ranges": {

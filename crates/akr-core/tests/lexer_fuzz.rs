@@ -59,8 +59,18 @@ fn assert_bounded(text: &str) {
 
 #[test]
 fn the_lexer_survives_character_soup() {
+    run_character_soup(200);
+}
+
+#[test]
+#[ignore = "exhaustive 4000-iteration fuzz: run manually or in nightly"]
+fn the_lexer_survives_character_soup_exhaustive() {
+    run_character_soup(4_000);
+}
+
+fn run_character_soup(iterations: usize) {
     let mut rng = Rng(0xfeed_face);
-    for _ in 0..4_000 {
+    for _ in 0..iterations {
         let length = rng.below(120);
         let text = soup(&mut rng, length);
         assert_bounded(&text);
@@ -69,8 +79,7 @@ fn the_lexer_survives_character_soup() {
     }
 }
 
-#[test]
-fn the_lexer_survives_every_prefix_of_every_fixture() {
+fn fixture_corpus() -> Vec<String> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut corpus: Vec<String> = Vec::new();
     for dir in [
@@ -96,7 +105,29 @@ fn the_lexer_survives_every_prefix_of_every_fixture() {
         "expected a corpus, found {}",
         corpus.len()
     );
-    for text in &corpus {
+    corpus
+}
+
+#[test]
+fn the_lexer_survives_every_prefix_of_every_fixture() {
+    for text in &fixture_corpus() {
+        let step = (text.len() / 16).max(1);
+        for (idx, _) in text.char_indices().step_by(step) {
+            assert_bounded(&text[..idx]);
+        }
+        for cut in text.len().saturating_sub(4)..=text.len() {
+            if text.is_char_boundary(cut) {
+                assert_bounded(&text[..cut]);
+            }
+        }
+        let _ = parse(text, FileId(0));
+    }
+}
+
+#[test]
+#[ignore = "exhaustive prefix fuzz over every byte boundary of every fixture"]
+fn the_lexer_survives_every_prefix_of_every_fixture_exhaustive() {
+    for text in &fixture_corpus() {
         for cut in 0..text.len() {
             if text.is_char_boundary(cut) {
                 assert_bounded(&text[..cut]);

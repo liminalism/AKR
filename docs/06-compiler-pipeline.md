@@ -68,6 +68,12 @@ opt-in exception and it raises `AKR-G041`, which reports an unmet command-line r
 a recursive directory walk whose entries are sorted by full path with a plain byte
 comparison, so file order is the same on every filesystem.
 
+The local-only `.akr/secrets/` category is always excluded before traversal, regardless
+of filenames or extensions inside it. Private bytes never enter parsing, hashes, locks,
+indexes or public compiler diagnostics, and absence of the directory is normal. Secret
+citations in public text do not require private targets to exist; see
+[private secrets](18-private-secrets.md).
+
 **Output.** A concrete syntax tree per file. Every node carries a byte-offset span into
 its source file; spans are converted to 1-based line and column only at render time.
 Comments are captured as trivia and attached per D-006 — leading trivia to the next item

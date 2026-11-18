@@ -386,6 +386,7 @@ pub fn acceptance_of(checks: &[(&str, CheckMethod)]) -> Acceptance {
                 method: *method,
                 command: None,
                 verified_by: Vec::new(),
+                passed_at: None,
             })
             .collect(),
     }

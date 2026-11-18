@@ -1262,6 +1262,76 @@ record akr.evidence.post-commit-validation-suite/1 : evidence {
         """
 }
 
+record akr.evidence.private-secret-clippy/1 : evidence {
+    title "All workspace targets pass Clippy with only two pre-existing lint allowances: chunks_exact_to_as_chunks in hash/mod.rs and items_after_test_module in ops/mod.rs. Unqualified -D warnings stops on those unchanged lints. Windows also reports non-fatal Access denied when finalizing some incremental cache directories."
+    state verified
+    result pass
+    method command
+    observed_at git:cfb4289a5c92b9e7ee1863195cb503db21c0320d
+    command "cargo clippy --workspace --all-targets -- -D warnings -A clippy::chunks_exact_to_as_chunks -A clippy::items_after_test_module"
+    summary """
+        All workspace targets pass Clippy with only two pre-existing lint allowances: chunks_exact_to_as_chunks in hash/mod.rs and items_after_test_module in ops/mod.rs. Unqualified -D warnings stops on those unchanged lints. Windows also reports non-fatal Access denied when finalizing some incremental cache directories.
+        Capture ".agent/scratch/private-secrets-clippy.log": 1170 bytes; sha256:6d40ede32286f1f3142f34500ea37c7e23fb35129e32a2c9e697f1b54f292da5 (identity only; raw capture is not a retained artifact).
+        """
+    author "dk"
+}
+
+record akr.evidence.private-secret-core-suite/1 : evidence {
+    title "Windows, uncommitted 0.6.5 tree on cfb4289a: 111 passed, 0 failed, 1 pre-existing ignored test. Four new secret tests cover opaque immutable identities, exact Unicode/multiline values, redaction without storage reads, missing/corrupt entries, compiler exclusion independent of file extensions, public namespaces named secrets, private input rejection, repaired ignore files and heading anchors. Unix permission/link assertions are cfg(unix) and were not executed on Windows."
+    state verified
+    result pass
+    method command
+    observed_at git:cfb4289a5c92b9e7ee1863195cb503db21c0320d
+    command "cargo test -p akr-core --test secrets --test render_roadmap --test resolved_model --test ops_write --test ops_atomicity --test ops_concurrency"
+    summary """
+        Windows, uncommitted 0.6.5 tree on cfb4289a: 111 passed, 0 failed, 1 pre-existing ignored test. Four new secret tests cover opaque immutable identities, exact Unicode/multiline values, redaction without storage reads, missing/corrupt entries, compiler exclusion independent of file extensions, public namespaces named secrets, private input rejection, repaired ignore files and heading anchors. Unix permission/link assertions are cfg(unix) and were not executed on Windows.
+        Capture ".agent/scratch/private-secrets-core-tests.log": 8702 bytes; sha256:d6d25d5a890ab162a065e3e2e8a216c1206e4f0373a968c2f8f16a09bfd8e3d4 (identity only; raw capture is not a retained artifact).
+        """
+    author "dk"
+}
+
+record akr.evidence.private-secret-interface-suite/1 : evidence {
+    title "Windows, final uncommitted 0.6.5 tree on cfb4289a: 4 passed, 0 failed. CLI creates and cites a local value, public reads/context/search/views/handoffs redact, canonical retrieval retains tokens, explicit local reveal works, removing private data leaves identical views and a clean check. Public records/cache/handoffs/views and a git archive after git add -A contain no synthetic private bytes. Existing-workspace internal ignores protect the store; force-added entries and public import/format/propose/handoff input routes are refused. MCP aliases, schemas, read surface, rootless and normal handshakes, default redaction, strict reveal booleans and missing-value fallback pass."
+    state verified
+    result pass
+    method command
+    observed_at git:cfb4289a5c92b9e7ee1863195cb503db21c0320d
+    command "cargo test -p akr-cli -p akr-mcp --test secrets"
+    summary """
+        Windows, final uncommitted 0.6.5 tree on cfb4289a: 4 passed, 0 failed. CLI creates and cites a local value, public reads/context/search/views/handoffs redact, canonical retrieval retains tokens, explicit local reveal works, removing private data leaves identical views and a clean check. Public records/cache/handoffs/views and a git archive after git add -A contain no synthetic private bytes. Existing-workspace internal ignores protect the store; force-added entries and public import/format/propose/handoff input routes are refused. MCP aliases, schemas, read surface, rootless and normal handshakes, default redaction, strict reveal booleans and missing-value fallback pass.
+        Capture ".agent/scratch/private-secrets-interface-tests.log": 1212 bytes; sha256:11d58b6c370ea6740f3df76b637cf3fba046b86e90f1dbe7a02b28cc39324add (identity only; raw capture is not a retained artifact).
+        """
+    author "dk"
+}
+
+record akr.evidence.private-secret-release-checks/1 : evidence {
+    title "Windows, final uncommitted tree: all 9 transcript tests pass after refreshing 0.6.5 version stamps and existing eight-view output expectations. target/debug/akr and akr-mcp both report 0.6.5. cargo fmt --all -- --check, python tools/check-design.py and git diff --check also pass."
+    state verified
+    result pass
+    method command
+    observed_at git:cfb4289a5c92b9e7ee1863195cb503db21c0320d
+    command "cargo test -p akr-cli --test transcripts"
+    summary """
+        Windows, final uncommitted tree: all 9 transcript tests pass after refreshing 0.6.5 version stamps and existing eight-view output expectations. target/debug/akr and akr-mcp both report 0.6.5. cargo fmt --all -- --check, python tools/check-design.py and git diff --check also pass.
+        Capture ".agent/scratch/private-secrets-transcripts-tests.log": 1032 bytes; sha256:f6427465baa0d33da029eae4998ad54227c5e0d1a703590d7251c1e2d6b77e8a (identity only; raw capture is not a retained artifact).
+        """
+    author "dk"
+}
+
+record akr.evidence.private-secret-workspace-baseline/1 : evidence {
+    title "Initial 0.6.5 workspace run before final edge-case refinements: 905 passed, 6 failed, 1 ignored. The six match the prior mcp-workspace-per-call-suite evidence: removing_one_untracked_declaration_preserves_the_rest_of_the_configuration, every_transcript_is_reproduced_by_the_binary, cached_last_changes_match_the_reference_walk_across_a_rough_history, two GUI path-opening tests and knowledge_impact_and_akr_impact_agree_in_both_modes. The stale transcript expectations were then refreshed and all nine transcript tests passed; five unrelated existing failures remain. Final privacy/interfaces/rendering/resolution/write-path runs are recorded separately."
+    state verified
+    result fail
+    method command
+    observed_at git:cfb4289a5c92b9e7ee1863195cb503db21c0320d
+    command "cargo test --workspace --no-fail-fast"
+    summary """
+        Initial 0.6.5 workspace run before final edge-case refinements: 905 passed, 6 failed, 1 ignored. The six match the prior mcp-workspace-per-call-suite evidence: removing_one_untracked_declaration_preserves_the_rest_of_the_configuration, every_transcript_is_reproduced_by_the_binary, cached_last_changes_match_the_reference_walk_across_a_rough_history, two GUI path-opening tests and knowledge_impact_and_akr_impact_agree_in_both_modes. The stale transcript expectations were then refreshed and all nine transcript tests passed; five unrelated existing failures remain. Final privacy/interfaces/rendering/resolution/write-path runs are recorded separately.
+        Capture ".agent/scratch/private-secrets-workspace-tests.log": 79401 bytes; sha256:f296c449c2eb1826efbe6c4961bc5bd5c4423d52f701c3b573aff9d1de05ca5e (identity only; raw capture is not a retained artifact).
+        """
+    author "dk"
+}
+
 record akr.evidence.relation-fixes-20260908/1 : evidence {
     title "The relation fixes pass, and the new check found two contradictory live decisions in the field"
     state verified

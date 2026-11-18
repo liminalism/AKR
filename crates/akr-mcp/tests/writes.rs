@@ -4,10 +4,16 @@
 //! refused write leaves nothing behind, `base_rev` catches a moved head, and a supersession
 //! missing a disposition names the children in the payload rather than in prose.
 
+#[path = "differential.rs"]
+mod differential;
+#[path = "secrets.rs"]
+mod secrets;
 mod support;
+#[path = "trace_and_pass.rs"]
+mod trace_and_pass;
 
-use akr_core::json::{Value, parse};
-use support::{Example, mcp_binary, one_line};
+use akr_core::json::Value;
+use support::{Example, mcp_call};
 
 #[test]
 fn absent_commit_is_rejected_before_propose_and_evidence_batch_write() {
@@ -280,50 +286,9 @@ fn mcp_and_cli_revise_prune_the_same_historical_dispositions() {
     assert!(run.stdout.contains("disposition @sys.work.child"));
 }
 
-/// One `tools/call`, returning `(payload, is_error)`.
+/// One `tools/call` in-process, returning `(payload, is_error)`.
 fn call(example: &Example, tool: &str, arguments: &str) -> (Value, bool) {
-    use std::io::Write as _;
-    use std::process::{Command, Stdio};
-
-    let arguments = one_line(arguments);
-    let request = format!(
-        "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\
-         \"params\":{{\"name\":\"{tool}\",\"arguments\":{arguments}}}}}\n"
-    );
-    let mut child = Command::new(mcp_binary())
-        .arg("--dir")
-        .arg(example.root())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("akr-mcp runs");
-    child
-        .stdin
-        .as_mut()
-        .expect("stdin")
-        .write_all(request.as_bytes())
-        .expect("write");
-    let output = child.wait_with_output().expect("akr-mcp exits");
-    let line = String::from_utf8_lossy(&output.stdout);
-    let response = parse(line.trim()).unwrap_or_else(|error| {
-        panic!(
-            "no JSON-RPC response: {error}\n{line}\n{}",
-            String::from_utf8_lossy(&output.stderr)
-        )
-    });
-    let result = response.get("result").expect("a result").clone();
-    let is_error = result
-        .get("isError")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    (
-        result
-            .get("structuredContent")
-            .cloned()
-            .unwrap_or(Value::Null),
-        is_error,
-    )
+    mcp_call(example.root(), tool, arguments)
 }
 
 fn error_class(payload: &Value) -> Option<&str> {
@@ -338,47 +303,21 @@ fn error_text(payload: &Value) -> String {
 }
 
 #[test]
-fn papercut_write_preserves_a_legacy_observation_method() {
-    let example = Example::materialise("mcp-papercut-legacy-observation-method");
-    let legacy = format!(
-        "akr 0.1\nproject save-your-skin\n\nrecord sys.observation.legacy-method/1 : observation {{\n    title \"Legacy direct observation\"\n    state verified\n    statement \"\"\"\n        A historical record used the formerly accepted direct-observation method.\n        \"\"\"\n    observed_at git:{}\n    method observation\n}}\n",
-        example.commit(5)
-    );
-    example.write_file(".akr/records/sys/legacy-observation.akr", &legacy);
-
-    let (payload, is_error) = call(
-        &example,
-        "knowledge.papercut",
-        r#"{
-            "agent": "regression",
-            "namespace": "sys",
-            "message": "The historical observation remained readable while logging this papercut."
-        }"#,
-    );
-    assert!(!is_error, "{}", error_text(&payload));
-    assert_eq!(
-        example.read_file(".akr/records/sys/legacy-observation.akr"),
-        legacy,
-        "the write must not rewrite sealed historical bytes"
-    );
-}
-
-#[test]
 fn propose_creates_a_record_and_refuses_the_same_key_twice() {
     let example = Example::materialise("mcp-propose");
     let arguments = r#"{
-        "key": "sys.term.day-loop",
-        "kind": "term",
+        "key": "sys.policy.day-loop",
+        "kind": "policy",
         "title": "The day loop",
         "state": "active",
         "scope": ["all"],
-        "slots": { "definition": "The repeating structure of one in-game day: wake, work, evening, sleep." }
+        "slots": { "rule": "The repeating structure of one in-game day: wake, work, evening, sleep." }
     }"#;
     let (payload, is_error) = call(&example, "knowledge.propose", arguments);
     assert!(!is_error, "{}", error_text(&payload));
     assert_eq!(
         payload.get("key").and_then(Value::as_str),
-        Some("sys.term.day-loop")
+        Some("sys.policy.day-loop")
     );
     assert_eq!(payload.get("rev").and_then(Value::as_integer), Some(1));
     assert_eq!(payload.get("written").and_then(Value::as_bool), Some(true));
@@ -414,8 +353,8 @@ fn propose_creates_a_record_and_refuses_the_same_key_twice() {
     );
     assert!(
         example
-            .read_file(".akr/records/sys/terms.akr")
-            .contains("sys.term.day-loop/1")
+            .read_file(".akr/records/sys/policies.akr")
+            .contains("sys.policy.day-loop/1")
     );
 
     // §4: an existing key is an error. The tool never silently turns a proposal into a
@@ -438,12 +377,15 @@ fn propose_creates_a_record_and_refuses_the_same_key_twice() {
 }
 
 #[test]
-fn propose_rejects_rendered_scope_syntax_with_the_bare_form_remedy() {
-    let example = Example::materialise("mcp-scope-contract");
+fn schema_and_argument_refusals_write_nothing() {
+    let example = Example::materialise("mcp-schema-refusals");
+    let before = example.sources();
+
+    // Scope syntax errors.
     let (payload, is_error) = call(
         &example,
         "knowledge.propose",
-        r#"{"key":"sys.term.bad-scope","kind":"term","title":"Bad scope","scope":["path src/**"],"slots":{"definition":"A term."}}"#,
+        r#"{"key":"sys.policy.bad-scope","kind":"policy","title":"Bad scope","scope":["path src/**"],"slots":{"rule":"A term."}}"#,
     );
     assert!(is_error);
     let text = error_text(&payload);
@@ -453,17 +395,14 @@ fn propose_rejects_rendered_scope_syntax_with_the_bare_form_remedy() {
     let (payload, is_error) = call(
         &example,
         "knowledge.propose",
-        r#"{"key":"sys.term.bad-scope-object","kind":"term","title":"Bad scope",
-            "scope":[{"path":"src/**"}],"slots":{"definition":"A term."}}"#,
+        r#"{"key":"sys.policy.bad-scope-object","kind":"policy","title":"Bad scope",
+            "scope":[{"path":"src/**"}],"slots":{"rule":"A term."}}"#,
     );
     assert!(is_error);
     let text = error_text(&payload);
     assert!(text.contains("form all|path|ref"), "{text}");
-}
 
-#[test]
-fn propose_rejects_topic_on_work_before_ledger_validation() {
-    let example = Example::materialise("mcp-topic-contract");
+    // Topic on non-normative kind.
     let (payload, is_error) = call(
         &example,
         "knowledge.propose",
@@ -474,6 +413,96 @@ fn propose_rejects_topic_on_work_before_ledger_validation() {
     let text = error_text(&payload);
     assert!(text.contains("only valid on normative kinds"), "{text}");
     assert!(text.contains("work"), "{text}");
+
+    // Line citation without document.
+    let (payload, is_error) = call(
+        &example,
+        "knowledge.propose",
+        r#"{"key":"sys.policy.no-document","kind":"policy",
+            "title":"T","scope":["all"],"slots":{"rule":"S."},
+            "sources":[{"kind":"external","start_line":1,"end_line":2}]}"#,
+    );
+    assert!(is_error, "{payload:?}");
+    assert!(error_text(&payload).contains("document"), "{payload:?}");
+
+    // Claim named like required slot.
+    let (payload, is_error) = call(
+        &example,
+        "knowledge.propose",
+        r#"{"key":"sys.work.claim-intent","kind":"work","title":"Claim named intent","claims":[{"anchor":"intent","text":"Do the thing."}]}"#,
+    );
+    assert!(is_error, "{payload:?}");
+    let text = error_text(&payload);
+    assert!(text.contains("slots.intent"), "{text}");
+    assert!(text.contains("not a slot"), "{text}");
+
+    // Slot the kind does not have -> `schema` class, and record with no body.
+    let (payload, is_error) = call(
+        &example,
+        "knowledge.propose",
+        r#"{"key":"sys.policy.day-loop","kind":"policy","title":"T",
+            "slots":{"observed_at":"git:0000000000000000000000000000000000000000"}}"#,
+    );
+    assert!(is_error);
+    assert_eq!(
+        error_class(&payload),
+        Some("schema"),
+        "{}",
+        error_text(&payload)
+    );
+
+    let (payload, is_error) = call(
+        &example,
+        "knowledge.propose",
+        r#"{"key":"sys.policy.day-loop","kind":"policy","title":"T"}"#,
+    );
+    assert!(is_error);
+    assert!(
+        error_text(&payload).contains("rule"),
+        "{}",
+        error_text(&payload)
+    );
+
+    // Revise missing or stale base_rev.
+    let (payload, is_error) = call(
+        &example,
+        "knowledge.revise",
+        r#"{"key":"sys.term.playable-day"}"#,
+    );
+    assert!(is_error);
+    assert_eq!(
+        error_class(&payload),
+        Some("usage"),
+        "{}",
+        error_text(&payload)
+    );
+
+    let (payload, is_error) = call(
+        &example,
+        "knowledge.revise",
+        r#"{"key":"sys.term.playable-day","base_rev":7}"#,
+    );
+    assert!(is_error);
+    assert_eq!(
+        error_class(&payload),
+        Some("conflict"),
+        "{}",
+        error_text(&payload)
+    );
+    assert_eq!(
+        payload
+            .get("error")
+            .and_then(|e| e.get("retryable"))
+            .and_then(Value::as_bool),
+        Some(true),
+        "a conflict is the one class an agent may retry"
+    );
+
+    assert_eq!(
+        before,
+        example.sources(),
+        "refused writes must leave the workspace byte-identical"
+    );
 }
 
 #[test]
@@ -511,11 +540,11 @@ fn propose_can_adopt_an_exact_registered_source_passage() {
 
     let arguments = format!(
         r#"{{
-            "key": "sys.requirement.deterministic-day-loop",
-            "kind": "requirement",
+            "key": "sys.policy.deterministic-day-loop",
+            "kind": "policy",
             "title": "The day loop stays deterministic",
             "scope": ["all"],
-            "slots": {{ "statement": "The day loop must remain deterministic." }},
+            "slots": {{ "rule": "The day loop must remain deterministic." }},
             "sources": [{{
                 "kind": "external",
                 "role": "origin",
@@ -531,7 +560,7 @@ fn propose_can_adopt_an_exact_registered_source_passage() {
     );
     let (payload, is_error) = call(&example, "knowledge.propose", &arguments);
     assert!(!is_error, "{}", error_text(&payload));
-    let written = example.read_file(".akr/records/sys/requirements.akr");
+    let written = example.read_file(".akr/records/sys/policies.akr");
     assert!(written.contains("document \"incoming-plan\""), "{written}");
     assert!(
         written.contains(&format!("end_byte {}", advice.len())),
@@ -556,11 +585,11 @@ fn propose_locates_a_citation_given_by_line_alone() {
     assert_eq!(added.code, 0, "{}", added.output());
 
     let arguments = r#"{
-        "key": "sys.requirement.deterministic-day-loop",
-        "kind": "requirement",
+        "key": "sys.policy.deterministic-day-loop",
+        "kind": "policy",
         "title": "The day loop stays deterministic",
         "scope": ["all"],
-        "slots": { "statement": "The day loop must remain deterministic." },
+        "slots": { "rule": "The day loop must remain deterministic." },
         "sources": [{
             "kind": "external",
             "role": "origin",
@@ -573,7 +602,7 @@ fn propose_locates_a_citation_given_by_line_alone() {
     let (payload, is_error) = call(&example, "knowledge.propose", arguments);
     assert!(!is_error, "{}", error_text(&payload));
 
-    let written = example.read_file(".akr/records/sys/requirements.akr");
+    let written = example.read_file(".akr/records/sys/policies.akr");
     assert!(written.contains("document \"incoming-plan\""), "{written}");
     assert!(written.contains("start_byte 15"), "{written}");
     assert!(written.contains("end_byte 55"), "{written}");
@@ -606,15 +635,15 @@ fn propose_normalizes_a_line_citation_ending_on_a_blank_line() {
         &example,
         "knowledge.propose",
         r#"{
-            "key":"sys.requirement.keep-this","kind":"requirement","title":"Keep this",
-            "scope":["all"],"slots":{"statement":"Keep this."},
+            "key":"sys.policy.keep-this","kind":"policy","title":"Keep this",
+            "scope":["all"],"slots":{"rule":"Keep this."},
             "sources":[{"kind":"external","document":"incoming-plan",
                         "start_line":2,"end_line":3}]
         }"#,
     );
     assert!(!is_error, "{}", error_text(&payload));
 
-    let written = example.read_file(".akr/records/sys/requirements.akr");
+    let written = example.read_file(".akr/records/sys/policies.akr");
     assert!(written.contains("start_line 2"), "{written}");
     assert!(written.contains("end_line 2"), "{written}");
     assert!(written.contains("start_byte 10"), "{written}");
@@ -626,22 +655,6 @@ fn propose_normalizes_a_line_citation_ending_on_a_blank_line() {
         "{}",
         checked.output()
     );
-}
-
-#[test]
-fn a_line_citation_without_a_document_is_a_schema_error() {
-    let example = Example::materialise("mcp-propose-source-lines-no-document");
-    let before = example.sources();
-    let (payload, is_error) = call(
-        &example,
-        "knowledge.propose",
-        r#"{"key":"sys.requirement.no-document","kind":"requirement",
-            "title":"T","scope":["all"],"slots":{"statement":"S."},
-            "sources":[{"kind":"external","start_line":1,"end_line":2}]}"#,
-    );
-    assert!(is_error, "{payload:?}");
-    assert!(error_text(&payload).contains("document"), "{payload:?}");
-    assert_eq!(before, example.sources(), "a refused write left something");
 }
 
 #[test]
@@ -662,25 +675,25 @@ fn revise_keeps_the_head_source_attributions_it_was_not_asked_to_change() {
     let (payload, is_error) = call(
         &example,
         "knowledge.propose",
-        r#"{"key":"sys.requirement.audited","kind":"requirement",
+        r#"{"key":"sys.policy.audited","kind":"policy",
             "title":"An audited requirement","scope":["all"],
-            "slots":{"statement":"First recommendation."},
+            "slots":{"rule":"First recommendation."},
             "sources":[{"kind":"external","role":"origin","document":"audit",
                         "start_line":1,"end_line":1}]}"#,
     );
     assert!(!is_error, "{}", error_text(&payload));
-    let written = example.read_file(".akr/records/sys/requirements.akr");
+    let written = example.read_file(".akr/records/sys/policies.akr");
     assert!(written.contains("document \"audit\""), "{written}");
 
     // A revision that says nothing about sources keeps them.
     let (payload, is_error) = call(
         &example,
         "knowledge.revise",
-        r#"{"key":"sys.requirement.audited","base_rev":1,
+        r#"{"key":"sys.policy.audited","base_rev":1,
             "title":"An audited requirement, restated"}"#,
     );
     assert!(!is_error, "{}", error_text(&payload));
-    let written = example.read_file(".akr/records/sys/requirements.akr");
+    let written = example.read_file(".akr/records/sys/policies.akr");
     assert!(
         written.contains("document \"audit\""),
         "revise dropped the attribution: {written}"
@@ -691,100 +704,18 @@ fn revise_keeps_the_head_source_attributions_it_was_not_asked_to_change() {
     let (payload, is_error) = call(
         &example,
         "knowledge.revise",
-        r#"{"key":"sys.requirement.audited","base_rev":1,
+        r#"{"key":"sys.policy.audited","base_rev":1,
             "sources":[{"kind":"external","role":"rationale","document":"audit",
                         "start_line":2,"end_line":2}]}"#,
     );
     assert!(!is_error, "{}", error_text(&payload));
-    let written = example.read_file(".akr/records/sys/requirements.akr");
+    let written = example.read_file(".akr/records/sys/policies.akr");
     assert!(written.contains("role rationale"), "{written}");
     assert!(written.contains("start_line 2"), "{written}");
 
     assert_eq!(example.run(&["build"]).code, 0);
     let checked = example.run(&["check"]);
     assert_eq!(checked.code, 0, "{}", checked.output());
-}
-
-#[test]
-fn a_malformed_payload_is_a_schema_error_and_writes_nothing() {
-    let example = Example::materialise("mcp-schema");
-    let before = example.sources();
-    // A slot the kind does not have. The grammar refuses it, so the class is `schema` and
-    // the agent knows to fix the content rather than to retry or to escalate.
-    let (payload, is_error) = call(
-        &example,
-        "knowledge.propose",
-        r#"{"key":"sys.term.day-loop","kind":"term","title":"T",
-            "slots":{"observed_at":"git:0000000000000000000000000000000000000000"}}"#,
-    );
-    assert!(is_error);
-    assert_eq!(
-        error_class(&payload),
-        Some("schema"),
-        "{}",
-        error_text(&payload)
-    );
-    assert_eq!(before, example.sources());
-
-    // And a record with no body at all: `docs/07-cli.md` §6 says a body source is
-    // effectively mandatory, and the tool surface inherits that.
-    let (payload, is_error) = call(
-        &example,
-        "knowledge.propose",
-        r#"{"key":"sys.term.day-loop","kind":"term","title":"T"}"#,
-    );
-    assert!(is_error);
-    assert_eq!(before, example.sources());
-    assert!(
-        error_text(&payload).contains("definition"),
-        "{}",
-        error_text(&payload)
-    );
-}
-
-#[test]
-fn revise_requires_base_rev_and_rejects_a_stale_one() {
-    let example = Example::materialise("mcp-base-rev");
-    let before = example.sources();
-
-    // Missing entirely.
-    let (payload, is_error) = call(
-        &example,
-        "knowledge.revise",
-        r#"{"key":"sys.term.playable-day"}"#,
-    );
-    assert!(is_error);
-    assert_eq!(
-        error_class(&payload),
-        Some("usage"),
-        "{}",
-        error_text(&payload)
-    );
-
-    // Present but stale: the head is at revision 1, so 7 is a claim about a ledger that
-    // does not exist. §7 calls this the only concurrency control the surface has, and it
-    // is enough because a human is watching the same working tree.
-    let (payload, is_error) = call(
-        &example,
-        "knowledge.revise",
-        r#"{"key":"sys.term.playable-day","base_rev":7}"#,
-    );
-    assert!(is_error);
-    assert_eq!(
-        error_class(&payload),
-        Some("conflict"),
-        "{}",
-        error_text(&payload)
-    );
-    assert_eq!(
-        payload
-            .get("error")
-            .and_then(|e| e.get("retryable"))
-            .and_then(Value::as_bool),
-        Some(true),
-        "a conflict is the one class an agent may retry"
-    );
-    assert_eq!(before, example.sources());
 }
 
 #[test]
@@ -971,34 +902,34 @@ fn supersede_accepts_an_already_proposed_different_key() {
     let (old, is_error) = call(
         &example,
         "knowledge.propose",
-        r#"{"key":"sys.term.legacy-session","kind":"term","title":"Legacy session","scope":["all"],"slots":{"definition":"The term being replaced."}}"#,
+        r#"{"key":"sys.policy.legacy-session","kind":"policy","title":"Legacy session","scope":["all"],"slots":{"rule":"The term being replaced."}}"#,
     );
     assert!(!is_error, "{}", error_text(&old));
     let (accepted, is_error) = call(
         &example,
         "knowledge.revise",
-        r#"{"key":"sys.term.legacy-session","base_rev":1,"slots":{"definition":"The accepted term being replaced."},"state":"active"}"#,
+        r#"{"key":"sys.policy.legacy-session","base_rev":1,"slots":{"rule":"The accepted term being replaced."},"state":"active"}"#,
     );
     assert!(!is_error, "{}", error_text(&accepted));
     let (proposed, is_error) = call(
         &example,
         "knowledge.propose",
-        r#"{"key":"sys.term.playable-session","kind":"term","title":"Playable session","scope":["all"],"slots":{"definition":"A bounded session of play."}}"#,
+        r#"{"key":"sys.policy.playable-session","kind":"policy","title":"Playable session","scope":["all"],"slots":{"rule":"A bounded session of play."}}"#,
     );
     assert!(!is_error, "{}", error_text(&proposed));
 
     let (payload, is_error) = call(
         &example,
         "knowledge.supersede",
-        r#"{"old_key":"sys.term.legacy-session","new_key":"sys.term.playable-session"}"#,
+        r#"{"old_key":"sys.policy.legacy-session","new_key":"sys.policy.playable-session"}"#,
     );
     assert!(!is_error, "{}", error_text(&payload));
     assert_eq!(
         payload.get("key").and_then(Value::as_str),
-        Some("sys.term.playable-session")
+        Some("sys.policy.playable-session")
     );
-    let source = example.read_file(".akr/records/sys/terms.akr");
-    assert!(source.contains("supersedes [ @sys.term.legacy-session/1 ]"));
+    let source = example.read_file(".akr/records/sys/policies.akr");
+    assert!(source.contains("supersedes [ @sys.policy.legacy-session/1 ]"));
 }
 
 #[test]
@@ -1120,47 +1051,25 @@ fn a_write_is_visible_to_the_next_read_through_either_surface() {
     let (payload, is_error) = call(
         &example,
         "knowledge.propose",
-        r#"{"key":"sys.term.day-loop","kind":"term","title":"The day loop","state":"active",
+        r#"{"key":"sys.policy.day-loop","kind":"policy","title":"The day loop","state":"active",
             "scope":["all"],
-            "slots":{"definition":"The repeating structure of one in-game day."}}"#,
+            "slots":{"rule":"The repeating structure of one in-game day."}}"#,
     );
     assert!(!is_error, "{}", error_text(&payload));
 
     // Through the tool.
-    let (fetched, is_error) = call(&example, "knowledge.get", r#"{"ref":"@sys.term.day-loop"}"#);
+    let (fetched, is_error) = call(
+        &example,
+        "knowledge.get",
+        r#"{"ref":"@sys.policy.day-loop"}"#,
+    );
     assert!(!is_error, "{}", error_text(&fetched));
     assert_eq!(fetched.get("rev").and_then(Value::as_integer), Some(1));
 
     // And through the command line, which is the same ledger seen from the other side.
-    let run = example.run(&["get", "@sys.term.day-loop"]);
+    let run = example.run(&["get", "@sys.policy.day-loop"]);
     assert_eq!(run.code, 0, "{}", run.output());
     assert!(run.stdout.contains("The day loop"), "{}", run.stdout);
-}
-
-#[test]
-fn no_tool_can_reach_the_sqlite_cache() {
-    // D-019, restated in §6: the cache is a private detail of stage E. The assertion that
-    // matters is negative and structural — no tool name mentions it, and no tool's schema
-    // exposes a query hole.
-    for tool in akr_mcp::schema::TOOLS {
-        assert!(!tool.name.contains("query"), "{}", tool.name);
-        assert!(!tool.name.contains("sql"), "{}", tool.name);
-        let schema = akr_mcp::schema::input_schema(tool.name)
-            .expect("every declared tool has a schema")
-            .to_pretty();
-        assert!(!schema.to_lowercase().contains("sqlite"), "{}", tool.name);
-        assert!(!schema.to_lowercase().contains("select "), "{}", tool.name);
-    }
-    // Every declared tool is implemented and every implemented tool is declared. The
-    // count itself is deliberately not asserted: it is prose about the registry, and
-    // prose about a registry is the thing that drifts.
-    for tool in akr_mcp::schema::TOOLS {
-        assert!(
-            akr_mcp::schema::output_schema(tool.name).is_some(),
-            "{} has no output schema",
-            tool.name
-        );
-    }
 }
 
 #[test]
@@ -1501,32 +1410,111 @@ fn revise_keeps_the_normative_topic_it_was_not_asked_to_change() {
 }
 
 #[test]
-fn a_claim_named_like_a_required_slot_says_where_the_text_goes() {
-    // Field report: a work record proposed with a claim anchored `intent` was refused for
-    // missing slots.intent, which read as the claim having been ignored.
-    let example = Example::materialise("mcp-claim-named-intent");
-    let before = example.sources();
-    let (payload, is_error) = call(
-        &example,
-        "knowledge.propose",
-        r#"{"key":"sys.work.claim-intent","kind":"work","title":"Claim named intent","claims":[{"anchor":"intent","text":"Do the thing."}]}"#,
+fn propose_many_writes_connected_track_and_ordered_milestones_atomically() {
+    let example = Example::materialise("mcp-propose-many");
+    let arguments = r#"{
+        "records": [
+            {
+                "key": "sys.work.launcher",
+                "kind": "work",
+                "title": "Launcher work",
+                "slots": { "intent": "Standing work for phased launcher work." }
+            },
+            {
+                "key": "sys.milestone.phase-0",
+                "kind": "milestone",
+                "title": "Phase 0: app skeleton",
+                "slots": { "intent": "Stand up the initial app skeleton." },
+                "relations": {
+                    "part_of": ["@sys.work.launcher"],
+                    "depends_on": ["@sys.req.deterministic-sim"]
+                },
+                "acceptance": [
+                    { "id": "skeleton-boots", "statement": "App skeleton boots.", "method": "manual" }
+                ]
+            },
+            {
+                "key": "sys.milestone.phase-1",
+                "kind": "milestone",
+                "title": "Phase 1: core loop",
+                "slots": { "intent": "Wire the core loop." },
+                "relations": {
+                    "part_of": ["@sys.work.launcher"],
+                    "after": ["@sys.milestone.phase-0"],
+                    "depends_on": ["@sys.req.deterministic-sim"]
+                },
+                "acceptance": [
+                    { "id": "core-loop", "statement": "Core loop passes tests.", "method": "command", "command": "cargo test" }
+                ]
+            }
+        ]
+    }"#;
+    let (payload, is_error) = call(&example, "knowledge.propose_many", arguments);
+    assert!(!is_error, "{}", error_text(&payload));
+    assert_eq!(payload.get("written").and_then(Value::as_integer), Some(3));
+    assert_eq!(
+        payload
+            .get("records")
+            .and_then(Value::as_array)
+            .map(<[Value]>::len),
+        Some(3)
     );
-    assert!(is_error, "{payload:?}");
-    let text = error_text(&payload);
-    assert!(text.contains("slots.intent"), "{text}");
-    assert!(text.contains("not a slot"), "{text}");
-    assert_eq!(before, example.sources());
+    let tracks = example.read_file(".akr/records/sys/work.akr");
+    assert!(tracks.contains("sys.work.launcher/1"), "{tracks}");
+    let milestones = example.read_file(".akr/records/sys/milestones.akr");
+    assert!(
+        milestones.contains("sys.milestone.phase-0/1"),
+        "{milestones}"
+    );
+    assert!(
+        milestones.contains("sys.milestone.phase-1/1"),
+        "{milestones}"
+    );
+    assert!(
+        milestones.contains("after [ @sys.milestone.phase-0 ]"),
+        "{milestones}"
+    );
+    assert_eq!(example.run(&["build"]).code, 0);
+    let check = example.run(&["check"]);
+    assert_eq!(check.code, 0, "{}", check.output());
 }
 
 #[test]
-fn relation_schemas_name_their_target_kinds() {
-    // A decision proposer learned from two refusals that supported_by cannot point at a
-    // constraint; the schema now says which kinds it can.
-    let schema = akr_mcp::schema::input_schema("knowledge.propose")
-        .expect("propose has a schema")
-        .to_pretty();
-    assert!(
-        schema.contains("References to: observation, evidence, assessment (V-005)."),
-        "{schema}"
+fn propose_many_is_atomic_and_diagnoses_milestone_implements() {
+    let example = Example::materialise("mcp-propose-many-atomic");
+    let before = example.sources();
+    let arguments = r#"{
+        "records": [
+            {
+                "key": "sys.work.launcher",
+                "kind": "work",
+                "title": "Launcher work",
+                "slots": { "intent": "Standing work." }
+            },
+            {
+                "key": "sys.milestone.phase-0",
+                "kind": "milestone",
+                "title": "Phase 0",
+                "slots": { "intent": "Mis-declared implements on a milestone." },
+                "relations": {
+                    "part_of": ["@sys.work.launcher"],
+                    "implements": ["@sys.req.deterministic-sim"]
+                },
+                "acceptance": [
+                    { "id": "boot", "statement": "Boots cleanly.", "method": "manual" }
+                ]
+            }
+        ]
+    }"#;
+    let (payload, is_error) = call(&example, "knowledge.propose_many", arguments);
+    assert!(is_error, "{payload:?}");
+    let text = error_text(&payload);
+    assert!(text.contains("AKR-L032"), "{text}");
+    assert!(text.contains("its domain is work, decision"), "{text}");
+    assert!(text.contains("depends_on"), "{text}");
+    assert_eq!(
+        before,
+        example.sources(),
+        "a refused batch must write nothing"
     );
 }

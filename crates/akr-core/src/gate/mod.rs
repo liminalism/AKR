@@ -259,6 +259,8 @@ fn is_token_char(c: char) -> bool {
 /// that would still match everywhere are also dropped.
 fn is_test_filter_token(token: &str) -> bool {
     (token.contains('_') || token.contains("::"))
+        && !token.starts_with("clippy::")
+        && !token.starts_with("rustdoc::")
         && token.chars().any(|c| c.is_ascii_lowercase())
         && token.trim_matches('_').len() >= 2
 }

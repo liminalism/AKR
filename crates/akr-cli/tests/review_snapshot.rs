@@ -1,6 +1,6 @@
 //! The owned projection consumed by human review clients.
 
-mod support;
+use crate::support;
 
 use akr_cli::review_snapshot::{ReviewOptions, ReviewSnapshot};
 use support::Example;

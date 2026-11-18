@@ -13,7 +13,7 @@
 //! a defect rather than a missing gate. `tests/search_degraded.rs` makes the positive
 //! claim for that configuration: `akr source search` degrades like `akr search` does.
 
-mod support;
+use crate::support;
 
 use support::Example;
 

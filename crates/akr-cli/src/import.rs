@@ -42,6 +42,7 @@ pub fn run(
     tracking: Option<&str>,
     dry_run: bool,
 ) -> Result<Output, EnvError> {
+    crate::secrets::public_input(&session.root, path)?;
     let source = resolve_source(session, path);
     let document = source.document.clone();
     let strict = session.global.profile == Profile::Strict;

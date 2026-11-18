@@ -638,6 +638,7 @@ fn content_text(value: &ContentValue) -> String {
 fn verdict_text(verdict: &Verdict) -> String {
     match verdict {
         Verdict::Satisfied { by, .. } => format!("satisfied by {by}"),
+        Verdict::Passed { at } => format!("passed at {}", &at.as_str()[..8]),
         Verdict::NoEvidence => "no evidence".to_owned(),
         Verdict::Unresolved => "evidence does not resolve".to_owned(),
         Verdict::Failing { by, .. } => format!("failing evidence {by}"),

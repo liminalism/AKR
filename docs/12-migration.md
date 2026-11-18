@@ -94,9 +94,9 @@ it is?
 
 | Legacy sentence | Durable? | Kind |
 | --- | --- | --- |
-| "The simulator must produce the same run from the same seed." | yes | `requirement` |
+| "The simulator must produce the same run from the same seed." | yes | `policy` |
 | "We decided to put a snapshot between the sim and the viewer." | yes | `decision` |
-| "Lighting is ongoing; no milestone owns it." | yes | `track` |
+| "Lighting is ongoing; no milestone owns it." | yes | `policy` |
 | "M3 is about 60% done." | no | — status |
 | "Ask Dana about the audio pipeline." | no | — a note to a person |
 | "TODO: fix the projection pass." | maybe | `work`, if still intended |

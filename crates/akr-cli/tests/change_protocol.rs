@@ -6,7 +6,7 @@
 //! has since moved, would leave the ledger and the history disagreeing in exactly the way
 //! the protocol exists to prevent.
 
-mod support;
+use crate::support;
 
 use support::Example;
 
