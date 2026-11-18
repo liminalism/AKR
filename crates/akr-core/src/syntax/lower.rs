@@ -432,6 +432,28 @@ impl Ctx {
                         .collect()
                 })
                 .unwrap_or_default(),
+            passed_at: match self.block_value(block, "passed_at") {
+                None => None,
+                Some(Value::Commit(hex, _)) => match Commit::new(hex) {
+                    Ok(commit) => Some(commit),
+                    Err(error) => {
+                        self.error(c::P021, block.span, error.to_string(), None);
+                        None
+                    }
+                },
+                Some(other) => {
+                    self.error(
+                        c::T013,
+                        other.span(),
+                        format!(
+                            "slot `passed_at` expects a commit, found {}",
+                            other.render_inline()
+                        ),
+                        None,
+                    );
+                    None
+                }
+            },
         })
     }
 
@@ -641,15 +663,17 @@ impl Ctx {
                     .filter_map(|v| self.reference(v))
                     .collect(),
             ),
-            ContentSlot::Aliases | ContentSlot::Collated => ContentValue::Strings(
-                self.array(value)
-                    .iter()
-                    .filter_map(|v| match v {
-                        Value::Str(text, _) => Some(text.clone()),
-                        _ => None,
-                    })
-                    .collect(),
-            ),
+            ContentSlot::Aliases | ContentSlot::Collated | ContentSlot::Trace => {
+                ContentValue::Strings(
+                    self.array(value)
+                        .iter()
+                        .filter_map(|v| match v {
+                            Value::Str(text, _) => Some(text.clone()),
+                            _ => None,
+                        })
+                        .collect(),
+                )
+            }
             ContentSlot::Method | ContentSlot::Result | ContentSlot::Confidence => {
                 let candidate = self.word(value);
                 match Segment::new(&candidate) {

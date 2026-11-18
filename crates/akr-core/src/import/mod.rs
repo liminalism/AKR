@@ -221,10 +221,10 @@ fn claim_of(
 ///
 /// 1. a title ending in `?` is a `question`;
 /// 2. "decided", "decision" or "we chose" makes a `decision`;
-/// 3. "must" or "shall" makes a `requirement`;
-/// 4. "ongoing" or "standing" makes a `track`;
-/// 5. "always", "never", "every" or "policy" makes a `policy`;
-/// 6. everything else is `work` — the state a durable claim of unknown kind is safest
+/// 3. "must", "shall", "ongoing", "standing", "always", "never", "every" or "policy"
+///    makes a `policy` — the one kind for a standing rule, requirement or limit since
+///    `requirement` and `track` were retired (D-046);
+/// 4. everything else is `work` — the state a durable claim of unknown kind is safest
 ///    in, because a `proposed` work record asserts nothing normative.
 ///
 /// `milestone`, `observation`, `evidence` and `assessment` are never proposed: each has
@@ -247,11 +247,9 @@ pub fn classify(title: &str, excerpt: &str) -> Kind {
     };
     if has(&["decided", "decision", "we chose"]) {
         Kind::Decision
-    } else if has(&["must", "shall"]) {
-        Kind::Requirement
-    } else if has(&["ongoing", "standing"]) {
-        Kind::Track
-    } else if has(&["always", "never", "every", "policy"]) {
+    } else if has(&[
+        "must", "shall", "ongoing", "standing", "always", "never", "every", "policy",
+    ]) {
         Kind::Policy
     } else {
         Kind::Work

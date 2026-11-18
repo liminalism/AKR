@@ -325,8 +325,15 @@ pub fn v004_anchors_exist(ledger: &Ledger) -> Vec<Diagnostic> {
 #[must_use]
 pub fn v005_targets_kind_correct(ledger: &Ledger) -> Vec<Diagnostic> {
     const RULE: RuleId = RuleId(5);
-    const SCOPE_KINDS: &[Kind] = &[Kind::Milestone, Kind::Track, Kind::Constraint];
-    const EXCEPTION_KINDS: &[Kind] = &[Kind::Milestone, Kind::Track, Kind::Work, Kind::Constraint];
+    // D-046: `policy` took over what the retired `constraint` could be the target of.
+    const SCOPE_KINDS: &[Kind] = &[Kind::Milestone, Kind::Track, Kind::Constraint, Kind::Policy];
+    const EXCEPTION_KINDS: &[Kind] = &[
+        Kind::Milestone,
+        Kind::Track,
+        Kind::Work,
+        Kind::Constraint,
+        Kind::Policy,
+    ];
     const INTO_KINDS: &[Kind] = &[Kind::Milestone, Kind::Track, Kind::Work];
     let mut out = Vec::new();
 
@@ -1020,15 +1027,26 @@ pub fn v014_supersession_acyclic(ledger: &Ledger) -> Vec<Diagnostic> {
 
     for record in ordered(ledger) {
         for reference in record.targets(Relation::Supersedes) {
+            // D-046: like replaces like, and a retired kind may be replaced by the kind
+            // it folds into. Nothing else crosses kinds.
             if let Some(target) = target_of(ledger, reference)
-                && target.kind != record.kind
+                && !Relation::Supersedes
+                    .range()
+                    .accepts(record.kind, target.kind)
             {
-                out.push(Diagnostic::error(
+                let mut diagnostic = Diagnostic::error(
                     c::R017,
                     RULE,
                     slot_subject(record, SlotRef::Relation(Relation::Supersedes)),
                     format!("a {} may not supersede a {}", record.kind, target.kind),
-                ));
+                );
+                if let Some(into) = target.kind.folds_into() {
+                    diagnostic = diagnostic.help(format!(
+                        "`{}` is retired and folds into `{into}` (D-046); only a `{into}` or another `{}` may supersede it",
+                        target.kind, target.kind
+                    ));
+                }
+                out.push(diagnostic);
             }
         }
     }
@@ -1394,6 +1412,23 @@ pub fn v020_acceptance_satisfied(ledger: &Ledger) -> Vec<Diagnostic> {
                 satisfied = true;
                 break;
             }
+            // D-048: a command check may record its own pass. Any write that changes
+            // what the record requires drops the stamp, so one that is present was made
+            // against this definition; what is left to check is that it names a commit
+            // this history actually has.
+            if !satisfied && let Some(commit) = &check.passed_at {
+                if check.method != crate::model::CheckMethod::Command {
+                    reason = "only a `command` check may record its own pass (D-048)".to_owned();
+                } else if ledger.facts.ancestry.has_facts() && !ledger.facts.ancestry.knows(commit)
+                {
+                    reason = format!(
+                        "`passed_at` names {commit}, a commit this repository does not have \
+                         (AKR-G011)"
+                    );
+                } else {
+                    satisfied = true;
+                }
+            }
             if !satisfied {
                 out.push(
                     Diagnostic::error(
@@ -1405,7 +1440,10 @@ pub fn v020_acceptance_satisfied(ledger: &Ledger) -> Vec<Diagnostic> {
                             record.id, check.id
                         ),
                     )
-                    .help("run the check and record the evidence, or leave the record active"),
+                    .help(
+                        "run the check and record it — `akr complete --pass <check>` for a \
+                         command check, evidence otherwise — or leave the record active",
+                    ),
                 );
             }
         }
@@ -1711,6 +1749,19 @@ pub fn v024_seals_match(ledger: &Ledger) -> Vec<Diagnostic> {
                         )
                         .help("run `akr build`"),
                     );
+                } else if bookkeeping_only_seal_drift(ledger, record, fact, recorded) {
+                    out.push(
+                        Diagnostic::error(
+                            c::R052,
+                            RULE,
+                            subject(record),
+                            format!(
+                                "{} gained a trace entry or a recorded pass; akr.lock still records it without",
+                                record.id
+                            ),
+                        )
+                        .help("run `akr build`"),
+                    );
                 } else if pin_follow_only_seal_drift(ledger, record, recorded) {
                     out.push(
                         Diagnostic::error(
@@ -1781,6 +1832,79 @@ fn lifecycle_only_seal_drift(
     before.state = recorded_state;
     crate::hash::content_hash(&crate::syntax::record_text(&before, &ledger.project.name))
         == *recorded_hash
+}
+
+/// Whether a mismatched seal is explained by bookkeeping written in place since the
+/// lock was made: trace entries appended (D-047), a check's `passed_at` stamped (D-048),
+/// or either together with one legal lifecycle transition.
+///
+/// The proof is the one [`lifecycle_only_seal_drift`] uses, widened. Each candidate
+/// "before" is the current record with some suffix of its trace removed, its recorded
+/// passes kept or dropped, and its state as it is or as the lock recorded it; a candidate
+/// that hashes to the recorded seal shows that nothing else changed. A reworded entry, a
+/// reordered one or an entry removed from the middle matches no candidate and stays what
+/// it is: a modified seal.
+fn bookkeeping_only_seal_drift(
+    ledger: &Ledger,
+    record: &Record,
+    fact: &crate::model::SealFact,
+    recorded_hash: &crate::model::ContentHash,
+) -> bool {
+    let entries: Vec<String> = match record.get(ContentSlot::Trace) {
+        Some(ContentValue::Strings(entries)) => entries.clone(),
+        _ => Vec::new(),
+    };
+    let has_passes = record
+        .acceptance
+        .as_ref()
+        .is_some_and(|acceptance| acceptance.checks.iter().any(|c| c.passed_at.is_some()));
+    if entries.is_empty() && !has_passes {
+        return false;
+    }
+
+    let mut states = vec![record.state];
+    if let Some(recorded_state) = fact.recorded_state
+        && recorded_state != record.state
+        && record
+            .kind
+            .class()
+            .transitions()
+            .iter()
+            .any(|t| t.from == recorded_state && t.to == record.state)
+    {
+        states.push(recorded_state);
+    }
+    let pass_choices: &[bool] = if has_passes { &[false, true] } else { &[false] };
+
+    for state in &states {
+        for &drop_passes in pass_choices {
+            for kept in (0..=entries.len()).rev() {
+                if *state == record.state && !drop_passes && kept == entries.len() {
+                    continue; // the record as it is, which is what failed to match
+                }
+                let mut before = record.clone();
+                before.state = *state;
+                if kept == 0 {
+                    before.content.remove(&ContentSlot::Trace);
+                } else {
+                    before.content.insert(
+                        ContentSlot::Trace,
+                        ContentValue::Strings(entries[..kept].to_vec()),
+                    );
+                }
+                if drop_passes && let Some(acceptance) = before.acceptance.as_mut() {
+                    for check in &mut acceptance.checks {
+                        check.passed_at = None;
+                    }
+                }
+                let text = crate::syntax::record_text(&before, &ledger.project.name);
+                if crate::hash::content_hash(&text) == *recorded_hash {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Whether a mismatched seal is exactly the pin-follow `akr revise` writes onto live
@@ -1909,6 +2033,62 @@ pub fn v025_evidence_artifact_durable(ledger: &Ledger) -> Vec<Diagnostic> {
             )
             .help(help),
         );
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------------
+// V-026
+// ---------------------------------------------------------------------------------
+
+/// The word count above which a trace entry draws an advisory note (D-047).
+pub const TRACE_ENTRY_SOFT_WORDS: usize = 25;
+/// The word count above which a trace entry is refused (D-047, `AKR-T024`).
+pub const TRACE_ENTRY_HARD_WORDS: usize = 40;
+
+/// How many words a trace entry holds: runs of non-whitespace.
+#[must_use]
+pub fn trace_entry_words(entry: &str) -> usize {
+    entry.split_whitespace().count()
+}
+
+/// V-026: a trace entry is at most forty words.
+///
+/// The trace exists because an unbounded prose slot gets a restatement of the diff and a
+/// one-line slot got the reason (D-047). The bound is what makes it a trace. It is set
+/// well above the length the guidance asks for, so that an entry a few words over costs a
+/// note rather than a retry: the predecessor's hard byte limit was the single most
+/// reported friction with it.
+///
+/// Only live revisions are judged, for V-025's reason: a sealed, superseded revision is
+/// history, and a rule that judges history is one the write path cannot satisfy.
+#[must_use]
+pub fn v026_trace_entry_bounded(ledger: &Ledger) -> Vec<Diagnostic> {
+    const RULE: RuleId = RuleId(26);
+    let mut out = Vec::new();
+    for record in ordered(ledger).into_iter().filter(|r| r.is_live()) {
+        let Some(ContentValue::Strings(entries)) = record.get(ContentSlot::Trace) else {
+            continue;
+        };
+        for (index, entry) in entries.iter().enumerate() {
+            let words = trace_entry_words(entry);
+            if words > TRACE_ENTRY_HARD_WORDS {
+                out.push(
+                    Diagnostic::error(
+                        c::T024,
+                        RULE,
+                        slot_subject(record, SlotRef::Content(ContentSlot::Trace)),
+                        format!(
+                            "trace entry {} is {words} words; the limit is {TRACE_ENTRY_HARD_WORDS}",
+                            index + 1
+                        ),
+                    )
+                    .help(
+                        "say why, not what: one reason or one dead end per entry, and split a longer thought into two. A finding worth more room is an `observation`; a binding choice is a `decision`",
+                    ),
+                );
+            }
+        }
     }
     out
 }

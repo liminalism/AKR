@@ -1995,3 +1995,214 @@ workspace it named, not refused: being explicit is never an error. A non-string 
 `with_workspace_argument`), `crates/akr-mcp/tests/workspace_argument.rs`,
 `crates/akr-cli/src/session.rs` (`AKR-C011` help), `crates/akr-cli/src/commands.rs`
 (`explain` syntax line), `docs/08-mcp.md` §1, `docs/07-cli.md` (`akr explain`).
+
+---
+
+## D-046 — Five kinds are retired: readable for ever, never written again
+
+*Amendment, 2026-11-18. Amends D-001, D-002, D-010 and D-027. The measurements are in
+`docs/19-ledger-usage-and-reasoning-audit.md`.*
+
+**Question.** Three months of real use across three projects (4,467 records) found five of
+the thirteen kinds close to unused: `term` 12, `track` 12, `assessment` 60, `constraint` 34,
+`requirement` 98, almost all of them in one ledger and none created in the other two in
+that period. Agents could not tell an `assessment` from an `observation`, nor choose between
+four normative kinds beside `decision`. Every unused kind is still a line in every schema,
+every `explain`, and every decision about what to write. Should the vocabulary shrink, and
+what happens to the records already sealed under the old kinds?
+
+**Resolution.** Eight kinds are written: `policy`, `decision`, `observation`, `evidence`,
+`papercut`, `milestone`, `work`, `question`. Five are **retired**:
+
+| Retired | Folds into |
+|---|---|
+| `assessment` | `observation` |
+| `requirement` | `policy` |
+| `constraint` | `policy` |
+| `term` | `policy` |
+| `track` | `milestone` |
+
+A retired kind stays in the language. It parses, type-checks, links, hashes and renders
+exactly as before, so no sealed revision changes and no reference breaks. What changes is
+the write surface:
+
+1. Creating a new key of a retired kind is refused (`AKR-T008`), by `propose`,
+   `propose-many` and `import` alike. Revising, or moving the state of, a key that already
+   has a retired kind stays legal, because a ledger must remain maintainable.
+2. `supersedes` may cross kinds along the table above and nowhere else. Folding a record is
+   therefore an ordinary `akr supersede --with <new-key>`; unpinned references follow the
+   new head. Every other cross-kind supersession is still `AKR-R017`.
+3. The replacement kinds take over what the retired ones could do. `observation` gains an
+   optional `confidence` and may declare `supported_by`. `policy` gains optional `measure`
+   and `aliases` (aliases stay searchable), may declare `blocks`, `verified_by` and
+   `part_of`, and is a legal `ref` scope target and `exceptions` target. `milestone` already
+   plays every structural role `track` did; `cadence` is not carried over, and a standing
+   track that never ends folds into a `policy` instead.
+4. Authoring surfaces stop offering the retired kinds: the MCP kind enum, `akr explain`
+   (which names the fold target), and the Markdown importer's classifier. Generated views
+   print a retired kind's section only when the ledger holds such records.
+
+**Why retire and not delete.** The kind is written in every record header and is part of
+the sealed content hash (D-014, D-015). Deleting a kind would turn every such record into
+`AKR-T003`, break every reference to it, and force a rewrite of history that changes seals
+— the opposite of a ledger whose past reads as it was written. The precedent is the
+`observation` value of an observation's `method`, kept for exactly this reason.
+
+**Why not an automatic fold.** The target kinds have obligations the retired ones did not:
+an `observation` needs `observed_at`, a `milestone` needs acceptance checks. A tool cannot
+invent those. `akr check` reports the count of live records of retired kinds as a build
+fact, and the fold is a write a person or agent makes when it is worth making.
+
+**Consequences.** `vocabulary_version` becomes `0.3`. D-001's count becomes "thirteen
+kinds, of which eight are written". D-010's `ref` scope targets become milestone, track,
+constraint and policy. The frozen worked example keeps its retired-kind records unchanged.
+
+**Honored by.** `spec/tables/vocabulary.json`, `crates/akr-core/src/model/kind.rs`,
+`crates/akr-core/src/model/relation.rs`, `crates/akr-core/src/validate/rules.rs` (V-005,
+V-014), `crates/akr-core/src/ops`, `crates/akr-mcp/src/schema.rs`, `docs/02-data-model.md`,
+`docs/05-validation-rules.md`, `docs/20-upgrading-to-0.7.md`.
+
+---
+
+## D-047 — A work record carries its reasoning as a `trace`
+
+*Amendment, 2026-11-18. Amends D-026, D-029 and D-032.*
+
+**Question.** The ledger exists to answer "why did we do this back then". The audit found
+that 73% of completed work records in the largest ledger say nothing about rejected
+alternatives or trade-offs: `intent` restates the diff before the commit and `note` restates
+it after. The reasoning that does survive lives in `observation` records and in a
+decision's `context`. A predecessor tool that allowed one 280-byte line per note got dense
+reasoning precisely because there was no room for anything else. Where does at-the-time
+reasoning for a unit of work go, how small is it, and is it required?
+
+**Resolution.** `work` gains one content slot, `trace`: an ordered list of strings, each one
+reasoning step — why this approach, what the code as found forced, what was tried and
+dropped. It is **not** a new record kind: a record per sentence would be envelope with a
+sentence inside, detached from the work it explains, and D-032's argument against a
+`commit` kind applies to it unchanged.
+
+1. **Append-only and in place.** `akr trace <work> "<text>"` and `knowledge.trace` append
+   one entry to the head revision, sealed or not, without minting a revision. `trace` joins
+   `state`, `note` and `verified_by` as bookkeeping under D-029: appending moves no
+   definitional hash and puts no acceptance check back in question. A sealed revision whose
+   recorded trace is a prefix of its current trace is lock drift (`AKR-R052`, cured by
+   `akr build`), not a modified seal (`AKR-R051`).
+2. **Bounded softly.** An entry over 25 words draws an advisory note. An entry over 40 words
+   is refused (V-026, `AKR-T024`). The predecessor's hard byte limit cost agents turns
+   counting bytes at 281; a soft bound with a distant hard one keeps the pressure without
+   the retries.
+3. **Never mandatory.** No write, completion or commit is refused for a missing trace. The
+   steer is the standing rule in the agent brief (D-049) and a note when a work record is
+   completed with an empty trace. A forced field is filled with filler.
+4. **Linked to commits by derivation, not by storage.** D-032 holds: no commit id is written
+   into the ledger. The commit that first contains an entry is a pure function of git
+   history, so `akr get` prints each entry beside the commit that introduced it. When a
+   commit is made through a change transaction, each entry its staged tree adds becomes
+   one `AKR-Why:` trailer, and `akr change begin --why` is `akr trace` on the primary
+   record. The message no longer copies the work record's `intent`, which put the same
+   prose in git twice.
+5. **Read where reasoning is needed.** The context bundle renders a work record's `trace`,
+   and a decision's `context` and `consequences`, which it previously omitted.
+
+**Granularity.** A line of code is explained by a comment beside it. A step of work is a
+trace entry. A choice that binds the project is a `decision`; a finding that will be
+re-read is an `observation`. The trace is the middle tier and nothing else.
+
+**Honored by.** `spec/tables/vocabulary.json`, `crates/akr-core/src/model/kind.rs`,
+`crates/akr-core/src/resolve/source.rs`, `crates/akr-core/src/ops`,
+`crates/akr-core/src/validate/rules.rs` (V-024, V-026),
+`crates/akr-core/src/change/message.rs`, `crates/akr-core/src/context`,
+`docs/02-data-model.md`, `docs/16-change-protocol.md`.
+
+---
+
+## D-048 — A command check may record its own pass
+
+*Amendment, 2026-11-18. Amends D-016 and D-029.*
+
+**Question.** Evidence is 45% of all records in the audited ledgers, and it grew fastest.
+Most of it is one record per passing test run, minted because D-016 allows a check to be
+satisfied only by a separate `evidence` record — whose `command` repeats the check's own
+`command`, and whose title and summary, by a tool default, repeated each other in half of
+all cases. Must a routine pass cost a record?
+
+**Resolution.** A `check` gains one optional slot, `passed_at`, holding a commit. A check
+with `method command` is satisfied when it carries one that names a commit this repository
+has. `passed_at` is bookkeeping exactly as the check's `verified_by` is.
+
+D-016's descendant test is not applied to it, because it cannot be: the pass is recorded
+in the working tree, before the commit that will hold the record exists, so the commit it
+names is always an ancestor of that one. An evidence record escapes the same problem by
+being a record with a history of its own (the co-commit rule); a slot has none. The
+guarantee is kept by construction instead. **Any write that changes what the record
+requires drops every `passed_at` it would have carried forward**, and says so. A stamp
+that is present was therefore written against the definition beside it.
+
+`akr complete <key> --pass <check>[=<commit>]` stamps it, defaulting to `HEAD`;
+`knowledge.complete` accepts `{"passed_at": "<commit>"}` in place of an evidence reference.
+It is refused on a check whose method is not `command`: a manual or observational check has
+no recorded procedure of its own, so what was seen has to be written down, and that is what
+an evidence record is.
+
+`verified_by` is unchanged and remains the way to cite a measurement, a captured artefact,
+a failure, an inconclusive run, or anything a later reader will want to read. Evidence
+still never states what it verifies.
+
+**Also.** `akr evidence add` no longer stores a summary twice. With no title given, a
+short one-line summary becomes the title and the `summary` slot is omitted; a longer one
+is kept and the title is its opening words. A summary equal to a given title is dropped.
+The command line gains `--title`.
+
+**Why this is not weaker.** An evidence record for a command check asserts: this command,
+result pass, at this commit. The check already holds the command; `passed_at` holds the
+commit; the assertion is the same and is made by the same agent. What is lost is a title
+and a summary, which the audit shows were the check's own statement restated, and the
+ancestry test, which is replaced by dropping the stamp whenever the definition moves.
+
+**Honored by.** `spec/tables/vocabulary.json`, `crates/akr-core/src/model/record.rs`,
+`crates/akr-core/src/validate/rules.rs` (V-020), `crates/akr-core/src/ops`,
+`crates/akr-cli/src/write.rs`, `crates/akr-mcp/src/schema.rs`, `docs/02-data-model.md`,
+`docs/05-validation-rules.md`, `docs/07-cli.md`.
+
+---
+
+## D-049 — One agent brief, and it says what the ledger is for
+
+*Amendment, 2026-11-18. Amends D-032 (hooks) and D-041 (the brief).*
+
+**Question.** Fewer than 6% of work records in the audited projects were ever named by a
+commit trailer, and by November none were. The brief installed into every agent's
+instructions never mentions the change transaction; `akr init` writes a second, older brief;
+`docs/08-mcp.md` carries a third copy; no surface says what any prose slot is for; and the
+hooks that would notice a commit made outside the protocol are installed by nobody.
+
+**Resolution.**
+
+1. **One text.** `scripts/agent-section.md` is the brief. `akr init` embeds that file and
+   writes it between the same markers the setup scripts use; `docs/08-mcp.md` points at it.
+2. **It states the purpose, once.** *Part of your job this session is to help the next agent
+   understand what happened in it: what the user asked, what you found in the code as it
+   stood, and why that led to what you did. Explain in proportion to the expected impact of
+   a change, not its line count. Never restate a diff — git has it.* The MCP handshake
+   carries the first sentence.
+3. **It names the commit protocol** in three lines: `akr change begin`, `akr change prepare
+   --staged`, `akr git commit`.
+4. **Slots say what they are for.** Every prose slot in `vocabulary.json` carries a `doc`
+   line; `akr explain` and the MCP slot schema print it, so the guidance has one source.
+5. **Advice arrives as notes, never as refusals.** A write whose `intent`, `decision` or
+   `note` names source files draws a note; so does completing work with an empty trace.
+   Notes never block a write and never fail a strict build. A warning would do both.
+6. **Hooks by default.** `akr init` installs the two hook wrappers in a git repository
+   unless `--no-hooks` is given, and the session head says so in one line when a repository
+   lacks them. D-032's reasoning stands — hooks are bypassable and CI is the authority — but
+   an absent hook is not a neutral default when the measured result is that the protocol is
+   not followed at all.
+7. **A transaction names real work.** `akr change prepare` resolves `--primary` and
+   `--related`, requires them to be `work` records, and writes them in the `@` form the
+   trailer reader looks for. `akr change` refuses flags it does not know.
+
+**Honored by.** `scripts/agent-section.md`, `crates/akr-cli/src/init.rs`,
+`crates/akr-cli/src/change.rs`, `crates/akr-cli/src/handoff/session_head.rs`,
+`crates/akr-mcp/src/protocol.rs`, `crates/akr-mcp/src/schema.rs`,
+`crates/akr-core/src/ops`, `docs/08-mcp.md` §8, `docs/16-change-protocol.md`.

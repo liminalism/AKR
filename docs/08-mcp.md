@@ -746,73 +746,25 @@ the resulting ledger.
 
 ## 8. The `AGENTS.md` protocol text
 
-This is the recommended minimal `AGENTS.md` section. It is deliberately protocol only —
-no philosophy, no data model, no examples — because an agent reads it every session and
-every extra line competes with the task. Everything it needs to know beyond this is
-reachable through the tools themselves.
+The brief is one file: [`scripts/agent-section.md`](../scripts/agent-section.md). It is
+not quoted here. A copy in this document was the third copy of the same prose — beside the
+installed file and the text `akr init` used to carry — and by 0.6 all three differed
+(D-049).
 
-The installed text is `scripts/agent-section.md`. Keep that file and this
-section in sync; the setup scripts copy it between `<!-- AKR_START -->` and
-`<!-- AKR_END -->`.
+Every installer reads that file:
 
-```markdown
-## AKR (project knowledge)
+- `scripts/setup-akr-mcp.sh` and `.ps1` copy it between `<!-- AKR_START -->` and
+  `<!-- AKR_END -->` in the global agent instruction files, and refresh the block in place.
+- `akr init` embeds it at build time and writes it, between the same markers, into a new
+  workspace's `AGENTS.md`.
 
-A `.akr/` directory is a typed ledger of what the project decided, observed, and planned. Use the `knowledge.*` MCP tools, or the `akr` CLI (`knowledge.context` → `akr context`, `knowledge.validate` → `akr check` / `akr validate`). No `.akr/`: skip this, and do not run `akr init` uninvited.
-
-### Before a task
-
-- Known planning key: `knowledge.context` with that key and the `paths` you will touch.
-- Otherwise: `knowledge.start` with the task and those paths. Read the bundle, including contradiction and staleness warnings.
-- Do not browse `.akr/records/` or `docs/generated/`. If the tools miss, log a papercut.
-
-Consult at task and state-transition boundaries, not after every edit.
-
-- Mechanical (fmt, a comment, a lock refresh): no planning read.
-- Known work: one summary, implement, one batched update.
-- Ambiguous: `knowledge.start`, one targeted read, one update.
-- Planning or reconciliation: the full bundle.
-
-### While working
-
-- Configuration changes: use `akr config --help` or `knowledge.config_get` /
-  `knowledge.config_edit`, then `akr build`.
-- `knowledge.get` reads a record; `knowledge.search` finds one. Ranking is not authority.
-- Outside advice is `sources/`. `knowledge.source_search` / `knowledge.source_get` are **non-authoritative** until a record adopts them. Never edit a registered source.
-- Never hand-edit `.akr/` or `docs/generated/`.
-- Private paths, filenames and credentials: `knowledge.secret_put` with a private UTF-8
-  input file (`akr secret put --from <file>`), then cite its opaque `{{secret:<id>}}` token
-  in public text. Normal outputs show `[*]`; canonical retrieval retains opaque tokens.
-  Only explicit `secret get` / `secret resolve --reveal` reads local values; absent data
-  stays `[*]`. Do not reveal keys to remote agents or copy values into public records,
-  evidence, sources or handoffs. `.akr/secrets/` and original input files stay private,
-  outside Git and published archives. Share secrets only through a separate trusted channel.
-
-### When knowledge changes
-
-- New: `knowledge.propose`. Observations need `observed_at`, and `watches` if they can go stale.
-- Changed: `knowledge.revise`. Never edit a record that is not `proposed`.
-- Replacing a plan: `knowledge.supersede`, with a disposition for every unfinished child.
-- Finished work: `knowledge.evidence_add`, then `knowledge.complete`. An evidence `artifact` must not be under `.agent/scratch`; move it or `akr scratch keep` it first.
-- Friction: `knowledge.papercut`.
-- Handoff: `knowledge.validate`.
-
-### Handoff
-
-`akr handoff worker` invokes a subagent. `akr handoff scout` invokes an independent agent. `akr handoff advisor` invokes a second opinion. `akr handoff reviewer` invokes an adversarial check.
-
-Because inherited facts are cheap and inherited conclusions are not.
-
-Open a session first (`akr handoff session begin --request-file <file>`, the file holding the user's words verbatim); each packet inherits it, so no child re-derives the project. Your shell runs backticks and `$(...)` inside double quotes before akr starts, so text that names a command goes in a file: `--task-file`, or every field as JSON via `--spec <file>`. `akr handoff --help` has the rest.
-
-### Scratch
-
-`.agent/scratch/` is gitignored and never auto-deleted. Before handoff: `akr scratch prune` (also drops live evidence citations of entries it removes, and of scratch paths already gone); `akr scratch keep <name> --reason "..."` to retain; `akr scratch list`. `akr check --scratch-clean` fails on prunable leftovers and deletes nothing. Same for any persistent scratch directory if the workspace has no AKR.
-
-### Cost
-
-The first `knowledge.*` call derives git freshness (~1–2s). Later calls are cheap until `HEAD` or the working tree changes. Batch reads; do not poll a slow call.
-```
+It is deliberately protocol only — no philosophy, no data model, no examples — because an
+agent reads it every session and every extra line competes with the task. It opens with
+what the ledger is for (*help the next agent understand what happened in this session*),
+and the MCP handshake `instructions` carry that sentence too. What a particular slot
+should hold is not in the brief: it is the `doc` line on the slot in
+`spec/tables/vocabulary.json`, printed by `akr explain <kind>` and carried in the
+`slots` schema of `knowledge.propose`.
 
 That is the whole protocol. One collated first read replaces chronological record
 searching; focused context and detail remain explicit follow-ups.

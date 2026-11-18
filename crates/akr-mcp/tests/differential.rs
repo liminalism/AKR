@@ -259,9 +259,9 @@ fn bulk_propose_writes_the_same_ledger_from_either_surface() {
     let over_mcp = Example::materialise("differential-propose-many-mcp");
     let payload = concat!(
         r#"{"records":["#,
-        r#"{"key":"sys.track.phased","kind":"track","title":"Phased track","slots":{"intent":"Coordinate phased milestones."}},"#,
-        r#"{"key":"sys.milestone.phase-0","kind":"milestone","title":"Phase 0","slots":{"intent":"Initial skeleton."},"relations":{"part_of":["@sys.track.phased"],"depends_on":["@sys.req.deterministic-sim"]},"acceptance":[{"id":"skeleton","statement":"Skeleton compiles.","method":"manual"}]},"#,
-        r#"{"key":"sys.milestone.phase-1","kind":"milestone","title":"Phase 1","slots":{"intent":"Follow-on milestone."},"relations":{"part_of":["@sys.track.phased"],"after":["@sys.milestone.phase-0"]},"acceptance":[{"id":"loop","statement":"Loop runs.","method":"command","command":"cargo test"}]}"#,
+        r#"{"key":"sys.work.phased","kind":"work","title":"Phased work","slots":{"intent":"Coordinate phased milestones."}},"#,
+        r#"{"key":"sys.milestone.phase-0","kind":"milestone","title":"Phase 0","slots":{"intent":"Initial skeleton."},"relations":{"part_of":["@sys.work.phased"],"depends_on":["@sys.req.deterministic-sim"]},"acceptance":[{"id":"skeleton","statement":"Skeleton compiles.","method":"manual"}]},"#,
+        r#"{"key":"sys.milestone.phase-1","kind":"milestone","title":"Phase 1","slots":{"intent":"Follow-on milestone."},"relations":{"part_of":["@sys.work.phased"],"after":["@sys.milestone.phase-0"]},"acceptance":[{"id":"loop","statement":"Loop runs.","method":"command","command":"cargo test"}]}"#,
         r#"]}"#
     );
     let tool = call(&over_mcp, "knowledge.propose_many", payload);
@@ -271,20 +271,20 @@ fn bulk_propose_writes_the_same_ledger_from_either_surface() {
         "{}",
         tool.to_pretty()
     );
-    let mcp_tracks = over_mcp.read_file(".akr/records/sys/tracks.akr");
+    let mcp_tracks = over_mcp.read_file(".akr/records/sys/work.akr");
     let mcp_milestones = over_mcp.read_file(".akr/records/sys/milestones.akr");
 
     let over_cli = Example::materialise("differential-propose-many-cli");
     let batch = "\
-record sys.track.phased/1 : track {
-    title \"Phased track\"
+record sys.work.phased/1 : work {
+    title \"Phased work\"
     intent \"Coordinate phased milestones.\"
 }
 
 record sys.milestone.phase-0/1 : milestone {
     title \"Phase 0\"
     intent \"Initial skeleton.\"
-    part_of [ @sys.track.phased ]
+    part_of [ @sys.work.phased ]
     depends_on [ @sys.req.deterministic-sim ]
     acceptance {
         check skeleton {
@@ -297,7 +297,7 @@ record sys.milestone.phase-0/1 : milestone {
 record sys.milestone.phase-1/1 : milestone {
     title \"Phase 1\"
     intent \"Follow-on milestone.\"
-    part_of [ @sys.track.phased ]
+    part_of [ @sys.work.phased ]
     after [ @sys.milestone.phase-0 ]
     acceptance {
         check loop {
@@ -311,7 +311,7 @@ record sys.milestone.phase-1/1 : milestone {
     over_cli.write_file("batch.akr", batch);
     let run = over_cli.run(&["propose-many", "--from", "batch.akr"]);
     assert_eq!(run.code, 0, "{}", run.output());
-    let cli_tracks = over_cli.read_file(".akr/records/sys/tracks.akr");
+    let cli_tracks = over_cli.read_file(".akr/records/sys/work.akr");
     let cli_milestones = over_cli.read_file(".akr/records/sys/milestones.akr");
 
     assert_eq!(

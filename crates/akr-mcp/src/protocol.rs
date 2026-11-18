@@ -228,13 +228,17 @@ impl Server {
         } else {
             ("knowledge.context", "knowledge.validate")
         };
-        let secret_put = if self.host_safe_tool_names.load(Ordering::Relaxed) {
-            "knowledge_secret_put"
+        let (secret_put, trace) = if self.host_safe_tool_names.load(Ordering::Relaxed) {
+            ("knowledge_secret_put", "knowledge_trace")
         } else {
-            "knowledge.secret_put"
+            ("knowledge.secret_put", "knowledge.trace")
         };
+        // D-049: what the ledger is for, said where every session reads it.
+        let purpose = format!(
+            " Part of your job is to help the next agent understand what happened here:              what was asked, what you found in the code as it stood, and why that led to              what you did. Record it as you go with {trace} on the work record, in              proportion to the expected impact of the change; never restate a diff."
+        );
         let privacy = format!(
-            " Keep private paths, filenames and credentials in local-only secret entries \
+            "{purpose} Keep private paths, filenames and credentials in local-only secret entries \
              using {secret_put} from a private UTF-8 file; cite the returned opaque \
              {{{{secret:<id>}}}} token in public text. Public output renders [*]. Never copy \
              resolved values into public records, sources, evidence or handoffs. Secret \

@@ -303,8 +303,24 @@ fn init_scaffolds_a_workspace_and_never_overwrites() {
     assert!(dir.join(".akr/archive").is_dir());
 
     let agents = std::fs::read_to_string(dir.join("AGENTS.md")).expect("AGENTS.md");
-    assert!(agents.contains("## Project knowledge (AKR)"));
+    // D-049: the one brief, between the markers the setup scripts refresh in place.
+    assert!(agents.contains("<!-- AKR_START -->"), "{agents}");
+    assert!(agents.contains("<!-- AKR_END -->"), "{agents}");
+    assert!(agents.contains("## AKR (project knowledge)"));
     assert!(agents.contains("knowledge.context"));
+    assert!(
+        agents.contains("help the next agent understand"),
+        "the brief says what the ledger is for"
+    );
+    assert!(
+        agents.contains("akr change begin") && agents.contains("akr git commit"),
+        "the brief names the commit protocol"
+    );
+    assert_eq!(
+        agents.matches("## AKR (project knowledge)").count(),
+        1,
+        "written once"
+    );
     let ignore = std::fs::read_to_string(dir.join(".gitignore")).expect(".gitignore");
     assert!(ignore.contains(".akr/cache/"));
     assert!(ignore.contains(".agent/scratch/"));

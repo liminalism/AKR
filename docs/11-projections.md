@@ -92,6 +92,12 @@ order is total ([`06-compiler-pipeline.md`](06-compiler-pipeline.md) §11).
 **Empty sections are printed with `_(none)_`.** A missing heading would be ambiguous
 between "nothing here" and "not generated".
 
+**The one exception is a retired kind (D-046).** The `Terms`, `Constraints`,
+`Requirements` and `Assessments` sections of `CURRENT-STATE.md`, and the `Tracks` section
+and table of `ROADMAP.md`, are printed only when the ledger holds such records. A project
+that never wrote a `term` is not told that it has none; one that did keeps the section
+exactly as it was.
+
 **A terminal planning record renders its `note` slot.** `work`, `milestone` and `track`
 carry an optional `note` (D-026): free-form operator commentary with no validation
 consequence, which is where `akr abandon --reason` puts the reason. When such a record is

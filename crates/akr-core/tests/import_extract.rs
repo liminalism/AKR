@@ -78,11 +78,11 @@ fn the_kinds_follow_the_documented_rules() {
     assert_eq!(
         kinds,
         [
-            Kind::Requirement, // "must"
-            Kind::Decision,    // "we decided"
-            Kind::Track,       // "ongoing"
-            Kind::Policy,      // "every"
-            Kind::Question,    // the title ends in ?
+            Kind::Policy,   // "must": requirement is retired (D-046)
+            Kind::Decision, // "we decided"
+            Kind::Policy,   // "ongoing": track is retired (D-046)
+            Kind::Policy,   // "every"
+            Kind::Question, // the title ends in ?
         ]
     );
     // The docs/12 §2 table rows, verbatim.
@@ -91,7 +91,7 @@ fn the_kinds_follow_the_documented_rules() {
             "x",
             "The simulator must produce the same run from the same seed."
         ),
-        Kind::Requirement
+        Kind::Policy
     );
     assert_eq!(
         classify(
@@ -102,7 +102,7 @@ fn the_kinds_follow_the_documented_rules() {
     );
     assert_eq!(
         classify("x", "Lighting is ongoing; no milestone owns it."),
-        Kind::Track
+        Kind::Policy
     );
     // The floor never fabricates the kinds whose required slots a document cannot fill.
     assert_eq!(classify("x", "TODO: fix the projection pass."), Kind::Work);

@@ -184,18 +184,32 @@ pub const TOOLS: &[Tool] = &[
     Tool {
         name: "knowledge.complete",
         description: "Move a milestone or work record to completed. Every acceptance check \
-                      must be satisfied by passing evidence — create it first with \
-                      knowledge.evidence_add, then cite it here as a D-009 reference, e.g. \
-                      {\"checks\": {\"no-placeholder-assets\": \
+                      must be satisfied. A `command` check you ran and saw pass records \
+                      itself: {\"checks\": {\"suite\": {\"passed_at\": \"HEAD\"}}} — no \
+                      evidence record (D-048). Anything else cites evidence created with \
+                      knowledge.evidence_add: {\"checks\": {\"no-placeholder-assets\": \
                       \"@sys.evidence.asset-audit/1\"}}.",
+        writes: true,
+    },
+    Tool {
+        name: "knowledge.trace",
+        description: "Append why to a work record, a line at a time (D-047). Part of your \
+                      job is to help the next agent understand what happened here: what \
+                      was asked, what you found in the code as it stood, and why that led \
+                      to what you did — dead ends included. One reason per entry, about \
+                      25 words (40 is refused); more entries for a change with more \
+                      impact, never longer ones. Never restate the diff: git has it. \
+                      Edits the head in place: no revision, no acceptance check reopened.",
         writes: true,
     },
     Tool {
         name: "knowledge.evidence_add",
         description: "Record what was observed: result, method, and the commit it was \
-                      observed at (defaults to HEAD). Deliberately has no field for what \
-                      the evidence verifies (D-016) — cite it from a check's verified_by \
-                      or from knowledge.complete.",
+                      observed at (defaults to HEAD). For a measurement, a failure, an \
+                      artefact or a manual observation — a `command` check that simply \
+                      passed needs no evidence record (knowledge.complete, passed_at). \
+                      Deliberately has no field for what the evidence verifies (D-016) — \
+                      cite it from a check's verified_by or from knowledge.complete.",
         writes: true,
     },
     Tool {
@@ -735,20 +749,58 @@ pub fn input_schema(name: &str) -> Option<Value> {
                         (
                             "description",
                             Value::string(
-                                "check id -> evidence reference, in a D-009 form: \
-                                 {\"no-placeholder-assets\": \
-                                 \"@sys.evidence.asset-audit/1\"}. Create the evidence \
+                                "check id -> how it is satisfied. For a `command` check \
+                                 that passed: {\"passed_at\": \"HEAD\"} or a full 40-hex \
+                                 commit (D-048). Otherwise an evidence reference in a \
+                                 D-009 form: \"@sys.evidence.asset-audit/1\", created \
                                  with knowledge.evidence_add first.",
                             ),
                         ),
                         (
                             "additionalProperties",
-                            Value::object(vec![("type", Value::string("string"))]),
+                            Value::object(vec![(
+                                "oneOf",
+                                Value::array(vec![
+                                    Value::object(vec![("type", Value::string("string"))]),
+                                    object(
+                                        vec![(
+                                            "passed_at",
+                                            string("HEAD, or the full 40-hex commit."),
+                                        )],
+                                        &["passed_at"],
+                                    ),
+                                ]),
+                            )]),
                         ),
                     ]),
                 ),
             ],
             &["key"],
+        ),
+        "knowledge.trace" => object(
+            vec![
+                ("key", string("The work record whose trace grows.")),
+                (
+                    "entries",
+                    Value::object(vec![
+                        ("type", Value::string("array")),
+                        (
+                            "description",
+                            Value::string(
+                                "One reasoning step each: why this approach, what the \
+                                 code as found forced, what was tried and dropped. About \
+                                 25 words; over 40 is AKR-T024.",
+                            ),
+                        ),
+                        (
+                            "items",
+                            Value::object(vec![("type", Value::string("string"))]),
+                        ),
+                        ("minItems", Value::integer(1)),
+                    ]),
+                ),
+            ],
+            &["key", "entries"],
         ),
         "knowledge.evidence_add" => evidence_schema(),
         "knowledge.evidence_add_many" => object(
@@ -1119,7 +1171,13 @@ fn evidence_schema() -> Value {
                 "artifact",
                 string("A repository path to the artefact, if one exists."),
             ),
-            ("summary", string("One line on what was observed.")),
+            (
+                "summary",
+                string(
+                    "What was observed, with the numbers. Not stored when it only repeats \
+                     the title.",
+                ),
+            ),
             (
                 "capture",
                 string(
@@ -1132,7 +1190,10 @@ fn evidence_schema() -> Value {
             ),
             (
                 "title",
-                string("The one-line label. Defaults to the summary or the key."),
+                string(
+                    "The one-line label. Defaults to the summary's opening words, or the \
+                     key.",
+                ),
             ),
         ],
         &["key", "result", "method"],
@@ -1144,7 +1205,8 @@ fn evidence_schema() -> Value {
 /// learns what a kind needs before the first `AKR-T001` rather than from it.
 fn kind_schema() -> Value {
     let mut description = String::from("The record kind. Contracts per kind: ");
-    for (index, kind) in akr_core::model::Kind::ALL.iter().enumerate() {
+    let written = akr_core::model::Kind::written();
+    for (index, kind) in written.iter().enumerate() {
         if index > 0 {
             description.push_str("; ");
         }
@@ -1182,13 +1244,25 @@ fn kind_schema() -> Value {
         description.push(']');
     }
     description.push('.');
+    // D-046: the retired kinds stay readable and are named here once, so an agent that
+    // remembers `requirement` learns where it went instead of meeting AKR-T008.
+    let retired: Vec<String> = akr_core::model::Kind::ALL
+        .iter()
+        .filter_map(|kind| {
+            kind.folds_into()
+                .map(|into| format!("{} -> {}", kind.name(), into.name()))
+        })
+        .collect();
+    description.push_str(" Retired, not accepted for a new key: ");
+    description.push_str(&retired.join(", "));
+    description.push('.');
     Value::object(vec![
         ("type", Value::string("string")),
         ("description", Value::string(description)),
         (
             "enum",
             Value::array(
-                akr_core::model::Kind::ALL
+                written
                     .iter()
                     .map(|kind| Value::string(kind.name()))
                     .collect(),
@@ -1307,18 +1381,46 @@ fn slots_schema() -> Value {
                 "Content slots for the selected kind. Exact contracts: {}. Topic is a \
                  separate top-level field and is only valid on normative kinds. Planning \
                  kinds accept optional `note` (D-026): operator commentary, rendered in \
-                 views for terminal records. Closed slots: {}.",
+                 views for terminal records. Closed slots: {}. What each is for: {} Say \
+                 why, never what changed: git holds the diff.",
                 slot_contract_summary(),
                 enum_slot_summary(),
+                slot_guidance_summary(),
             )),
         ),
         ("additionalProperties", Value::bool(true)),
     ])
 }
 
-/// Every kind's slots, generated from the vocabulary table used by the type-checker.
+/// What the prose slots are for, from the vocabulary's `doc` lines (D-049).
+///
+/// The audit behind D-047 found no surface that told an agent what `intent` or `context`
+/// should hold, and that agents filled them with a restatement of the diff. The text is
+/// the vocabulary's, so `akr explain` prints the same words. The bookkeeping slots a tool
+/// fills are left out: an agent never writes them through this object.
+fn slot_guidance_summary() -> String {
+    use akr_core::model::{ContentSlot, Kind};
+    let mut clauses: Vec<String> = Vec::new();
+    for kind in Kind::written() {
+        if kind == Kind::Papercut {
+            continue;
+        }
+        for spec in kind.content_slots() {
+            if matches!(spec.slot, ContentSlot::Note | ContentSlot::Trace) {
+                continue;
+            }
+            if let Some(doc) = kind.slot_doc(spec.slot) {
+                clauses.push(format!("{}.{}: {doc}", kind.name(), spec.slot.name()));
+            }
+        }
+    }
+    clauses.join(" ")
+}
+
+/// Every written kind's slots, generated from the vocabulary table used by the
+/// type-checker. Retired kinds (D-046) are left out: no new record may take one.
 fn slot_contract_summary() -> String {
-    akr_core::model::Kind::ALL
+    akr_core::model::Kind::written()
         .iter()
         .map(|kind| {
             let slots = kind
@@ -1365,7 +1467,7 @@ fn acknowledged_schema() -> Value {
 /// line and takes the guess out of it.
 fn enum_slot_summary() -> String {
     let mut clauses: Vec<String> = Vec::new();
-    for kind in akr_core::model::Kind::ALL {
+    for kind in akr_core::model::Kind::written() {
         for spec in kind.content_slots() {
             if let Some(values) = kind.content_enum_values(spec.slot) {
                 clauses.push(format!(
@@ -1477,7 +1579,10 @@ fn relations_schema() -> Value {
                         .join(", ")
                 ),
             };
-            (relation.name().to_owned(), string_array(&format!("{targets} {sources}")))
+            (
+                relation.name().to_owned(),
+                string_array(&format!("{targets} {sources}")),
+            )
         })
         .collect();
     Value::object(vec![

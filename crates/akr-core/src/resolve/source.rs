@@ -312,7 +312,13 @@ fn strip_bookkeeping(body: &mut Vec<BodyItem>) {
 
 /// The slot names that are lifecycle or completion bookkeeping, never definition.
 fn is_bookkeeping(name: &str) -> bool {
-    matches!(name, "state" | "note" | "verified_by")
+    // D-047 adds `trace` (appended reasoning) and D-048 `passed_at` (a check recording its
+    // own pass): both are written while the work is done and neither changes what the
+    // record requires.
+    matches!(
+        name,
+        "state" | "note" | "verified_by" | "trace" | "passed_at"
+    )
 }
 
 /// Indexes the spans of one record: the revision itself, then each slot and block.

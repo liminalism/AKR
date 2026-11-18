@@ -143,6 +143,7 @@ pub fn call(root: &Path, name: &str, arguments: &Value) -> Result<ToolResult, To
         "knowledge.revise" => revise(root, arguments),
         "knowledge.supersede" => supersede(root, arguments),
         "knowledge.complete" => complete(root, arguments),
+        "knowledge.trace" => trace(root, arguments),
         "knowledge.evidence_add" => evidence_add(root, arguments),
         "knowledge.evidence_add_many" => evidence_add_many(root, arguments),
         "knowledge.handoff_capsule" => run_read(
@@ -841,7 +842,15 @@ fn config_edit(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> 
 fn build_proposed_record(
     session: &Session,
     arguments: &Value,
-) -> Result<(LogicalKey, akr_core::model::Kind, String, akr_core::model::Record), ToolError> {
+) -> Result<
+    (
+        LogicalKey,
+        akr_core::model::Kind,
+        String,
+        akr_core::model::Record,
+    ),
+    ToolError,
+> {
     let key = required_str(arguments, "key")?;
     let kind_name = required_str(arguments, "kind")?;
     let title = required_str(arguments, "title")?;
@@ -871,7 +880,8 @@ fn propose(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
     akr_cli::write::ensure_commits_exist(&session, &akr_cli::write::commits_named_by(&template))
         .map_err(environment)?;
     let context = write_context(&session);
-    let mut result = akr_core::ops::propose(&context, &parsed, kind, &title, Some(template.clone()));
+    let mut result =
+        akr_core::ops::propose(&context, &parsed, kind, &title, Some(template.clone()));
     akr_cli::write::note_unmatched_watches(&session, &mut result, &parsed, Some(&template));
     Ok(ToolResult::Structured(write_result(
         &session, &parsed, result,
@@ -1093,10 +1103,33 @@ fn complete(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
     let key = required_str(arguments, "key")?;
     let parsed = key_of(key)?;
     let mut checks = Vec::new();
+    // D-048: a command check may record its own pass — `{"passed_at": "HEAD"}` in place
+    // of an evidence reference. The spelling is the CLI's `--pass <check>[=<commit>]`,
+    // parsed by the same function, so both surfaces accept and refuse the same things.
+    let mut passes: Vec<String> = Vec::new();
     if let Some(Value::Object(pairs)) = arguments.get("checks") {
         for (id, reference) in pairs {
+            if let Some(commit) = reference.get("passed_at") {
+                let text = commit.as_str().ok_or_else(|| {
+                    ToolError::new(
+                        "AKR-C004",
+                        format!("check `{id}`: passed_at is \"HEAD\" or a 40-hex commit"),
+                    )
+                })?;
+                passes.push(if text == "HEAD" {
+                    id.clone()
+                } else {
+                    format!("{id}={text}")
+                });
+                continue;
+            }
             let text = reference.as_str().ok_or_else(|| {
-                ToolError::new("AKR-C004", format!("check `{id}` needs a reference"))
+                ToolError::new(
+                    "AKR-C004",
+                    format!(
+                        "check `{id}` needs an evidence reference, or {{\"passed_at\": \"HEAD\"}} for a command check that passed"
+                    ),
+                )
             })?;
             let reference = akr_core::model::Reference::parse(text).map_err(|e| {
                 ToolError::new(
@@ -1107,11 +1140,45 @@ fn complete(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
             checks.push((id.clone(), reference));
         }
     }
+    let passes = akr_cli::write::parse_passes(&session, &passes).map_err(environment)?;
+    let commits: Vec<akr_core::model::Commit> =
+        passes.iter().map(|(_, commit)| commit.clone()).collect();
+    akr_cli::write::ensure_commits_exist(&session, &commits).map_err(environment)?;
     let context = write_context(&session);
     Ok(ToolResult::Structured(write_result(
         &session,
         &parsed,
-        akr_core::ops::complete(&context, &parsed, &checks),
+        akr_core::ops::complete_with(&context, &parsed, &checks, &passes),
+    )?))
+}
+
+/// `knowledge.trace`: reasoning steps appended to a work record, in place (D-047).
+fn trace(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
+    let session = open(root, true)?;
+    let key = required_str(arguments, "key")?;
+    let parsed = key_of(key)?;
+    let entries: Vec<String> = match arguments.get("entries") {
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|item| {
+                item.as_str()
+                    .map(ToOwned::to_owned)
+                    .ok_or_else(|| ToolError::new("AKR-C004", "entries is an array of strings"))
+            })
+            .collect::<Result<_, _>>()?,
+        Some(Value::String(text)) => vec![text.clone()],
+        _ => {
+            return Err(ToolError::new(
+                "AKR-C003",
+                "entries is required: one reasoning step per string",
+            ));
+        }
+    };
+    let context = write_context(&session);
+    Ok(ToolResult::Structured(write_result(
+        &session,
+        &parsed,
+        akr_core::ops::trace_append(&context, &parsed, &entries),
     )?))
 }
 

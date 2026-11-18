@@ -114,27 +114,36 @@ one of these four; a fifth class would mean the model was wrong.
 
 ## 3. The thirteen kinds
 
+Eight kinds are written. Five are **retired** (D-046): they parse, validate, hash and
+render exactly as they always did, so a ledger's history reads as it was written, but no
+new key may take one (`AKR-T008`). §3.2 says where each went.
+
 | Kind | Class | Purpose in one line | Required content | Distinctive slots |
 | --- | --- | --- | --- | --- |
-| `term` | normative | Fixes the project's meaning for a word that would otherwise drift | `definition` | `aliases` |
-| `requirement` | normative | Something the delivered system must do or be | `statement` | `rationale` |
-| `policy` | normative | A standing rule about how the project works | `rule` | `exceptions`, `rationale` |
-| `constraint` | normative | A limit the project must respect but did not choose | `statement` | `measure` |
+| `policy` | normative | A standing rule, requirement or limit the project must respect | `rule` | `exceptions`, `rationale`, `measure`, `aliases` |
 | `decision` | normative | A choice made between alternatives, and what follows | `decision` | `context`, `consequences` |
-| `observation` | empirical | What was found true of the system at a specific commit | `statement`, `observed_at` | `watches`, `review_after`, `method` |
+| `observation` | empirical | What was found true of the system at a specific commit, or a judgement drawn from such findings | `statement`, `observed_at` | `watches`, `review_after`, `method`, `confidence` |
 | `evidence` | empirical | The outcome of a check that was actually run | `result`, `method`, `observed_at` | `command`, `artifact`, `summary` |
-| `assessment` | empirical | A judgement drawn from observations | `statement` | `confidence`, `as_of` |
 | `papercut` | empirical | A small friction hit while working, logged in the moment (D-027) | `statement`, `observed_at` | — |
 | `milestone` | planning | A named point at which defined checks pass | `intent`, `acceptance` | `target`, `note` |
-| `work` | planning | A unit of intended change | `intent` | `acceptance`, `disposition`, `target`, `note` |
-| `track` | planning | Standing work no milestone contains | `intent` | `cadence`, `note` |
+| `work` | planning | A unit of intended change | `intent` | `acceptance`, `disposition`, `target`, `note`, `trace` |
 | `question` | inquiry | An open matter that blocks or endangers something | `question` | `resolution` |
+| `term` *(retired)* | normative | Fixes the project's meaning for a word that would otherwise drift | `definition` | `aliases` |
+| `requirement` *(retired)* | normative | Something the delivered system must do or be | `statement` | `rationale` |
+| `constraint` *(retired)* | normative | A limit the project must respect but did not choose | `statement` | `measure` |
+| `assessment` *(retired)* | empirical | A judgement drawn from observations | `statement` | `confidence`, `as_of` |
+| `track` *(retired)* | planning | Standing work no milestone contains | `intent` | `cadence`, `note` |
 
 Every kind also accepts the common slots: `title`, `state`, `scope`, `retired_claims`,
 `acknowledged`, `author`, `created_at`, any relation slot permitted by §7, and any number
 of `claim` and `source` blocks.
 
-### 3.1 The three distinctions people get wrong
+### 3.1 The three distinctions people got wrong
+
+These are the distinctions the original vocabulary asked authors to make. Three months
+of real use showed that they were not made reliably (`docs/19`), which is why D-046
+retired the kinds on the far side of each. They are kept here because sealed records
+still carry those kinds and a reader needs to know what was meant.
 
 **`requirement` versus `policy`.** A requirement is about the artifact; a policy is
 about the work. "The simulator must be reproducible from a seed" is a requirement — it
@@ -153,6 +162,36 @@ true of the code. Evidence says what happened when a check was run. An assessmen
 what someone concluded from those. They are separate kinds because they go stale
 differently and because collapsing them is how "the tests passed" quietly becomes "the
 system works".
+
+### 3.2 Retired kinds and where they went
+
+| Retired | Write this instead | What carried over |
+| --- | --- | --- |
+| `assessment` | `observation` | `confidence`; an observation may now declare `supported_by` |
+| `requirement` | `policy` | may declare `part_of` and `verified_by` |
+| `constraint` | `policy` | `measure`; may declare `blocks`; a legal `ref` scope and `exceptions` target |
+| `term` | `policy` | `aliases`, still searched |
+| `track` | `milestone`, or `policy` for standing work that never ends | every structural role; `cadence` is not carried over |
+
+A record that already has a retired kind may still be revised and moved through its
+lifecycle. It leaves the kind by supersession: `akr supersede <key> --with <new-key>
+--from <body>` creates the replacement and retires the old head in one write, and
+`supersedes` may cross kinds along this table and nowhere else (V-014). Nothing folds
+automatically, because the replacement kinds have obligations the retired ones did not —
+an observation needs `observed_at`, a milestone needs acceptance checks — and a tool
+cannot invent those. `akr check` reports how many live records of retired kinds a ledger
+holds, as a build fact.
+
+### 3.3 Where reasoning goes
+
+The ledger exists to answer *why was this done*, not *what was done* — git answers the
+second. Three tiers (D-047):
+
+| What is being explained | Where it goes |
+| --- | --- |
+| A line of code | A comment beside it. Never a record. |
+| A step of work: a reason, a parameter choice, a dead end | An entry in the work record's `trace` (§4.10). |
+| A choice that binds the project, or a finding that will be re-read | A `decision` (`context`, `consequences`) or an `observation`. |
 
 ---
 
@@ -232,8 +271,10 @@ A standing rule about how the project works.
 | Slot | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `rule` | prose | yes | Written in the imperative. It should be possible to violate it. |
-| `rationale` | prose | no | |
-| `exceptions` | ref[] | no | Milestones, tracks, work items, or constraints where the rule is suspended. |
+| `rationale` | prose | no | Why the rule exists: what it protects, and what was seen without it. |
+| `exceptions` | ref[] | no | Milestones, tracks, work items, constraints or policies where the rule is suspended. |
+| `measure` | string | no | The limit as a number or a testable condition, when there is one (D-046). |
+| `aliases` | string[] | no | Other words a reader might search for the rule, or for the word it defines (D-046). |
 
 ```
 record sys.policy.tandem-work/1 : policy {
@@ -348,6 +389,7 @@ What was found to be true of the system, at a specific commit.
 | `method` | enum | no | `manual`, `command`, `instrumented`, `observation`. |
 | `watches` | glob[] | no | Paths whose change should make someone re-check this. |
 | `review_after` | date | no | A date after which this should be re-checked regardless. |
+| `confidence` | enum | no | `low`, `medium`, `high`: how far a judgement, as opposed to a measurement, can be trusted (D-046). |
 
 ```
 record sim.obs.projection-gaps/1 : observation {
@@ -514,9 +556,10 @@ track is what other systems would call a plan; AKR has no separate `plan` kind (
 
 | Slot | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `intent` | prose | yes | What will change. |
+| `intent` | prose | yes | The outcome wanted and what makes it necessary. Not a list of files: the diff shows those. |
 | `target` | date | no | |
 | `note` | prose | no | Operator commentary (D-026). `akr abandon --reason` writes it. |
+| `trace` | string[] | no | Reasoning steps, appended as the work proceeds (D-047). See below. |
 | `acceptance` | block | no | Optional; a work item may borrow its milestone's. |
 | `disposition` | block[] | conditional | Required when superseding a planning record with unfinished children (§8.3). |
 
@@ -548,6 +591,34 @@ record sys.work.m3-plan/2 : work {
 At most one live work record may be `plan_of_record` for a given milestone or track
 (V-018). Two live plans for one milestone is the ambiguity the invariant exists to
 forbid.
+
+### The `trace` slot
+
+`trace` is where a work record says *why*: one short entry per reasoning step — why this
+approach, what the code as found forced, what was tried and dropped (D-047).
+
+```
+trace [
+    "renderer boundary first: the sim step cannot be tested while the viewer owns the passes",
+    "dropped the shared clock: it made a day boundary depend on frame rate"
+]
+```
+
+- **Appended in place.** `akr trace <work> "<why>"` (`knowledge.trace`) adds an entry to
+  the head revision whether or not it is sealed. No revision is minted, no acceptance
+  check is put back in question (`trace` is bookkeeping under D-029, like `note`), and
+  `akr build` reseals the record. Entries are never edited or removed.
+- **Short.** An entry over 25 words draws a note; one over 40 is refused (V-026,
+  `AKR-T024`). Explain in proportion to the expected impact of the change by adding
+  entries, never by lengthening them.
+- **Never required.** Nothing refuses a work record with no trace. Completing one draws a
+  note.
+- **Linked to commits by derivation.** `akr get <work>` prints each entry beside the
+  commit that introduced it, computed from git history; no commit id is stored (D-032).
+  A commit made through `akr change` carries the entries it adds as `AKR-Why:` trailers.
+
+A trace entry is not a changelog line. "Added `Cache::warm` and three tests" restates the
+diff. "Warmed on start: a cold first query took 4 s and users read it as a hang" is why.
 
 ### The `note` slot
 
@@ -936,14 +1007,29 @@ acceptance {
 | `method` | enum | yes | `manual`, `command`, `observation`. |
 | `command` | string | no | Required in practice for `method command`, or the check is not reproducible. |
 | `verified_by` | ref[] | no | Evidence records. Absent until something is actually run. |
+| `passed_at` | commit | no | The commit at which a `command` check was run and passed (D-048). |
 
 ### 9.1 When a check is satisfied
 
-A check is satisfied when at least one referenced evidence record has:
+A check is satisfied in one of two ways.
+
+**By its own recorded pass (D-048).** A check with `method command` that carries
+`passed_at`, naming a commit this repository has. `akr complete <key> --pass <check>`
+writes it, defaulting to `HEAD`. This is the ordinary case — the command is already on
+the check, so the commit is the only fact left to record, and no evidence record is
+needed. Any write that changes what the record requires drops every `passed_at` it would
+have carried forward, so a stamp that is present was written against the definition
+beside it. It is refused on a `manual` or `observation` check, which has no recorded
+procedure: what was seen has to be written down, and that is evidence.
+
+**By evidence.** At least one referenced evidence record has:
 
 1. `result pass`, and
 2. an `observed_at` commit that is a **descendant of** the last commit that changed the
    content of the planning record's current revision.
+
+Use evidence for a measurement, a captured artefact, a failure or an inconclusive run,
+and anything a later reader will want to read.
 
 Condition 2 is what stops a green test run from 200 commits ago closing a milestone
 whose definition changed yesterday. If you edit a milestone's acceptance, its evidence

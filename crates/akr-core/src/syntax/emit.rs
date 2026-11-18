@@ -211,6 +211,9 @@ fn emit_check(out: &mut String, check: &Check) {
         let refs: Vec<String> = check.verified_by.iter().map(ToString::to_string).collect();
         let _ = writeln!(out, "            verified_by [ {} ]", refs.join(", "));
     }
+    if let Some(commit) = &check.passed_at {
+        let _ = writeln!(out, "            passed_at {commit}");
+    }
     out.push_str("        }\n");
 }
 

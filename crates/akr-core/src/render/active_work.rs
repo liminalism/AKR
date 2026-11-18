@@ -230,6 +230,7 @@ fn acceptance_blocks(cx: RenderContext<'_>, record: &Record) -> Vec<String> {
 fn verdict_text(verdict: &Verdict) -> String {
     match verdict {
         Verdict::Satisfied { by, .. } => format!("**satisfied** by `@{by}`"),
+        Verdict::Passed { at } => format!("**satisfied** — passed at `{}`", &at.as_str()[..8]),
         Verdict::NoEvidence => "not satisfied — no evidence".to_owned(),
         Verdict::Unresolved => "not satisfied — the cited evidence does not resolve".to_owned(),
         Verdict::Failing { by, result } => format!(

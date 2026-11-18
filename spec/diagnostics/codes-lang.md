@@ -111,11 +111,12 @@ One record against the vocabulary. This stage sees a record and
 | --- | --- | --- | --- | --- | --- |
 | `AKR-T001` | Missing required slot | error | V-008 | `{kind} requires slot `{name}`` | See the kind's table in `docs/02` §4. |
 | `AKR-T002` | Unknown slot | error | V-008 | `{kind} has no slot `{name}`; did you mean `{suggestion}`?` | Rejecting unknown slots is what keeps the vocabulary closed. |
-| `AKR-T003` | Unknown kind | error | V-008 | `{kind} is not a record kind` | Twelve kinds (D-001). `plan` and `goal` are not among them; see `docs/02` §12. |
+| `AKR-T003` | Unknown kind | error | V-008 | `{kind} is not a record kind` | Thirteen kinds, five of them retired (D-001, D-027, D-046). `plan` and `goal` are not among them; see `docs/02` §12. |
 | `AKR-T004` | Unknown block | error | V-008 | `{name} is not a block` | Five blocks, and no others (`docs/02` §1.1). |
 | `AKR-T005` | Block not permitted for kind | error | V-008 | `{kind} may not contain a `{block}` block` | `acceptance` is milestone and work only; `disposition` is planning kinds only. |
 | `AKR-T006` | Missing required block | error | V-008 | `{kind} requires an `acceptance` block` | Milestones without acceptance are the failure the format exists to prevent. |
 | `AKR-T007` | Block in the wrong place | error | V-008 | ``check` blocks appear only inside `acceptance`` | |
+| `AKR-T008` | Retired kind on a new key | error | — | `{key}: {kind} is a retired kind; no new record may take it` | Raised by the write pipeline, not by a rule: only a write knows which keys it creates. Five kinds are retired and fold into `policy`, `observation` or `milestone` (D-046). Existing records of a retired kind stay valid and may be revised. |
 | `AKR-T011` | Illegal state for kind | error | V-007 | `{state} is not a valid state for {kind} ({class}); expected one of {states}` | Four class lifecycles (`docs/02` §5). `needs-review` is not a state anywhere (D-003). |
 | `AKR-T012` | Unknown enum value | error | V-008 | `{value} is not a valid `{slot}`; expected one of {values}` | |
 | `AKR-T013` | Wrong value type | error | V-008 | `slot `{name}` expects {expected}, found {found}` | Where a stray integer or unquoted string lands (`docs/03` §3.8). |
@@ -123,6 +124,7 @@ One record against the vocabulary. This stage sees a record and
 | `AKR-T021` | Observation missing `observed_at` | error | V-009 | `observation requires `observed_at`` | An observation without a commit is a rumour, and can never go stale. |
 | `AKR-T022` | Evidence missing required slot | error | V-010 | `evidence requires `{slot}`` | `result`, `method`, and `observed_at`, all three. |
 | `AKR-T023` | Evidence artefact under disposable scratch | error | V-025 | `artifact {path} is under .agent/scratch, which is disposable` | Unkept scratch is pruned on an ordinary handoff (D-036), so the citation outlives its backing. |
+| `AKR-T024` | Trace entry too long | error | V-026 | `trace entry {n} is {words} words; the limit is 40` | Aim for 25; the tool notes an entry above that and refuses only above 40 (D-047). Live revisions only. |
 | `AKR-T031` | Resolved question missing resolution | error | V-011 | `question in state `resolved` requires a `resolution` slot` | The companion check — that something `resolves` it — is at resolve, under the same rule. |
 | `AKR-T032` | Malformed scope term | error | V-008 | `scope term must be `all`, `ref @key`, or `path "glob"`` | Three forms (D-010). |
 | `AKR-T033` | Malformed glob | error | V-008 | `glob may use * ** ? and [...]; brace expansion and negation are not supported` | |

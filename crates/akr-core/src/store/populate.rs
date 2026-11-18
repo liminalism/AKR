@@ -498,6 +498,13 @@ fn write_full_text(tx: &Transaction, inputs: &IndexInputs) -> Result<usize, Inde
         // project's meaning for it — usually the record the searcher actually wanted
         // (`docs/09-context-assembly.md` §10).
         let aliases = strings(record, ContentSlot::Aliases).join(" ");
+        // D-047: a work record's reasoning is what a later reader searches for — "why
+        // did we drop the colliders" — so the trace is ranked with the body it explains.
+        let mut body = body_of(record).unwrap_or_default();
+        for entry in strings(record, ContentSlot::Trace) {
+            body.push('\n');
+            body.push_str(&entry);
+        }
         tx.execute(
             "INSERT INTO records_fts (key, rev, kind, title, body, claims, aliases) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -506,7 +513,7 @@ fn write_full_text(tx: &Transaction, inputs: &IndexInputs) -> Result<usize, Inde
                 i64::from(record.id.revision),
                 record.kind.name(),
                 record.title,
-                body_of(record).unwrap_or_default(),
+                body,
                 claims,
                 aliases,
             ],

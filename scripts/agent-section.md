@@ -6,6 +6,15 @@ If `knowledge.*` tools are missing from the MCP catalogue (Grok Build 1.0.25 dro
 
 Session opened above the projects (a folder of checkouts)? `knowledge.*` tools then take `workspace` — the project directory, e.g. `"workspace": "Lege-ecosystem"` — on every call (D-045); the CLI equivalent is `--dir`.
 
+### What the ledger is for
+
+Part of your job this session is to help the next agent understand what happened in it: what the user asked, what you found in the code as it stood, and why that led to what you did. Explain in proportion to the expected impact of a change, not its line count. Never restate a diff — git has it.
+
+- A step of work, a reason, a dead end: `knowledge.trace` on the work record (`akr trace <work> "<why>"`). One line each, about 25 words, as you go.
+- A choice that binds the project: a `decision`. `context` says what forced it and what was rejected.
+- A finding someone will re-read — a root cause, a measurement, an assumption that turned out false: an `observation`.
+- A line of code: a comment beside it, never a record.
+
 ### Before a task
 
 - Known planning key: `knowledge.context` with that key and the `paths` you will touch.
@@ -36,12 +45,16 @@ Consult at task and state-transition boundaries, not after every edit.
 
 ### When knowledge changes
 
-- New: `knowledge.propose`. Observations need `observed_at`, and `watches` if they can go stale.
+- New: `knowledge.propose`. Observations need `observed_at`, and `watches` if they can go stale. `policy` is the one kind for a standing rule, requirement or limit; `term`, `requirement`, `constraint`, `assessment` and `track` are retired — readable, never created.
 - Changed: `knowledge.revise`. Never edit a record that is not `proposed`.
 - Replacing a plan: `knowledge.supersede`, with a disposition for every unfinished child.
-- Finished work: `knowledge.evidence_add`, then `knowledge.complete`. An evidence `artifact` must not be under `.agent/scratch`; move it or `akr scratch keep` it first.
+- Finished work: `knowledge.complete`. A `command` check you ran and saw pass records itself — `"checks": {"<id>": {"passed_at": "HEAD"}}` (`akr complete <key> --pass <id>`) — with no evidence record. `knowledge.evidence_add` is for a measurement, a failure, an artefact or a manual observation; its `artifact` must not be under `.agent/scratch` (move it, or `akr scratch keep` it first).
 - Outside friction: `knowledge.papercut` with `about="<tool>"`.
 - Handoff: `knowledge.validate`.
+
+### Committing
+
+`akr change begin --kind <kind> --summary "<imperative>" --primary <work-key>` (mechanical work: `--untracked-reason "<why>"` instead), `git add` the code, records, lock and views, then `akr change prepare --staged` and `akr git commit`. Trace entries the commit adds become its `AKR-Why:` trailers. Never write a commit id into the ledger.
 
 ### Handoff
 

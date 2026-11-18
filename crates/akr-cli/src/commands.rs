@@ -77,7 +77,8 @@ pub fn run_standalone(command: &Command) -> Option<Result<Output, EnvError>> {
         Command::Init {
             project,
             namespaces,
-        } => Some(crate::init::run(project.as_deref(), namespaces)),
+            no_hooks,
+        } => Some(crate::init::run(project.as_deref(), namespaces, !*no_hooks)),
         _ => None,
     }
 }
@@ -382,6 +383,7 @@ fn dispatch(session: &mut Session, command: &Command) -> Result<Output, EnvError
             related,
             note,
             untracked_reason,
+            why,
         } => crate::change::begin(
             session,
             kind,
@@ -391,6 +393,7 @@ fn dispatch(session: &mut Session, command: &Command) -> Result<Output, EnvError
             related,
             note.as_deref(),
             untracked_reason.as_deref(),
+            why,
         ),
         Command::ChangeShow => crate::change::show(session),
         Command::ChangeAbort => crate::change::abort(session),
@@ -421,6 +424,7 @@ fn dispatch(session: &mut Session, command: &Command) -> Result<Output, EnvError
         | Command::Supersede { .. }
         | Command::Complete { .. }
         | Command::Abandon { .. }
+        | Command::Trace { .. }
         | Command::Papercut { .. }
         | Command::PapercutClose { .. }
         | Command::PapercutReset { .. }
@@ -1077,6 +1081,7 @@ fn check(
         text.push_str(&scratch_fact(&scratch));
         text.push_str(&recorded_commands_fact(session));
         text.push_str(&unverifiable_scope_fact(&session.unverifiable_scopes()));
+        text.push_str(&retired_kinds_fact(&model));
         let missing = crate::init::missing_gitignore_entries(&session.root);
         if !missing.is_empty() {
             text.push_str(&format!(
@@ -1929,6 +1934,19 @@ fn get(
             text.push_str(&format!("    {line}\n"));
         }
     }
+    // D-047: the reasoning, each step beside the commit that introduced it. The commit is
+    // derived from git history and never stored (D-032), so it survives a rebase and
+    // costs the ledger nothing. An entry not yet committed has none.
+    let trace = trace_with_commits(session, record);
+    if detail != Detail::Summary && !trace.is_empty() {
+        text.push_str("\n  trace\n");
+        for (entry, commit) in &trace {
+            let at = commit
+                .as_ref()
+                .map_or_else(|| "(new)   ".to_owned(), |c| c.as_str()[..8].to_owned());
+            text.push_str(&format!("    {at}  {entry}\n"));
+        }
+    }
     if detail != Detail::Summary && !record.claims.is_empty() {
         text.push_str("\n  claims\n");
         for claim in &record.claims {
@@ -1965,6 +1983,9 @@ fn get(
             }
             for reference in &check.verified_by {
                 text.push_str(&format!("      verified_by  {reference}\n"));
+            }
+            if let Some(commit) = &check.passed_at {
+                text.push_str(&format!("      passed_at  {commit}\n"));
             }
         }
     }
@@ -2206,6 +2227,31 @@ fn get(
     Ok(Output::text(text).with_result(Value::object(fields)))
 }
 
+/// A work record's trace entries, each with the commit that introduced it when git can
+/// say (D-047). Empty for a record with no trace.
+fn trace_with_commits(
+    session: &Session,
+    record: &akr_core::model::Record,
+) -> Vec<(String, Option<akr_core::model::Commit>)> {
+    let Some(akr_core::model::ContentValue::Strings(entries)) =
+        record.get(akr_core::model::ContentSlot::Trace)
+    else {
+        return Vec::new();
+    };
+    let commits = match (&session.repository, record.file.as_deref()) {
+        (Some(repository), Some(path)) => {
+            akr_core::git::trace_introductions(repository, path, &record.id.key, entries)
+                .unwrap_or_default()
+        }
+        _ => Vec::new(),
+    };
+    entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| (entry.clone(), commits.get(index).cloned().flatten()))
+        .collect()
+}
+
 /// One acceptance verdict, in plain terminal words.
 ///
 /// The Markdown renderer's phrasing without its backticks: `get` prints to a terminal and
@@ -2214,6 +2260,7 @@ fn verdict_line(verdict: &akr_core::resolve::Verdict) -> String {
     use akr_core::resolve::Verdict;
     match verdict {
         Verdict::Satisfied { by, .. } => format!("satisfied by @{by}"),
+        Verdict::Passed { at } => format!("satisfied — passed at {}", &at.as_str()[..8]),
         Verdict::NoEvidence => "not satisfied — no evidence".to_owned(),
         Verdict::Unresolved => "not satisfied — the cited evidence does not resolve".to_owned(),
         Verdict::Failing { by, result } => format!(
@@ -3911,12 +3958,55 @@ fn explain(subject: &str) -> Output {
     }
 }
 
+/// How many live records still carry a retired kind (D-046), as a build fact.
+///
+/// A fact and not a diagnostic: those records are valid, and a ledger is not in error for
+/// holding its own history. The line is how a project learns it has folding it could do.
+/// Silent when there are none.
+fn retired_kinds_fact(model: &akr_core::resolve::ResolvedModel) -> String {
+    let mut counts: std::collections::BTreeMap<akr_core::model::Kind, usize> =
+        std::collections::BTreeMap::new();
+    for record in model.ledger().records() {
+        if record.is_live() && record.kind.is_retired() {
+            *counts.entry(record.kind).or_default() += 1;
+        }
+    }
+    if counts.is_empty() {
+        return String::new();
+    }
+    let total: usize = counts.values().sum();
+    let detail = counts
+        .iter()
+        .map(|(kind, count)| {
+            format!(
+                "{count} {kind} -> {}",
+                kind.folds_into().map_or("?", akr_core::model::Kind::name)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "    {total} live record(s) of retired kinds ({detail}) — still valid; fold with `akr supersede <key> --with <new-key> --from <body>` when it is worth it (D-046)\n"
+    )
+}
+
 /// The schema of one record kind: class, lifecycle, and slots, from the same tables the
 /// type-checker reads. This is how an author learns what a kind requires *before* the
 /// first `AKR-T001` rather than from it.
 fn explain_kind(kind: akr_core::model::Kind) -> Output {
     let class = kind.class();
     let mut text = format!("{} — a record kind\n", kind.name());
+    // What it is for, in the vocabulary's own words (D-049). The slot tables below say
+    // what a kind accepts; nothing used to say what it was meant to hold.
+    text.push_str(&format!("  purpose    {}\n", kind.purpose()));
+    if let Some(into) = kind.folds_into() {
+        text.push_str(&format!(
+            "  retired    no new record may take this kind (AKR-T008, D-046). Write a `{into}` \
+             instead; an existing {} stays readable, may be revised, and folds with \
+             `akr supersede <key> --with <new-{into}-key> --from <body>`\n",
+            kind.name()
+        ));
+    }
     text.push_str(&format!("  class      {}\n", class.name()));
     text.push_str(&format!(
         "  lifecycle  {}   (initial: {})\n",
@@ -3970,6 +4060,12 @@ fn explain_kind(kind: akr_core::model::Kind) -> Output {
     }
     if !optional.is_empty() {
         text.push_str(&format!("  optional   {}\n", optional.join(", ")));
+    }
+    // What each slot is for (D-049) — the same lines the MCP slot schema carries.
+    for spec in kind.content_slots() {
+        if let Some(doc) = kind.slot_doc(spec.slot) {
+            text.push_str(&format!("  {:<10} {doc}\n", spec.slot.name()));
+        }
     }
     // `topic` either way round. Listing only what a kind accepts leaves an author who has
     // seen `topic` on the write surface to assume it is universal, and the refusal arrives

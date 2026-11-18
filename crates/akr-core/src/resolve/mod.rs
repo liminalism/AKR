@@ -243,6 +243,12 @@ pub enum Verdict {
         /// The last commit that changed the verified record, when the facts supply one.
         last_change: Option<Commit>,
     },
+    /// A `command` check that recorded its own pass (D-048): no evidence record, the
+    /// commit it passed at on the check itself.
+    Passed {
+        /// The commit the check's command was run and passed at.
+        at: Commit,
+    },
     /// The check cites no evidence at all.
     NoEvidence,
     /// The cited evidence does not resolve. V-001 reports the reference itself.
@@ -366,6 +372,16 @@ pub fn acceptance_verdicts(ledger: &Ledger) -> Vec<CheckVerdict> {
                         verdict = Verdict::Unresolved;
                     }
                 }
+            }
+            // D-048: where no evidence satisfies it, a command check's own recorded pass
+            // does — under exactly the condition V-020 applies, so the two cannot
+            // disagree about whether a record may be `completed`.
+            if !matches!(verdict, Verdict::Satisfied { .. })
+                && check.method == crate::model::CheckMethod::Command
+                && let Some(commit) = &check.passed_at
+                && !(ledger.facts.ancestry.has_facts() && !ledger.facts.ancestry.knows(commit))
+            {
+                verdict = Verdict::Passed { at: commit.clone() };
             }
             out.push(CheckVerdict {
                 owner: record.id.clone(),

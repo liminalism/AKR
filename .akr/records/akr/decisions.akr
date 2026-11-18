@@ -257,6 +257,27 @@ record akr.decision.collate-default-scan-scope/1 : decision {
     derived_from [ @akr.papercut.collated-16-papercuts-from-kitchen-concept-lege ]
 }
 
+record akr.decision.command-check-records-its-own-pass/1 : decision {
+    title "A command check may record its own pass"
+    state active
+    scope [
+        path "crates/akr-cli/src/write.rs",
+        path "crates/akr-core/src/ops/**",
+        path "crates/akr-core/src/validate/**"
+    ]
+    decision """
+        A check with method command is satisfied by passed_at, a commit stamped by akr complete --pass, with no evidence record. Evidence remains for measurements, failures, artefacts and manual observations, and its title no longer repeats its summary. Recorded as D-048.
+        """
+    context """
+        Evidence is 45% of audited records, mostly one per passing test run, restating the check's own command. D-016's descendant test cannot apply to a stamp: it is written in the working tree before the commit that will hold it, so it always names an ancestor. Deriving each stamp's introducing commit was rejected as a second history walk with its own cache.
+        """
+    consequences """
+        The guarantee is by construction: any write that changes what a record requires drops the passes it would carry forward. V-020 then checks only that the commit exists. A pass on a manual or observational check satisfies nothing.
+        """
+    supported_by [ @akr.observation.ledgers-restate-diffs-not-reasons/1 ]
+    author "dk"
+}
+
 record akr.decision.completed-planning-work-satisfies-dependency/1 : decision {
     title "Completed planning work satisfies a dependency"
     state active
@@ -544,6 +565,27 @@ record akr.decision.external-sources-immutable-library/2 : decision {
     ]
 }
 
+record akr.decision.five-kinds-retired-not-deleted/1 : decision {
+    title "Five kinds are retired: readable for ever, never written again"
+    state active
+    scope [
+        path "crates/akr-core/src/model/**",
+        path "crates/akr-core/src/ops/**",
+        path "spec/tables/vocabulary.json"
+    ]
+    decision """
+        assessment, requirement, constraint, term and track take no new key (AKR-T008). They still parse, hash and render, and fold into observation, policy or milestone by an ordinary cross-kind supersede. Recorded as D-046.
+        """
+    context """
+        The five are 4.9% of audited records and agents could not tell an assessment from an observation, or pick among four normative kinds beside decision. Deleting them was rejected: the kind is in every record header and in the sealed hash, so deletion breaks every seal and every reference. An automatic fold was rejected: an observation needs observed_at and a milestone needs checks, which a tool cannot invent.
+        """
+    consequences """
+        Existing ledgers validate unchanged. policy absorbs measure, aliases, blocks, verified_by and part_of; observation absorbs confidence and may be supported. The refusal is in the write pipeline, not a rule, because the ledger cannot tell a pre-retirement record from a new one. Retired sections leave generated views only where the ledger has no such records.
+        """
+    supported_by [ @akr.observation.ledgers-restate-diffs-not-reasons/1 ]
+    author "dk"
+}
+
 record akr.decision.git-facts-batched-by-ledger-file/1 : decision {
     title "Git facts are batched by ledger file"
     state active
@@ -711,6 +753,28 @@ record akr.decision.mcp-takes-workspace-per-call/1 : decision {
         advertises byte-identical schemas (D-034). A non-string or empty value is AKR-C004.
         """
     supported_by [ @akr.evidence.mcp-workspace-per-call-suite/1 ]
+    author "dk"
+}
+
+record akr.decision.one-agent-brief-states-the-purpose/1 : decision {
+    title "One agent brief, and it says what the ledger is for"
+    state active
+    scope [
+        path "crates/akr-cli/src/change.rs",
+        path "crates/akr-cli/src/init.rs",
+        path "crates/akr-mcp/src/**",
+        path "scripts/agent-section.md"
+    ]
+    decision """
+        scripts/agent-section.md is the only brief; akr init embeds it. It opens with the purpose: help the next agent understand what happened in the session, in proportion to expected impact, never restating a diff. Slot guidance lives in the vocabulary. Advice arrives as notes. akr init installs the git hooks. Recorded as D-049.
+        """
+    context """
+        The installed brief never mentioned the change transaction, akr init wrote a second older text, docs/08 carried a third, and nothing said what a prose slot should hold. Warnings were rejected for advice: the strict default turns a warning into a refused write. Hooks were opt-in and the measured result was a protocol nobody followed.
+        """
+    consequences """
+        A plain git commit fails in a workspace with hooks unless a change transaction is open; --no-verify bypasses it once. A hook that is not AKR's is kept. akr change refuses unknown flags and work references that name no work record.
+        """
+    supported_by [ @akr.observation.ledgers-restate-diffs-not-reasons/1 ]
     author "dk"
 }
 
@@ -1055,6 +1119,27 @@ record akr.decision.validated-project-configuration-edits/1 : decision {
         Configuration edits preserve unrelated declarations and require akr build afterwards.
         """
     supported_by [ @akr.evidence.release-052-workspace/1 ]
+    author "dk"
+}
+
+record akr.decision.work-carries-a-reasoning-trace/1 : decision {
+    title "A work record carries its reasoning as a trace"
+    state active
+    scope [
+        path "crates/akr-core/src/change/**",
+        path "crates/akr-core/src/ops/**",
+        path "crates/akr-core/src/validate/**"
+    ]
+    decision """
+        work gains trace: an append-only list of short reasoning steps, written in place by akr trace and knowledge.trace, bounded at 40 words an entry, never mandatory, and linked to commits by derivation and by AKR-Why trailers. Recorded as D-047.
+        """
+    context """
+        The owner wants the ledger to answer why something was done, as meticulous commenting with the chain of thought, and suspected a 20-word reasoning entry in the manner of OptMem. A standalone reasoning kind was rejected: ten lines of envelope per sentence, detached from the work, and a commit kind in all but name (D-032). A mandatory why was rejected by the owner: agents rarely use the commit flow, and a forced field is filled with filler. A hard limit at the target length was rejected: OptMem's 280-byte check cost retries at 281.
+        """
+    consequences """
+        trace is bookkeeping under D-029, so appending mints no revision and reopens no check; a sealed record whose trace grew is lock drift, not a broken seal. No commit id is stored. The generated commit message no longer copies intent. The context bundle now renders trace and a decision's context and consequences.
+        """
+    supported_by [ @akr.observation.ledgers-restate-diffs-not-reasons/1 ]
     author "dk"
 }
 

@@ -1,5 +1,11 @@
 # 19 — AKR Ledger Usage & Reasoning Audit (August–November 2026)
 
+**Status:** Acted on in AKR 0.7.0 by D-046 (retired kinds), D-047 (the `trace` slot), D-048
+(a check records its own pass) and D-049 (one agent brief, hooks by default). One
+recommendation was not taken as written: a `why` is never mandatory (§4.2 proposed
+"required or strongly prompted"); it is steered by the brief and by advisory notes.
+See `docs/20-upgrading-to-0.7.md`.
+
 **Scope:** Empirical three-month audit (`2026-08-18` to `2026-11-18`) of AKR ledger records and Git commit histories across `SYS` (`D:\projects\SYS`), `Lege-ecosystem` (`D:\projects\Lege-ecosystem`), and `nail-salon` (`D:\projects\nail-salon` + pre-split `D:\projects\Kitchen-Concept`).
 
 ---

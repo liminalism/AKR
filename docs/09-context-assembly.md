@@ -409,6 +409,13 @@ Every section header is printed even when the section is empty, and an empty sec
 prints `(none)`. A missing section header would be ambiguous between "nothing here" and
 "not computed"; the whole point of a deterministic bundle is that the reader can tell.
 
+**A record's reasoning is rendered with it (D-047).** Under its required prose, a record
+prints `note` (D-026), a decision's `context` and `consequences`, and a work record's
+`trace`, one entry per line. Before 0.7 the bundle showed only the `decision` sentence —
+the choice without what forced it — although `context` is where the at-the-time reasoning
+was actually being written. These are withheld together with the body when the budget
+truncates a record (§6), so a bundle never grows past what was asked for.
+
 ## 8. Worked example
 
 Against [`../examples/save-your-skin/`](../examples/save-your-skin/), at HEAD = C5

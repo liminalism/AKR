@@ -1,4 +1,5 @@
-//! The twelve kinds, the four classes, and the kind-specific content slots.
+//! The thirteen kinds (eight written, five retired by D-046), the four classes, and the
+//! kind-specific content slots.
 
 use super::state::State;
 use std::fmt;
@@ -67,7 +68,8 @@ impl fmt::Display for Class {
 }
 
 /// The thirteen record kinds (D-001, extended by D-027). There is no `plan` kind and no
-/// `goal` kind.
+/// `goal` kind. Five are retired (D-046): they still parse, hash and render, so sealed
+/// history reads as it was written, but no new key may take one. See [`Kind::is_retired`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Kind {
     /// Fixes the project's meaning for a word.
@@ -176,7 +178,8 @@ impl Kind {
             Self::Evidence => EVIDENCE_SLOTS,
             Self::Assessment => ASSESSMENT_SLOTS,
             Self::Papercut => PAPERCUT_SLOTS,
-            Self::Milestone | Self::Work => PLAN_SLOTS,
+            Self::Milestone => PLAN_SLOTS,
+            Self::Work => WORK_SLOTS,
             Self::Track => TRACK_SLOTS,
             Self::Question => QUESTION_SLOTS,
         }
@@ -193,7 +196,131 @@ impl Kind {
             (Self::Observation, ContentSlot::Method) => Some(OBSERVATION_METHOD_VALUES),
             (Self::Evidence, ContentSlot::Result) => Some(EVIDENCE_RESULT_VALUES),
             (Self::Evidence, ContentSlot::Method) => Some(EVIDENCE_METHOD_VALUES),
-            (Self::Assessment, ContentSlot::Confidence) => Some(ASSESSMENT_CONFIDENCE_VALUES),
+            (Self::Assessment | Self::Observation, ContentSlot::Confidence) => {
+                Some(ASSESSMENT_CONFIDENCE_VALUES)
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether the kind is retired (D-046).
+    ///
+    /// A retired kind remains part of the language: removing it would turn every sealed
+    /// record that carries it into an unknown kind and break every reference to it. What
+    /// a retired kind loses is the write surface — no new key may be created with it.
+    #[must_use]
+    pub const fn is_retired(self) -> bool {
+        self.folds_into().is_some()
+    }
+
+    /// The kind a retired kind's records fold into, and the only kind allowed to
+    /// supersede it across kinds (D-046). `None` for a kind that is still written.
+    #[must_use]
+    pub const fn folds_into(self) -> Option<Kind> {
+        match self {
+            Self::Assessment => Some(Self::Observation),
+            Self::Requirement | Self::Constraint | Self::Term => Some(Self::Policy),
+            Self::Track => Some(Self::Milestone),
+            _ => None,
+        }
+    }
+
+    /// Every kind a new key may be created with: all but the retired ones.
+    #[must_use]
+    pub fn written() -> Vec<Kind> {
+        Self::ALL
+            .iter()
+            .copied()
+            .filter(|kind| !kind.is_retired())
+            .collect()
+    }
+
+    /// What the kind is for, as `spec/tables/vocabulary.json` states it.
+    #[must_use]
+    pub const fn purpose(self) -> &'static str {
+        match self {
+            Self::Term => "Fixes the project's meaning for a word that would otherwise drift.",
+            Self::Requirement => "States something the delivered system must do or must be.",
+            Self::Policy => {
+                "States a standing rule, requirement or limit the project must respect (D-046)."
+            }
+            Self::Constraint => "States a limit the project must respect but did not choose.",
+            Self::Decision => {
+                "Records a choice made between alternatives, and what follows from it."
+            }
+            Self::Observation => {
+                "Records what was found to be true of the system at a specific commit, or a judgement drawn from such findings."
+            }
+            Self::Evidence => "Records the outcome of a check that was actually run.",
+            Self::Assessment => {
+                "Records a judgement drawn from observations, distinct from the observations themselves."
+            }
+            Self::Papercut => {
+                "Records a small friction hit while working: what was being done, what got in the way, and optionally a guess at the cause or fix (D-027)."
+            }
+            Self::Milestone => "A named point at which a defined set of acceptance checks passes.",
+            Self::Work => {
+                "A unit of intended change. A work record designated plan_of_record is a plan (D-001)."
+            }
+            Self::Track => "Standing, non-terminating work that milestones do not contain.",
+            Self::Question => "An open matter that blocks or endangers a decision or a plan.",
+        }
+    }
+
+    /// What a content slot of this kind should hold, where the vocabulary says so
+    /// (D-049). One source for `akr explain` and the MCP slot schema, so the guidance an
+    /// agent reads cannot drift between them.
+    #[must_use]
+    pub const fn slot_doc(self, slot: ContentSlot) -> Option<&'static str> {
+        match (self, slot) {
+            (Self::Policy, C::Rule) => Some(
+                "The standing rule, requirement or limit, stated so a reader can tell whether a change breaks it.",
+            ),
+            (Self::Policy, C::Rationale) => {
+                Some("Why the rule exists: what it protects, and what was seen without it.")
+            }
+            (Self::Policy, C::Measure) => {
+                Some("The limit as a number or a testable condition, when there is one.")
+            }
+            (Self::Policy, C::Aliases) => {
+                Some("Other words a reader might search for this rule, or for the word it defines.")
+            }
+            (Self::Decision, C::Decision) => {
+                Some("The choice, in a sentence or two. Not a list of the files it changed.")
+            }
+            (Self::Decision, C::Context) => Some(
+                "What forced the choice: the measurement, failure or ruling, and the alternatives rejected and why.",
+            ),
+            (Self::Decision, C::Consequences) => Some(
+                "What follows: the trade-off accepted, what must not be undone, what was deliberately left out.",
+            ),
+            (Self::Observation, C::Statement) => Some(
+                "What was found, with the numbers, and why the obvious explanation or fix is wrong when it is.",
+            ),
+            (Self::Observation, C::Confidence) => Some(
+                "How far the finding can be trusted, when it is a judgement rather than a measurement.",
+            ),
+            (Self::Evidence, C::Summary) => Some(
+                "What was observed, when the title does not already say it. Omit it rather than repeat the title.",
+            ),
+            (Self::Milestone | Self::Work, C::Intent) => Some(
+                "The outcome wanted and what makes it necessary. Not a list of files or functions: the diff shows those.",
+            ),
+            (Self::Milestone | Self::Work | Self::Track, C::Note) => Some(
+                "Free-form operator commentary. Informational only; no validation consequence. Rendered by views for records in terminal states (D-026).",
+            ),
+            (Self::Work, C::Trace) => Some(
+                "Reasoning steps, one short line each, appended as the work proceeds: why this approach, what the code as found forced, what was tried and dropped. Aim for 25 words an entry; 40 is the limit. Append with `akr trace`; never restate the diff (D-047).",
+            ),
+            (Self::Papercut, C::About) => Some(
+                "What the friction was with, when that is not this project: a tool name such as `akr`. Absent means this project's own code or setup. `akr papercut collate --about <subject>` gathers the sisters' papercuts aimed at one subject (D-033).",
+            ),
+            (Self::Papercut, C::Collated) => Some(
+                "Source papercut keys this collation record absorbed from sister projects; written by `akr papercut collate`, the dedup set for the next run (D-030).",
+            ),
+            (Self::Papercut, C::ClosedAt) => Some(
+                "Date this papercut was closed; closed papercuts are excluded from future collation.",
+            ),
             _ => None,
         }
     }
@@ -241,7 +368,16 @@ use ContentSlot as C;
 
 const TERM_SLOTS: &[ContentSlotSpec] = &[req(C::Definition), opt(C::Aliases)];
 const REQUIREMENT_SLOTS: &[ContentSlotSpec] = &[req(C::Statement), opt(C::Rationale)];
-const POLICY_SLOTS: &[ContentSlotSpec] = &[req(C::Rule), opt(C::Rationale), opt(C::Exceptions)];
+// D-046: `measure` and `aliases` came over from `constraint` and `term` when those kinds
+// were retired into `policy`. They sit after the original three so that every policy
+// sealed before the change still formats to the bytes it was sealed with.
+const POLICY_SLOTS: &[ContentSlotSpec] = &[
+    req(C::Rule),
+    opt(C::Rationale),
+    opt(C::Exceptions),
+    opt(C::Measure),
+    opt(C::Aliases),
+];
 const CONSTRAINT_SLOTS: &[ContentSlotSpec] =
     &[req(C::Statement), opt(C::Measure), opt(C::Rationale)];
 const DECISION_SLOTS: &[ContentSlotSpec] =
@@ -252,6 +388,8 @@ const OBSERVATION_SLOTS: &[ContentSlotSpec] = &[
     opt(C::Method),
     opt(C::Watches),
     opt(C::ReviewAfter),
+    // D-046: carried over from the retired `assessment`.
+    opt(C::Confidence),
 ];
 const EVIDENCE_SLOTS: &[ContentSlotSpec] = &[
     req(C::Result),
@@ -280,6 +418,10 @@ const PAPERCUT_SLOTS: &[ContentSlotSpec] = &[
     opt(C::ClosedAt),
 ];
 const PLAN_SLOTS: &[ContentSlotSpec] = &[req(C::Intent), opt(C::Target), opt(C::Note)];
+// D-047: `trace` is the work record's reasoning trail. Milestones do not carry one — a
+// milestone is a set of checks, and the reasoning belongs to the work that meets them.
+const WORK_SLOTS: &[ContentSlotSpec] =
+    &[req(C::Intent), opt(C::Target), opt(C::Note), opt(C::Trace)];
 const TRACK_SLOTS: &[ContentSlotSpec] = &[req(C::Intent), opt(C::Cadence), opt(C::Note)];
 const QUESTION_SLOTS: &[ContentSlotSpec] = &[req(C::Question), opt(C::Resolution)];
 
@@ -331,6 +473,7 @@ pub enum ContentSlot {
     About,
     Collated,
     ClosedAt,
+    Trace,
 }
 
 impl ContentSlot {
@@ -365,6 +508,7 @@ impl ContentSlot {
         Self::About,
         Self::Collated,
         Self::ClosedAt,
+        Self::Trace,
     ];
 
     /// The slot name as written in source (snake_case, D-005).
@@ -400,6 +544,7 @@ impl ContentSlot {
             Self::About => "about",
             Self::Collated => "collated",
             Self::ClosedAt => "closed_at",
+            Self::Trace => "trace",
         }
     }
 
@@ -417,7 +562,7 @@ impl ContentSlot {
             Self::ReviewAfter | Self::Target | Self::ClosedAt => "date (YYYY-MM-DD)",
             Self::Watches => "glob[]",
             Self::Exceptions => "reference[]",
-            Self::Aliases | Self::Collated => "string[]",
+            Self::Aliases | Self::Collated | Self::Trace => "string[]",
             Self::Method | Self::Result | Self::Confidence => "enum",
             _ => "text",
         }

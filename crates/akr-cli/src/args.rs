@@ -164,6 +164,8 @@ pub enum Command {
         project: Option<String>,
         /// Declared namespaces.
         namespaces: Vec<String>,
+        /// Leave the git hooks uninstalled (D-049).
+        no_hooks: bool,
     },
     /// Canonically format, or check formatting.
     Fmt {
@@ -447,6 +449,8 @@ pub enum Command {
         note: Option<String>,
         /// Why a material change carries no work reference.
         untracked_reason: Option<String>,
+        /// Reasons to append to the primary work record's trace (D-047).
+        why: Vec<String>,
     },
     /// `akr change show`.
     ChangeShow,
@@ -527,6 +531,15 @@ pub enum Command {
         key: String,
         /// `check=@evidence` pairs.
         checks: Vec<String>,
+        /// `check[=commit]`: command checks that record their own pass (D-048).
+        passes: Vec<String>,
+    },
+    /// `akr trace <work> "<text>"...` (D-047).
+    Trace {
+        /// The work record whose trace grows.
+        key: String,
+        /// One reasoning step per argument.
+        entries: Vec<String>,
     },
     /// `akr abandon <key> --reason <text>`.
     Abandon {
@@ -602,6 +615,8 @@ pub enum Command {
         capture: Option<String>,
         /// A one-line summary.
         summary: Option<String>,
+        /// The one-line label. Defaults to the summary's opening words, or the key.
+        title: Option<String>,
         /// The commit it was observed at. Defaults to HEAD.
         observed_at: Option<String>,
     },
@@ -759,6 +774,7 @@ impl Command {
             Self::Supersede { .. } => "supersede".to_owned(),
             Self::Complete { .. } => "complete".to_owned(),
             Self::Abandon { .. } => "abandon".to_owned(),
+            Self::Trace { .. } => "trace".to_owned(),
             Self::Papercut { .. } => "papercut".to_owned(),
             Self::PapercutClose { .. } => "papercut close".to_owned(),
             Self::PapercutReset { .. } => "papercut reset".to_owned(),
@@ -854,10 +870,12 @@ pub const COMMANDS: &[&str] = &[
     "git",
     "git-hook",
     "propose",
+    "propose-many",
     "revise",
     "supersede",
     "complete",
     "abandon",
+    "trace",
     "papercut",
     "evidence",
     "scratch",
@@ -1094,10 +1112,11 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
             }
         },
         "init" => {
-            known_flags(&["--project", "--namespace"])?;
+            known_flags(&["--project", "--namespace", "--no-hooks"])?;
             Command::Init {
                 project: option_value(tail, "--project"),
                 namespaces: repeated(tail, "--namespace"),
+                no_hooks: flag_set("--no-hooks"),
             }
         }
         "fmt" => {
@@ -1417,9 +1436,7 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
             if let Some(extra) = bare.first() {
                 return Err(UsageError::new(
                     "AKR-C002",
-                    format!(
-                        "unexpected argument {extra:?}; propose-many reads keys from --from"
-                    ),
+                    format!("unexpected argument {extra:?}; propose-many reads keys from --from"),
                 ));
             }
             Command::ProposeMany {
@@ -1461,10 +1478,27 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
             }
         }
         "complete" => {
-            known_flags(&["--check"])?;
+            known_flags(&["--check", "--pass"])?;
             Command::Complete {
                 key: need(0, "a key")?,
                 checks: repeated(tail, "--check"),
+                passes: repeated(tail, "--pass"),
+            }
+        }
+        "trace" => {
+            // No flags at all, so a reason that happens to start with `--` is an unknown
+            // flag rather than a silently dropped entry.
+            known_flags(&[])?;
+            let entries: Vec<String> = positional.iter().skip(1).map(|s| (*s).clone()).collect();
+            if entries.is_empty() {
+                return Err(UsageError::new(
+                    "AKR-C003",
+                    "trace requires the reason, as text: akr trace <work-key> \"<why>\"",
+                ));
+            }
+            Command::Trace {
+                key: need(0, "a work key")?,
+                entries,
             }
         }
         "abandon" => {
@@ -1627,6 +1661,7 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
                 "--artifact",
                 "--capture",
                 "--summary",
+                "--title",
                 "--observed-at",
                 "--from",
             ])?;
@@ -1643,6 +1678,7 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
                     artifact: option_value(tail, "--artifact"),
                     capture: option_value(tail, "--capture"),
                     summary: option_value(tail, "--summary"),
+                    title: option_value(tail, "--title"),
                     observed_at: option_value(tail, "--observed-at"),
                 },
                 "add-many" => Command::EvidenceAddMany {
@@ -2077,6 +2113,31 @@ fn parse_change(
             format!("{name} requires a subcommand (begin|show|status|prepare|verify|abort)"),
         )
     })?;
+    // `akr change` used to accept any flag at all: an unknown one was ignored, so a
+    // misspelt `--primry` opened a transaction that named no work and said nothing.
+    let allowed: &[&str] = match sub {
+        "begin" => &[
+            "--summary",
+            "--kind",
+            "--scope",
+            "--primary",
+            "--related",
+            "--note",
+            "--untracked-reason",
+            "--why",
+        ],
+        "prepare" | "verify" => &["--staged"],
+        _ => &[],
+    };
+    for arg in tail.iter().filter(|a| a.starts_with("--")) {
+        let base = arg.split('=').next().unwrap_or(arg);
+        if !allowed.contains(&base) {
+            return Err(UsageError::new(
+                "AKR-C002",
+                format!("unknown flag {base:?} for command \"{name} {sub}\""),
+            ));
+        }
+    }
     Ok(match sub {
         "begin" => {
             let summary = option_value(tail, "--summary")
@@ -2089,6 +2150,7 @@ fn parse_change(
                 related: repeated(tail, "--related"),
                 note: option_value(tail, "--note"),
                 untracked_reason: option_value(tail, "--untracked-reason"),
+                why: repeated(tail, "--why"),
             }
         }
         "show" | "status" => Command::ChangeShow,
@@ -2686,11 +2748,16 @@ pub fn help_for(name: &str) -> Option<String> {
             "akr config show\nakr config set --from <file>\nakr config untracked add|remove <glob>\n\nRead or edit .akr/project.akr through the locked write pipeline.\nset accepts a complete AKR project file; records and project renames are refused.\nUntracked edits preserve other declarations. Invalid edits write nothing.\nRun `akr build` after changing configuration.\n"
         }
         "init" => {
-            "akr init [--project <name>] [--namespace <name> ...]\n\
+            "akr init [--project <name>] [--namespace <name> ...] [--no-hooks]\n\
              \n\
              Scaffolds a workspace: .akr/project.akr, .akr/records/, .akr/archive/, an\n\
              AGENTS.md protocol section, and .gitignore entries. Never overwrites an\n\
              existing .akr/ (AKR-C013).\n\
+             \n\
+             In a git repository it also installs the pre-commit and commit-msg hooks\n\
+             (`akr git install-hooks`), so a commit made outside `akr change` is noticed\n\
+             (D-049). A hook that is already there and is not AKR's is kept. --no-hooks\n\
+             skips the step; `git commit --no-verify` bypasses a hook once.\n\
              \n\
              FLAGS\n\
              \x20   --project <name>      the project name, in key-segment form\n\
@@ -3173,15 +3240,39 @@ pub fn help_for(name: &str) -> Option<String> {
              obsolete.\n"
         }
         "complete" => {
-            "akr complete <key> [--check <id>=<evidence-ref> ...]\n\
+            "akr complete <key> [--pass <id>[=<commit>] ...] [--check <id>=<evidence-ref> ...]\n\
              \n\
              Moves a milestone or work record to `completed`. Every acceptance check\n\
-             must be satisfied by evidence with result pass observed after the record\n\
-             last changed (D-016). Evidence references are D-009 forms:\n\
+             must be satisfied.\n\
+             \n\
+             --pass is for a `method command` check whose command you ran and saw pass:\n\
+             the check records the commit itself (HEAD unless you name one) and no\n\
+             evidence record is written (D-048). It is refused for a manual or\n\
+             observational check.\n\
+             --check cites an evidence record with result pass observed after the record\n\
+             last changed (D-016) -- for a measurement, a captured artefact, or anything a\n\
+             later reader will want to read. Evidence references are D-009 forms:\n\
              --check no-placeholder-assets=@sys.evidence.asset-audit/1\n\
              \n\
              Completing a milestone requires its plan of record to be retired first\n\
              (V-019): complete or abandon the plan, then complete the milestone.\n"
+        }
+        "trace" => {
+            "akr trace <work-key> \"<why>\" [\"<why>\" ...]\n\
+             \n\
+             Appends reasoning steps to a work record's trace, in place (D-047). No\n\
+             revision is minted and no acceptance check is put back in question, so it\n\
+             is cheap to do as the work proceeds.\n\
+             \n\
+             One entry is one reason or one dead end: why this approach, what the code\n\
+             as you found it forced, what you tried and dropped. Not what changed --\n\
+             git has the diff. Aim for 25 words; an entry over 40 is refused\n\
+             (AKR-T024). Explain in proportion to the expected impact of the change,\n\
+             not its line count: more entries, never longer ones.\n\
+             \n\
+             `akr get <work-key>` shows each entry beside the commit that introduced it.\n\
+             A choice that binds the project is a decision; a finding worth re-reading is\n\
+             an observation.\n"
         }
         "abandon" => {
             "akr abandon <key> --reason <text>\n\
@@ -3250,10 +3341,15 @@ pub fn help_for(name: &str) -> Option<String> {
             "akr evidence add <key> --result pass|fail|inconclusive\n\
              \x20                   --method manual|command|observation\n\
              \x20                   [--command <text>] [--artifact <path>] [--capture <path>]\n\
-             \x20                   [--summary <text>] [--observed-at <commit>]\n\
+             \x20                   [--summary <text>] [--title <text>] [--observed-at <commit>]\n\
              akr evidence add-many --from <file>\n\
              \n\
-             Creates an evidence record. --capture streams a raw file into a summary with\n\
+             Creates an evidence record. A `method command` check that simply passed\n\
+             does not need one: `akr complete <key> --pass <check>` (D-048). Evidence is\n\
+             for a measurement, a failure, an artefact, or a manual observation.\n\
+             --summary says what was observed; without --title its opening words become\n\
+             the title, and a summary that only repeats the title is not stored twice.\n\
+              --capture streams a raw file into a summary with\n\
              SHA-256 and byte count; it requires --summary and stores no artifact\n\
              dependency. Raw captures may stay in scratch. Prefer this over committing\n\
              large captures. --observed-at defaults to HEAD and must be a\n\
@@ -3365,8 +3461,9 @@ pub fn help() -> String {
         ),
         (
             "complete",
-            "finish a milestone; --check <id>=<evidence-ref>",
+            "finish a milestone or work; --pass <id>, --check <id>=<evidence-ref>",
         ),
+        ("trace", "append why to a work record, a line at a time"),
         ("abandon", "abandon a planning record; --reason is required"),
         (
             "papercut",

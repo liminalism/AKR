@@ -10,80 +10,33 @@ use akr_core::json::Value;
 use akr_core::model::Segment;
 use std::path::Path;
 
-/// The `AGENTS.md` section `docs/08-mcp.md` §8 fixes, quoted there in full.
+/// The agent brief: `scripts/agent-section.md`, embedded (D-049).
 ///
-/// Deliberately protocol only — no philosophy, no data model, no examples — because an
-/// agent reads it every session and every extra line competes with the task. Everything
-/// beyond this is reachable through the tools themselves.
-pub const AGENTS_TEMPLATE: &str = r#"## Project knowledge (AKR)
+/// There used to be a second, older text here, and a third copy in `docs/08-mcp.md`. The
+/// setup scripts install the file; `akr init` wrote this constant; the two drifted, and
+/// the one a new workspace got never mentioned the commit protocol at all. One file, and
+/// every installer reads it.
+///
+/// Protocol only — no philosophy, no data model, no examples — because an agent reads it
+/// every session and every extra line competes with the task.
+pub const AGENTS_TEMPLATE: &str = include_str!("../../../scripts/agent-section.md");
 
-Durable project knowledge lives in `.akr/` as typed records, not in Markdown.
-`docs/generated/` is build output. Follow this protocol.
+/// The marker the setup scripts and `akr init` open the brief with.
+pub const AGENTS_BEGIN: &str = "<!-- AKR_START -->";
+/// The marker that closes it.
+pub const AGENTS_END: &str = "<!-- AKR_END -->";
 
-**Before starting any task**
-1. If you know the exact planning key, call `knowledge.context` with that key and the
-   paths you expect to touch.
-2. Otherwise call `knowledge.start` with the task and paths. Read its session head, pick
-   a live candidate (or an explicitly relevant proposal), then call `knowledge.context`
-   with that exact key.
-3. Read context bundles in full. Contradictions and staleness warnings are always
-   included and are never noise.
-
-**While working**
-- Configuration changes: use `akr config --help` or `knowledge.config_get` /
-  `knowledge.config_edit`, then `akr build`.
-- Look things up with `knowledge.get`; find them with `knowledge.search`.
-  Search ranks results; it never grants authority. A record's standing comes from its
-  state, its scope, and its relations.
-- Private developer information belongs in the local-only secrets category, never in
-  public record prose, titles, evidence commands or source copies. Use
-  `knowledge.secret_put` with a private UTF-8 input file (`akr secret put --from <file>`),
-  then embed its opaque `{{secret:<id>}}` citation in text slots or claims. Keep input
-  files private too. Public output shows `[*]`, even on a developer's machine.
-  `akr secret get <citation> --reveal` or `akr secret resolve --from <file> --reveal`
-  explicitly resolves local values; missing entries stay `[*]`. Do not reveal keys to
-  remote agents or paste resolved output into public records. `.akr/secrets/` is private,
-  gitignored, never indexed or published; share it only through a separate trusted channel.
-- Scratch notes go in `.agent/scratch/`. Nobody reviews them and nothing depends on them
-  — but **nothing empties it either**. It is a gitignored directory inside the repository,
-  not the OS temp directory and not `target/`, so it survives every session and grows
-  until somebody deletes it by hand. Before handing work back, run `akr scratch prune`,
-  and `akr scratch keep <name> --reason "<why>"` for anything the next session needs.
-  `akr check` reports the total; `akr check --scratch-clean` fails when anything prunable
-  is left.
-
-**When something becomes durable**
-- New knowledge: `knowledge.propose`. Observations need `observed_at` and, if they can
-  go out of date, `watches`.
-- Changed knowledge: `knowledge.revise`. Never edit a `.akr` file directly, and never
-  edit a record that is not `proposed`.
-- Replacing a plan: `knowledge.supersede`, with a disposition for every unfinished
-  child. The tool will list them; answer each one.
-- Finishing work: record what you observed with `knowledge.evidence_add`, then
-  `knowledge.complete` with evidence for every acceptance check. Evidence records
-  state what was observed; they never state what they verify.
-- Raw captures: use evidence add's `--capture <file> --summary <observation>`
-  (MCP: `capture` and `summary`) for SHA-256 and size without retaining the raw file.
-- Unsure what a kind requires? `akr explain <kind>` prints its schema.
-
-**Papercuts**
-- When you hit a small friction while working — a tool call that missed and had to be
-  retried, a confusing or undocumented setup step, a flaky command, a stale cache, a
-  misleading error, a non-obvious gotcha — log it with `knowledge.papercut` (or
-  `akr papercut -m <agent> "message"`). One or two sentences: what you were doing,
-  what got in the way (a guess at the cause/fix is a bonus). Do this proactively, in
-  the moment, even though none of these are blocking — logged together they show where
-  the project needs sanding down. This is distinct from durable records (knowledge) and
-  from `.agent/scratch/` (working notes).
-
-**Never**
-- Never edit `docs/generated/` — it is regenerated and CI checks it.
-- Never read `.akr/cache/` — it is a private cache.
-- Never delete a record. Move it to a terminal state instead.
-
-**Before handing back**
-- `knowledge.validate`. If it reports diagnostics, fix them or say so explicitly.
-"#;
+/// The brief between its markers, with `\n` line endings whatever the checkout used.
+///
+/// The markers are what let `scripts/setup-akr-mcp` refresh the block in place later, so
+/// a workspace scaffolded by `init` is updated by the same rewrite as one set up by hand.
+#[must_use]
+pub fn agents_section() -> String {
+    format!(
+        "{AGENTS_BEGIN}\n{}\n{AGENTS_END}\n",
+        AGENTS_TEMPLATE.replace("\r\n", "\n").trim_end()
+    )
+}
 
 /// The paths a workspace must not track: the rebuildable index cache, the two
 /// disposable agent subtrees (D-036, D-040), and local-only secret entries.
@@ -124,14 +77,14 @@ pub(crate) fn missing_gitignore_entries(root: &std::path::Path) -> Vec<&'static 
 /// # Errors
 /// [`EnvError`] `AKR-C013` when `.akr/` exists, `AKR-C023` for a malformed project name,
 /// and `AKR-C042` for an unwritable directory.
-pub fn run(project: Option<&str>, namespaces: &[String]) -> Result<Output, EnvError> {
+pub fn run(project: Option<&str>, namespaces: &[String], hooks: bool) -> Result<Output, EnvError> {
     let root = std::env::current_dir().map_err(|e| {
         EnvError::new(
             "AKR-C042",
             format!("cannot read the current directory: {e}"),
         )
     })?;
-    run_in(&root, project, namespaces)
+    run_in(&root, project, namespaces, hooks)
 }
 
 /// Scaffolds a workspace in a named directory, so tests need no `chdir`.
@@ -142,6 +95,7 @@ pub fn run_in(
     root: &Path,
     project: Option<&str>,
     namespaces: &[String],
+    hooks: bool,
 ) -> Result<Output, EnvError> {
     let akr = root.join(".akr");
     if akr.exists() {
@@ -204,18 +158,26 @@ pub fn run_in(
     let agents = root.join("AGENTS.md");
     if agents.exists() {
         let existing = std::fs::read_to_string(&agents).unwrap_or_default();
-        if !existing.contains("## Project knowledge (AKR)") {
+        // Either marker, or the heading every earlier brief opened with: the file
+        // already carries a brief, and replacing it is the setup scripts' job.
+        if !existing.contains(AGENTS_BEGIN)
+            && !existing.contains("## Project knowledge (AKR)")
+            && !existing.contains("## AKR (project knowledge)")
+        {
             let mut merged = existing;
             if !merged.ends_with('\n') {
                 merged.push('\n');
             }
             merged.push('\n');
-            merged.push_str(AGENTS_TEMPLATE);
+            merged.push_str(&agents_section());
             write(&agents, &merged)?;
             created.push("AGENTS.md (appended)".to_owned());
         }
     } else {
-        write(&agents, &format!("# Agent protocol\n\n{AGENTS_TEMPLATE}"))?;
+        write(
+            &agents,
+            &format!("# Agent protocol\n\n{}", agents_section()),
+        )?;
         created.push("AGENTS.md".to_owned());
     }
 
@@ -241,12 +203,38 @@ pub fn run_in(
         created.push(format!(".gitignore ({} entries)", missing.len()));
     }
 
+    // D-049: the hooks that notice a commit made outside the change protocol. Absent
+    // hooks were the default for as long as installing them was a separate command, and
+    // the measured result was that the protocol was not followed at all. A directory
+    // that is not a repository simply has none to install.
+    let mut hook_lines = String::new();
+    if hooks && let Ok(repository) = akr_core::git::Repository::open(root) {
+        match crate::change::write_hooks(&repository, false) {
+            Ok(report) => {
+                if !report.written.is_empty() {
+                    created.push(format!("git hooks ({})", report.written.join(", ")));
+                }
+                for hook in &report.kept {
+                    hook_lines.push_str(&format!(
+                        "kept your existing {hook} hook; `akr git install-hooks` replaces it\n"
+                    ));
+                }
+            }
+            Err(error) => hook_lines.push_str(&format!(
+                "git hooks were not installed: {}; run `akr git install-hooks` later\n",
+                error.message
+            )),
+        }
+    }
+
     let mut text = String::new();
     for item in &created {
         text.push_str(&format!("created {item}\n"));
     }
+    text.push_str(&hook_lines);
     text.push_str(&format!(
-        "\nakr {TOOL_VERSION} — next: write a record, then run `akr check`\n"
+        "\nakr {TOOL_VERSION} — next: write a record, then run `akr check`. Commit through \
+         `akr change begin`, `akr change prepare --staged`, `akr git commit`\n"
     ));
     Ok(Output {
         text,

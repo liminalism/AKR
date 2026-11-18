@@ -223,7 +223,7 @@ fn source_sort_key(item: &BodyItem) -> String {
 fn block_slot_order(container: &str, slot: &str) -> Option<usize> {
     let order: &[&str] = match container {
         "claim" => &["text", "supported_by"],
-        "check" => &["statement", "method", "command", "verified_by"],
+        "check" => &["statement", "method", "command", "verified_by", "passed_at"],
         "source" => &[
             "kind",
             "role",

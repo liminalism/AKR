@@ -2305,9 +2305,11 @@ impl PixelApp for ReviewApp {
     fn attach(&mut self, waker: Waker) {
         let clipboard_waker = waker.clone();
         self.input
-            .attach_clipboard(liminalkit_shell::clipboard::ClipboardWorker::new(move || {
-                clipboard_waker.wake();
-            }));
+            .attach_clipboard(liminalkit_shell::clipboard::ClipboardWorker::new(
+                move || {
+                    clipboard_waker.wake();
+                },
+            ));
         self.waker = Some(waker);
     }
 

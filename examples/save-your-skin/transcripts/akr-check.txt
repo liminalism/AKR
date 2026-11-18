@@ -3,7 +3,7 @@ $ akr check
 
 akr check — save-your-skin
   40 records, 42 revisions, 26 files
-  commit (none), grammar 0.1, vocabulary 0.2, today 2026-08-03
+  commit (none), grammar 0.1, vocabulary 0.3, today 2026-08-03
 
   stage A  parse          42 revisions       ok
   stage B  type-check     42 revisions       ok
@@ -25,6 +25,7 @@ akr check — save-your-skin
     2 records stale, 4 at risk — see `akr review-queue`
     no .agent/scratch — nothing to prune
     recorded commands were not checked against tracked source (V-105): no commit holds the ledger as loaded — commit the record files to include it
+    13 live record(s) of retired kinds (3 term -> policy, 3 requirement -> policy, 2 constraint -> policy, 2 assessment -> observation, 3 track -> milestone) — still valid; fold with `akr supersede <key> --with <new-key> --from <body>` when it is worth it (D-046)
 
 no diagnostics
 
@@ -37,7 +38,7 @@ $ echo $?
 $ akr check --format json
 {
   "akr": "0.1",
-  "tool_version": "0.6.5",
+  "tool_version": "0.7.0",
   "command": "check",
   "commit": null,
   "source_graph_hash": "sha256:5159d2714f688627a85906b161def17b0358155fbfc2a3fc00b681d29a305f55",
@@ -76,7 +77,7 @@ $ akr check --review-clean
 
 akr check — save-your-skin
   40 records, 42 revisions, 26 files
-  commit (none), grammar 0.1, vocabulary 0.2, today 2026-08-03
+  commit (none), grammar 0.1, vocabulary 0.3, today 2026-08-03
 
   stage A  parse          42 revisions       ok
   stage B  type-check     42 revisions       ok
@@ -98,6 +99,7 @@ akr check — save-your-skin
     2 records stale, 4 at risk — see `akr review-queue`
     no .agent/scratch — nothing to prune
     recorded commands were not checked against tracked source (V-105): no commit holds the ledger as loaded — commit the record files to include it
+    13 live record(s) of retired kinds (3 term -> policy, 3 requirement -> policy, 2 constraint -> policy, 2 assessment -> observation, 3 track -> milestone) — still valid; fold with `akr supersede <key> --with <new-key> --from <body>` when it is worth it (D-046)
 
 error[AKR-G041]: review queue holds 2 stale and 4 at-risk records
   --> .akr/records/sim/observations.akr:4:1
@@ -119,7 +121,7 @@ $ akr check --views-current
 
 akr check — save-your-skin
   40 records, 42 revisions, 26 files
-  commit (none), grammar 0.1, vocabulary 0.2, today 2026-08-03
+  commit (none), grammar 0.1, vocabulary 0.3, today 2026-08-03
 
   stages A-D                                 ok
   stage F  emit (in memory)   8 views        ok
@@ -145,7 +147,7 @@ $ akr check --views-current
 
 akr check — save-your-skin
   40 records, 42 revisions, 26 files
-  commit (none), grammar 0.1, vocabulary 0.2, today 2026-08-03
+  commit (none), grammar 0.1, vocabulary 0.3, today 2026-08-03
 
   stages A-D                                 ok
   stage F  emit (in memory)   8 views        FAILED
@@ -170,7 +172,7 @@ $ git checkout docs/generated/ROADMAP.md
 $ akr check --views-current
 akr check — save-your-skin
   40 records, 42 revisions, 26 files
-  commit (none), grammar 0.1, vocabulary 0.2, today 2026-08-03
+  commit (none), grammar 0.1, vocabulary 0.3, today 2026-08-03
 
   stages A-D                                 ok
   stage F  emit (in memory)   8 views        ok

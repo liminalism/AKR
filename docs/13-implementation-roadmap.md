@@ -46,6 +46,7 @@ its own development and two more real projects (§8).
 | **P10** | Immutable source library, chunk index, citations | `15-external-sources.md`, D-031 |
 | **P11** | The AKR ↔ git change protocol | `16-change-protocol.md`, D-032 |
 | **P12** | Handoff: capsules, packets, results, coverage | `17-handoff.md`, D-040, D-041 |
+| **P13** | Reasoning trace, retired kinds, self-recording checks, one brief | `19-ledger-usage-and-reasoning-audit.md`, `20-upgrading-to-0.7.md`, D-046..D-049 |
 
 The order is a dependency order, not a priority order. P4 sits where it does because a
 rendered roadmap is the first artefact a person can *judge*, and judging it early is
@@ -421,6 +422,42 @@ parent make the judgement the child is being sent to make (D-040, D-041).
 
 **Testing.** `crates/akr-cli/tests/handoff.rs`, whose assertions are mostly about what a
 packet does *not* say — a disclosure policy is only a property if both surfaces keep it.
+
+### P13 — The ledger says why (0.7)
+
+**Goal.** Make the ledger answer "why was this done" instead of restating what a commit
+did, and stop the tool itself producing the redundancy an audit of three projects measured
+(`docs/19`).
+
+**Deliverables.**
+
+- Five kinds retired — readable for ever, never written again — with supersession allowed
+  across kinds along the fold table (D-046).
+- `trace` on `work`: appended in place by `akr trace` / `knowledge.trace`, bounded by
+  V-026, bookkeeping under D-029, linked to commits by derivation and by `AKR-Why:`
+  trailers (D-047).
+- `passed_at` on a check, and `akr complete --pass`; evidence titles no longer duplicate
+  summaries (D-048).
+- One agent brief embedded by `akr init`; slot guidance in the vocabulary, printed by
+  `akr explain` and the MCP slot schema; advisory notes; hooks installed by default
+  (D-049).
+
+**Exit criteria.**
+
+1. A ledger written by 0.6 builds under 0.7 with no new diagnostic and no changed seal.
+2. No route creates a key of a retired kind; an existing one can still be revised, and
+   folds by an ordinary supersede.
+3. Appending to a trace mints no revision, un-satisfies no check, and is lock drift
+   (`AKR-R052`) rather than a broken seal.
+4. A work record with one command check completes with no evidence record.
+5. A write that redefines a record drops the passes its checks had recorded.
+6. `knowledge.trace` and `akr trace`, and `knowledge.complete` and `akr complete --pass`,
+   produce identical results.
+7. Nothing refuses a missing trace.
+
+**Testing.** `crates/akr-core/tests/ops_write.rs` and `v_rules.rs` for the mechanics,
+`crates/akr-cli/tests/trace_and_pass.rs` end to end over a real repository, and
+`crates/akr-mcp/tests/differential.rs` for the two surfaces.
 
 ---
 

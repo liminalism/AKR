@@ -35,7 +35,7 @@ If you are in a sandbox with no Rust toolchain and `static.rust-lang.org` blocke
 
 ## Workspace layout
 
-- **`crates/akr-core`** — the model (`model/`), lexer/parser/formatter (`syntax/`), validation rules V-001..V-025 (`validate/`), resolver, git freshness (`freshness/`, `git/`), context assembly (`context/`), SQLite index + renderers (`render/`), lock file (`lock/`), atomic write ops (`ops/`).
+- **`crates/akr-core`** — the model (`model/`), lexer/parser/formatter (`syntax/`), validation rules V-001..V-026 (`validate/`), resolver, git freshness (`freshness/`, `git/`), context assembly (`context/`), SQLite index + renderers (`render/`), lock file (`lock/`), atomic write ops (`ops/`).
 - **`crates/akr-cli`** — the `akr` binary, and a library (`akr_cli`) so the MCP server reuses the exact same command implementations. `handoff/` holds two projections that are not the ledger: `session_head.rs` (what `akr start` prepends) and `capsule.rs`/`packet.rs`/`result.rs`/`ops.rs`/`snapshot.rs` (the agent-to-agent context transport, its store, and the workspace fingerprint that tells a child whether the tree still matches what it was handed).
 - **`crates/akr-mcp`** — MCP server (`knowledge.*` tools over stdio). Contains **no ledger logic**: it is only JSON-RPC framing, tool schemas, argument translation, and error mapping over `akr-cli` functions. `tests/differential.rs` enforces that CLI and MCP produce identical results.
 

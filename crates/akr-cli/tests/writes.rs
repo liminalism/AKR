@@ -229,20 +229,20 @@ fn supersede_lists_the_children_it_needs_a_disposition_for() {
 fn supersede_with_an_already_proposed_key_is_atomic() {
     let example = Example::materialise("write-supersede-with");
     for (key, title) in [
-        ("sys.term.legacy-session", "Legacy session"),
-        ("sys.term.playable-session", "Playable session"),
+        ("sys.policy.legacy-session", "Legacy session"),
+        ("sys.policy.playable-session", "Playable session"),
     ] {
         let body = example.root().join(format!("{key}.akr"));
         std::fs::write(
             &body,
-            format!("scope [ all ]\ndefinition \"A definition for {title}.\"\n"),
+            format!("scope [ all ]\nrule \"A rule for {title}.\"\n"),
         )
         .expect("write proposal fragment");
         let proposed = example.run(&[
             "propose",
             key,
             "--kind",
-            "term",
+            "policy",
             "--title",
             title,
             "--from",
@@ -252,7 +252,7 @@ fn supersede_with_an_already_proposed_key_is_atomic() {
     }
     let accepted = example.run(&[
         "revise",
-        "sys.term.legacy-session",
+        "sys.policy.legacy-session",
         "--in-place",
         "--state",
         "active",
@@ -261,14 +261,14 @@ fn supersede_with_an_already_proposed_key_is_atomic() {
 
     let replaced = example.run(&[
         "supersede",
-        "sys.term.legacy-session",
+        "sys.policy.legacy-session",
         "--with",
-        "sys.term.playable-session",
+        "sys.policy.playable-session",
     ]);
     assert_eq!(replaced.code, 0, "{}", replaced.output());
-    let source = example.read_file(".akr/records/sys/terms.akr");
-    assert!(source.contains("supersedes [ @sys.term.legacy-session/1 ]"));
-    assert!(source.contains("record sys.term.playable-session/1 : term"));
+    let source = example.read_file(".akr/records/sys/policies.akr");
+    assert!(source.contains("supersedes [ @sys.policy.legacy-session/1 ]"));
+    assert!(source.contains("record sys.policy.playable-session/1 : policy"));
 }
 
 #[test]
@@ -470,15 +470,15 @@ fn abandon_requires_a_reason_and_writes_nothing() {
 fn propose_many_writes_connected_records_in_one_pass() {
     let example = Example::materialise("write-propose-many");
     let batch = "\
-record sys.track.phased/1 : track {
-    title \"Phased track\"
+record sys.work.phased/1 : work {
+    title \"Phased work\"
     intent \"Coordinate phased milestones.\"
 }
 
 record sys.milestone.phase-0/1 : milestone {
     title \"Phase 0\"
     intent \"Initial skeleton.\"
-    part_of [ @sys.track.phased ]
+    part_of [ @sys.work.phased ]
     depends_on [ @sys.req.deterministic-sim ]
     acceptance {
         check skeleton {
@@ -491,7 +491,7 @@ record sys.milestone.phase-0/1 : milestone {
 record sys.milestone.phase-1/1 : milestone {
     title \"Phase 1\"
     intent \"Follow-on milestone.\"
-    part_of [ @sys.track.phased ]
+    part_of [ @sys.work.phased ]
     after [ @sys.milestone.phase-0 ]
     acceptance {
         check loop {
@@ -519,15 +519,15 @@ fn propose_many_is_atomic_and_writes_nothing_on_a_bad_record() {
     let example = Example::materialise("write-propose-many-atomic");
     let before = example.sources();
     let batch = "\
-record sys.track.good/1 : track {
-    title \"Good track\"
+record sys.work.good/1 : work {
+    title \"Good work\"
     intent \"Should roll back on sibling failure.\"
 }
 
 record sys.milestone.bad/1 : milestone {
     title \"Bad milestone\"
     intent \"Uses implements on milestone.\"
-    part_of [ @sys.track.good ]
+    part_of [ @sys.work.good ]
     implements [ @sys.req.deterministic-sim ]
     acceptance {
         check boot {
@@ -725,18 +725,15 @@ fn a_proposal_with_no_body_is_refused_outright() {
         &example,
         &[
             "propose",
-            "sys.term.day-loop",
+            "sys.policy.day-loop",
             "--kind",
-            "term",
+            "policy",
             "--title",
             "The day loop",
         ],
     );
     assert!(text.contains("AKR-C031"), "{text}");
-    assert!(
-        text.contains("definition"),
-        "names the missing slot: {text}"
-    );
+    assert!(text.contains("rule"), "names the missing slot: {text}");
 }
 
 #[test]
@@ -745,8 +742,8 @@ fn a_proposal_from_a_file_lands_and_checks_clean() {
     let body = example.root().join("day-loop.akr");
     std::fs::write(
         &body,
-        "akr 0.1\nproject save-your-skin\n\nrecord sys.term.day-loop/1 : term {\n    \
-         title \"The day loop\"\n    state active\n    scope [ all ]\n    definition \"\"\"\n        \
+        "akr 0.1\nproject save-your-skin\n\nrecord sys.policy.day-loop/1 : policy {\n    \
+         title \"The day loop\"\n    state active\n    scope [ all ]\n    rule \"\"\"\n        \
          The repeating structure of one in-game day: wake, work, evening, sleep.\n        \
          \"\"\"\n    author \"test\"\n    created_at 2026-08-03\n}\n",
     )
@@ -754,17 +751,17 @@ fn a_proposal_from_a_file_lands_and_checks_clean() {
 
     let run = example.run(&[
         "propose",
-        "sys.term.day-loop",
+        "sys.policy.day-loop",
         "--kind",
-        "term",
+        "policy",
         "--from",
         body.to_str().expect("utf-8"),
     ]);
     assert_eq!(run.code, 0, "{}", run.output());
     assert!(
         example
-            .read_file(".akr/records/sys/terms.akr")
-            .contains("sys.term.day-loop/1")
+            .read_file(".akr/records/sys/policies.akr")
+            .contains("sys.policy.day-loop/1")
     );
     // The lock is stale until the next build (D-014), so the ledger only checks clean
     // after one. That is the sequence every write leaves behind.
@@ -778,8 +775,8 @@ fn a_proposal_without_kind_takes_it_from_the_file() {
     let body = example.root().join("day-loop.akr");
     std::fs::write(
         &body,
-        "akr 0.1\nproject save-your-skin\n\nrecord sys.term.day-loop/1 : term {\n    \
-         title \"The day loop\"\n    state active\n    scope [ all ]\n    definition \"\"\"\n        \
+        "akr 0.1\nproject save-your-skin\n\nrecord sys.policy.day-loop/1 : policy {\n    \
+         title \"The day loop\"\n    state active\n    scope [ all ]\n    rule \"\"\"\n        \
          The repeating structure of one in-game day: wake, work, evening, sleep.\n        \
          \"\"\"\n    author \"test\"\n    created_at 2026-08-03\n}\n",
     )
@@ -789,19 +786,19 @@ fn a_proposal_without_kind_takes_it_from_the_file() {
     // ceremony that broke the documented `propose <key> --from <file>` form.
     let run = example.run(&[
         "propose",
-        "sys.term.day-loop",
+        "sys.policy.day-loop",
         "--from",
         body.to_str().expect("utf-8"),
     ]);
     assert_eq!(run.code, 0, "{}", run.output());
     assert!(
         example
-            .read_file(".akr/records/sys/terms.akr")
-            .contains("sys.term.day-loop/1")
+            .read_file(".akr/records/sys/policies.akr")
+            .contains("sys.policy.day-loop/1")
     );
 
     // With neither the flag nor a declaring file, the kind is still required.
-    let run = example.run(&["propose", "sys.term.still-kindless"]);
+    let run = example.run(&["propose", "sys.policy.still-kindless"]);
     assert_eq!(run.code, 2, "{}", run.output());
     assert!(run.output().contains("AKR-C003"), "{}", run.output());
 }

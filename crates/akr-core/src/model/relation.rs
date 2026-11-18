@@ -43,7 +43,9 @@ impl Range {
     pub fn accepts(self, source: Kind, target: Kind) -> bool {
         match self {
             Self::Any => true,
-            Self::SameKind => source == target,
+            // D-046: a retired kind may be superseded by the kind it folds into, which
+            // is how a record leaves a retired kind without rewriting sealed history.
+            Self::SameKind => source == target || target.folds_into() == Some(source),
             Self::Kinds(ks) => ks.contains(&target),
         }
     }
@@ -117,20 +119,6 @@ const ALL_BUT_QUESTION: &[Kind] = &[
     K::Track,
 ];
 
-/// Every kind except `observation` and `evidence`.
-const ALL_BUT_EMPIRICAL_SOURCES: &[Kind] = &[
-    K::Term,
-    K::Requirement,
-    K::Policy,
-    K::Constraint,
-    K::Decision,
-    K::Assessment,
-    K::Milestone,
-    K::Work,
-    K::Track,
-    K::Question,
-];
-
 impl Relation {
     /// Every relation, in vocabulary order.
     pub const ALL: &'static [Relation] = &[
@@ -180,18 +168,31 @@ impl Relation {
     #[must_use]
     pub const fn domain(self) -> Domain {
         match self {
-            Self::SupportedBy => Domain::Kinds(ALL_BUT_EMPIRICAL_SOURCES),
+            Self::SupportedBy => Domain::Kinds(ALL_BUT_EVIDENCE),
             Self::DependsOn => Domain::Kinds(ALL_BUT_EVIDENCE),
             Self::Supersedes | Self::Contradicts | Self::DerivedFrom => Domain::Any,
             Self::Implements => Domain::Kinds(&[K::Work, K::Decision]),
             Self::Resolves => Domain::Kinds(&[K::Decision, K::Observation, K::Evidence, K::Work]),
-            Self::PartOf => Domain::Kinds(&[K::Work, K::Milestone, K::Requirement, K::Question]),
+            Self::PartOf => Domain::Kinds(&[
+                K::Work,
+                K::Milestone,
+                K::Requirement,
+                K::Policy,
+                K::Question,
+            ]),
             Self::After => Domain::Kinds(&[K::Milestone, K::Work]),
-            Self::Blocks => Domain::Kinds(&[K::Question, K::Work, K::Observation, K::Constraint]),
+            Self::Blocks => Domain::Kinds(&[
+                K::Question,
+                K::Work,
+                K::Observation,
+                K::Constraint,
+                K::Policy,
+            ]),
             Self::VerifiedBy => Domain::Kinds(&[
                 K::Milestone,
                 K::Work,
                 K::Requirement,
+                K::Policy,
                 K::Assessment,
                 K::Observation,
             ]),

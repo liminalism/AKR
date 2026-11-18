@@ -1,9 +1,14 @@
 //! Commit-message generation from a transaction and a staged semantic delta.
 //!
 //! The message has five sources and no sixth: the transaction's summary becomes the
-//! subject, the primary work record's intent explains why, the semantic delta says what
-//! happened, the evidence records say what was verified, and the trailers carry the
+//! subject, the semantic delta says what happened, the evidence records say what was
+//! verified, the trace entries the change adds say why, and the trailers carry the
 //! machine-readable links.
+//!
+//! It used to open with the primary work record's `intent`. That put the same prose in
+//! the ledger and in git, and an audit of three projects found agents then copying it a
+//! third time by hand (D-047). The reasons a commit carries are now exactly the reasons
+//! that were written for it: one `AKR-Why:` trailer per trace entry the staged tree adds.
 //!
 //! # Why trailers rather than stored commit hashes
 //!
@@ -14,7 +19,7 @@
 //! rebuilt by walking history.
 
 use super::{ChangeIntent, SemanticDelta};
-use crate::model::{Ledger, Record};
+use crate::model::Ledger;
 
 /// The trailer names AKR writes, all `git interpret-trailers`-compatible.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,6 +28,8 @@ pub enum Trailer {
     Change,
     /// A work record this commit advances.
     Work,
+    /// A reason this commit was made the way it was: a trace entry it adds (D-047).
+    Why,
     /// An evidence record this commit introduces.
     Evidence,
     /// A decision this commit records.
@@ -40,6 +47,7 @@ impl Trailer {
         match self {
             Self::Change => "AKR-Change",
             Self::Work => "AKR-Work",
+            Self::Why => "AKR-Why",
             Self::Evidence => "AKR-Evidence",
             Self::Decision => "AKR-Decision",
             Self::Graph => "AKR-Graph",
@@ -69,13 +77,6 @@ pub fn commit_message(
     out.push('\n');
 
     let mut body: Vec<String> = Vec::new();
-    if let Some(why) = intent
-        .primary_work
-        .as_deref()
-        .and_then(|reference| staged.and_then(|ledger| intent_of(ledger, reference)))
-    {
-        body.push(wrap(&why));
-    }
     if let Some(note) = &intent.implementation_note {
         body.push(wrap(note));
     }
@@ -94,7 +95,7 @@ pub fn commit_message(
         out.push('\n');
     }
 
-    let trailers = trailers(intent, delta, tree, graph);
+    let trailers = trailers(intent, delta, staged, tree, graph);
     if !trailers.is_empty() {
         out.push('\n');
         for line in trailers {
@@ -127,25 +128,6 @@ fn subject(intent: &ChangeIntent) -> String {
         cut.push_str(word);
     }
     format!("{prefix}{cut}...")
-}
-
-/// The one-line intent of the primary work record, when the staged ledger has it.
-fn intent_of(ledger: &Ledger, reference: &str) -> Option<String> {
-    let record = find(ledger, reference)?;
-    crate::context::body_of(record)
-        .map(|body| body.lines().take(3).collect::<Vec<_>>().join(" "))
-        .filter(|text| !text.trim().is_empty())
-}
-
-fn find<'a>(ledger: &'a Ledger, reference: &str) -> Option<&'a Record> {
-    let text = reference.trim_start_matches('@');
-    let (key, revision) = match text.split_once('/') {
-        Some((key, rev)) => (key, rev.parse::<u32>().ok()),
-        None => (text, None),
-    };
-    ledger.records().iter().find(|record| {
-        record.id.key.to_string() == key && revision.is_none_or(|rev| record.id.revision == rev)
-    })
 }
 
 fn transitions_paragraph(delta: &SemanticDelta) -> Option<String> {
@@ -186,9 +168,30 @@ fn verification_paragraph(delta: &SemanticDelta, staged: Option<&Ledger>) -> Opt
     Some(lines.join("\n"))
 }
 
+/// The reasons this commit carries, in order and without repeats: the trace entries the
+/// staged tree adds, then any `--why` whose record was left out of it.
+fn reasons(intent: &ChangeIntent, delta: &SemanticDelta) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for reason in delta
+        .trace
+        .iter()
+        .map(|step| step.entry.as_str())
+        .chain(intent.why.iter().map(String::as_str))
+    {
+        // A trailer is one line. Entries are written as one, but a hand-made transaction
+        // file is not trusted to be.
+        let line = reason.split_whitespace().collect::<Vec<_>>().join(" ");
+        if !line.is_empty() && !out.contains(&line) {
+            out.push(line);
+        }
+    }
+    out
+}
+
 fn trailers(
     intent: &ChangeIntent,
     delta: &SemanticDelta,
+    staged: Option<&Ledger>,
     tree: Option<&str>,
     graph: Option<&str>,
 ) -> Vec<String> {
@@ -196,8 +199,22 @@ fn trailers(
     for reference in intent.work_refs() {
         out.push(format!("{}: {reference}", Trailer::Work.as_str()));
     }
+    for reason in reasons(intent, delta) {
+        out.push(format!("{}: {reason}", Trailer::Why.as_str()));
+    }
     for id in &delta.evidence {
         out.push(format!("{}: @{id}", Trailer::Evidence.as_str()));
+    }
+    // A decision the commit records is the other place its reasoning lives.
+    if let Some(ledger) = staged {
+        for id in delta.added.iter().chain(delta.revised.iter()) {
+            if ledger
+                .get(id)
+                .is_some_and(|record| record.kind == crate::model::Kind::Decision)
+            {
+                out.push(format!("{}: @{id}", Trailer::Decision.as_str()));
+            }
+        }
     }
     if let Some(graph) = graph {
         out.push(format!("{}: {graph}", Trailer::Graph.as_str()));
@@ -304,6 +321,49 @@ mod tests {
         );
         assert!(message.contains("AKR-Graph: sha256:5a0a"), "{message}");
         assert!(message.contains("AKR-Tree: 41cd7e"), "{message}");
+    }
+
+    #[test]
+    fn added_trace_entries_become_why_trailers_and_intent_is_not_copied() {
+        use crate::change::TraceStep;
+        let mut intent = intent();
+        intent.why = vec![
+            "dropped colliders: they snapped the coat hem on stairs".into(),
+            "left out of the staged tree, so only the transaction has it".into(),
+        ];
+        let delta = SemanticDelta {
+            trace: vec![
+                TraceStep {
+                    id: id("raw.work.slice-6", 2),
+                    entry: "dropped colliders: they snapped the coat hem on stairs".into(),
+                },
+                TraceStep {
+                    id: id("raw.work.slice-6", 2),
+                    entry: "chained the coat first: it hangs inside the leg tube".into(),
+                },
+            ],
+            ..SemanticDelta::default()
+        };
+        let message = commit_message(&intent, &delta, None, Some("t"), Some("g"));
+        let why: Vec<&str> = message
+            .lines()
+            .filter_map(|line| line.strip_prefix("AKR-Why: "))
+            .collect();
+        assert_eq!(
+            why,
+            [
+                "dropped colliders: they snapped the coat hem on stairs",
+                "chained the coat first: it hangs inside the leg tube",
+                "left out of the staged tree, so only the transaction has it",
+            ],
+            "{message}"
+        );
+        // The trailers stay one contiguous block that `git interpret-trailers` accepts.
+        let block = &message[message.find("AKR-Change: ").expect("trailers")..];
+        assert!(
+            block.lines().all(|line| line.starts_with("AKR-")),
+            "{message}"
+        );
     }
 
     #[test]

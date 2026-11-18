@@ -1,7 +1,7 @@
 # Validation Rules
 
 The catalogue of everything `akr check` enforces, and — just as importantly — what it
-deliberately does not. Twenty-five rules, `V-001` through `V-025`, each raising exactly
+deliberately does not. Twenty-six rules, `V-001` through `V-026`, each raising exactly
 one diagnostic code from the language registry (`spec/diagnostics/codes-lang.md`).
 
 Rule identifiers and their codes are frozen in `spec/tables/vocabulary.json`. Freshness,
@@ -627,7 +627,9 @@ mandatory rather than advisory for hard dependencies.
 **Statement.** A `milestone` or `work` record in state `completed` has every `check` in
 its `acceptance` block satisfied: at least one referenced evidence record with
 `result pass` and an `observed_at` commit descended from the record's last *definitional*
-change, or evidence authored in the same commit as that change (D-016, refined by D-029).
+change, or evidence authored in the same commit as that change (D-016, refined by D-029);
+or, for a `command` check, a `passed_at` naming a commit the repository has (D-048). A
+`passed_at` on a check of any other method satisfies nothing.
 
 **Why.** This is what makes `completed` mean something. Without it the state is a
 self-report, and a milestone marked done with a failing check is worse than no milestone
@@ -902,12 +904,41 @@ because there is nothing left to keep.
 
 ---
 
+### V-026 — A trace entry is at most forty words
+
+**Stage** type · **Code** `AKR-T024`
+
+**Statement.** A `trace` entry on a live `work` record holds at most forty words, counted
+as runs of non-whitespace (D-047).
+
+**Why.** The trace exists because an unbounded prose slot was filled with a restatement of the
+diff, and a one-line slot was filled with the reason. The bound is what makes it a trace.
+It is set well above the 25 words the guidance asks for: between 25 and 40 the write
+succeeds with an advisory note, and only above 40 is it refused. A hard limit at the
+target length costs retries over a word or two, which is the single most reported
+friction with the tool this replaces.
+
+Only live revisions are judged, for V-025's reason.
+
+```
+record fx.work.long-winded/1 : work {
+    ...
+    trace [ "<forty-one words>" ]     # AKR-T024
+}
+```
+
+**Not a rule: retired kinds.** Creating a new key with a retired kind is refused with
+`AKR-T008` (D-046), but by the write pipeline and not by a rule here. The ledger alone
+cannot tell a record that predates the retirement from one written after it — both are
+revision 1 of some key — so a rule would turn every existing ledger red for holding its
+own history. Only a write knows which keys it creates.
+
 ## 3. Rule-to-stage matrix
 
 | Stage | Rules | Codes | What it can see |
 | --- | --- | --- | --- |
 | **A — parse** | — | `AKR-P*`, `AKR-F*` | One file's bytes |
-| **B — type** | V-007, V-008, V-009, V-010, V-011, V-025 | `AKR-T001`, `T002`, `T011`, `T021`, `T022`, `T023`, `T031` | One record, plus the vocabulary |
+| **B — type** | V-007, V-008, V-009, V-010, V-011, V-025, V-026 | `AKR-T001`, `T002`, `T011`, `T021`, `T022`, `T023`, `T031` | One record, plus the vocabulary |
 | **C — link** | V-001, V-002, V-003, V-004, V-005, V-006 | `AKR-L001`, `L002`, `L004`, `L006`, `L012`, `L021`, `L031` | All records, unresolved |
 | **D — resolve** | V-012 … V-024 | `AKR-R001`, `R002`, `R011`–`R015`, `R018`, `R021`, `R022`, `R031`, `R032`, `R041`, `R051`, `R052` | The whole graph, heads resolved, git history, the lock |
 
