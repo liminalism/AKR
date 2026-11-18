@@ -11,7 +11,7 @@
 //! what the write pipeline actually put on disk, because the formatter re-emits every
 //! record and could paraphrase an excerpt without any extraction test noticing.
 
-mod support;
+use crate::support;
 
 use support::Example;
 

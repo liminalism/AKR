@@ -6,7 +6,7 @@
 //! and summary identical, and trailers that named no work. Each test here is one of those
 //! findings turned into a claim about the tool.
 
-mod support;
+use crate::support;
 
 use support::Example;
 

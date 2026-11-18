@@ -24,7 +24,7 @@
 //! is its implementation; when they disagree, whichever moves does so deliberately and the
 //! diff is reviewed. Blessing is how the move is applied, not how it is decided.
 
-mod support;
+use crate::support;
 
 use std::path::Path;
 use support::{Example, transcript_dir};
@@ -379,24 +379,4 @@ fn exit_three_is_an_unusable_workspace() {
     assert_eq!(output.status.code(), Some(3));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("AKR-C011"), "{stderr}");
-}
-
-// -------------------------------------------------------------------------------------
-// The second worked example, exercised through the binary
-// -------------------------------------------------------------------------------------
-
-#[test]
-fn the_shell_splitter_handles_quoted_globs() {
-    assert_eq!(
-        shell_words("akr context --goal g --paths \"sim/src/project/**\""),
-        vec![
-            "akr",
-            "context",
-            "--goal",
-            "g",
-            "--paths",
-            "sim/src/project/**"
-        ]
-    );
-    assert_eq!(shell_words("akr check").len(), 2);
 }

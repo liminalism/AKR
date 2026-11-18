@@ -1009,9 +1009,7 @@ fn check(
     let mut view_diagnostics = if counts_of(session, &model).records == 0 {
         Vec::new()
     } else {
-        check_views_current(&session.view_dir(), context).map_err(|e| {
-            EnvError::new("AKR-E001", format!("cannot read the view directory: {e}"))
-        })?
+        check_views_relative(session, context)?
     };
 
     // An agent that has just written a record has stale views BY CONSTRUCTION, and has not
@@ -1194,6 +1192,25 @@ struct Counts {
     heads: usize,
     checks: usize,
     satisfied: usize,
+}
+
+fn check_views_relative(
+    session: &Session,
+    context: akr_core::render::RenderContext<'_>,
+) -> Result<Vec<akr_core::diagnostics::Diagnostic>, EnvError> {
+    let mut diagnostics = check_views_current(&session.view_dir(), context)
+        .map_err(|e| EnvError::new("AKR-E001", format!("cannot read the view directory: {e}")))?;
+    let root_prefix = format!("{}/", session.root.to_string_lossy().replace('\\', "/"));
+    for diagnostic in &mut diagnostics {
+        if let akr_core::diagnostics::Subject::File(path) = &mut diagnostic.primary.subject
+            && let Some(rel) = path.strip_prefix(&root_prefix)
+        {
+            let rel = rel.to_owned();
+            diagnostic.message = diagnostic.message.replace(path.as_str(), &rel);
+            *path = rel;
+        }
+    }
+    Ok(diagnostics)
 }
 
 fn counts_of(session: &Session, model: &akr_core::resolve::ResolvedModel<'_>) -> Counts {
@@ -1439,9 +1456,7 @@ fn build(session: &mut Session, check: bool) -> Result<Output, EnvError> {
 
         let freshness = session.freshness(&queue);
         let context = akr_core::render::RenderContext::new(&model, &freshness);
-        let view_diagnostics = check_views_current(&session.view_dir(), context).map_err(|e| {
-            EnvError::new("AKR-E001", format!("cannot read the view directory: {e}"))
-        })?;
+        let view_diagnostics = check_views_relative(session, context)?;
         let views_current = view_diagnostics.is_empty();
         text.push_str(&format!(
             "  stage E  emit (in memory)      {} views        {}\n",

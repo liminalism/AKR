@@ -1016,14 +1016,27 @@ pub fn evidence_records_from_file(session: &Session, path: &Path) -> Result<Vec<
     Ok(records)
 }
 
+fn resolve_in_session(session: &Session, path: &Path) -> std::path::PathBuf {
+    if path.is_relative() {
+        session.root.join(path)
+    } else {
+        path.to_path_buf()
+    }
+}
+
 fn records_from_file(
     session: &Session,
     path: &Path,
     expected: &str,
     help: &str,
 ) -> Result<Vec<Record>, EnvError> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| EnvError::new("AKR-C042", format!("cannot read {}: {e}", path.display())))?;
+    let resolved = resolve_in_session(session, path);
+    let text = std::fs::read_to_string(&resolved).map_err(|e| {
+        EnvError::new(
+            "AKR-C042",
+            format!("cannot read {}: {e}", resolved.display()),
+        )
+    })?;
     let text = with_header(&text, session);
 
     let mut sources = akr_core::diagnostics::SourceMap::new();
@@ -1535,8 +1548,13 @@ fn body_from(
     let Some(path) = from else {
         return Ok(None);
     };
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| EnvError::new("AKR-C042", format!("cannot read {}: {e}", path.display())))?;
+    let resolved = resolve_in_session(session, path);
+    let text = std::fs::read_to_string(&resolved).map_err(|e| {
+        EnvError::new(
+            "AKR-C042",
+            format!("cannot read {}: {e}", resolved.display()),
+        )
+    })?;
     // The command already knows the project, the key and the kind — it is being told them
     // on the command line — so demanding that the file repeat all three was ceremony that
     // sent people to `akr fmt` to find out what a file header looks like. A file that
@@ -1606,8 +1624,13 @@ fn kind_from_file(session: &Session, from: Option<&Path>) -> Result<Kind, EnvErr
         return Err(EnvError::new("AKR-C003", "propose requires --kind <kind>")
             .help("or pass --from <file> with a record that declares one"));
     };
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| EnvError::new("AKR-C042", format!("cannot read {}: {e}", path.display())))?;
+    let resolved = resolve_in_session(session, path);
+    let text = std::fs::read_to_string(&resolved).map_err(|e| {
+        EnvError::new(
+            "AKR-C042",
+            format!("cannot read {}: {e}", resolved.display()),
+        )
+    })?;
     let first = text
         .lines()
         .map(str::trim)

@@ -13,7 +13,7 @@
 //!    of a hundred normative records stayed whatever the budget said.
 //! 2. The JSON half never carried any record's body, the goal's included.
 
-mod support;
+use crate::support;
 
 use support::Example;
 

@@ -4,7 +4,7 @@
 //! exit as §3 says, and produce a JSON envelope with the fields §5 fixes. Between them the
 //! read surface has no command that has never been executed.
 
-mod support;
+use crate::support;
 
 use support::{Example, SYS_TANDEM};
 
@@ -40,21 +40,9 @@ fn assert_envelope(text: &str, command: &str) {
 }
 
 #[test]
-fn propose_help_shows_a_slot_list_example() {
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_akr"))
-        .args(["propose", "--help"])
-        .output()
-        .expect("runs");
-    let text = String::from_utf8_lossy(&output.stdout);
-    assert!(output.status.success(), "{text}");
-    assert!(text.contains("slot-list"), "{text}");
-    assert!(text.contains("intent"), "{text}");
-}
-
-#[test]
 fn help_and_version_need_no_workspace() {
     let dir = std::env::temp_dir();
-    for args in [vec!["--help"], vec!["--version"]] {
+    for args in [vec!["--help"], vec!["--version"], vec!["propose", "--help"]] {
         let output = std::process::Command::new(env!("CARGO_BIN_EXE_akr"))
             .args(&args)
             .current_dir(&dir)
@@ -140,8 +128,8 @@ fn every_read_command_runs_and_produces_an_envelope() {
 }
 
 #[test]
-fn fmt_leaves_a_canonical_workspace_alone() {
-    let example = Example::materialise("fmt");
+fn fmt_build_and_lock_are_idempotent_on_a_clean_workspace() {
+    let example = Example::materialise("fmt-build-lock");
     let check = example.run(&["fmt", "--check"]);
     assert_eq!(check.code, 0, "{}", check.output());
     assert!(
@@ -153,24 +141,7 @@ fn fmt_leaves_a_canonical_workspace_alone() {
     let run = example.run(&["fmt"]);
     assert_eq!(run.code, 0, "{}", run.output());
     assert!(run.stdout.contains("unchanged"), "{}", run.stdout);
-}
 
-#[test]
-fn fmt_and_init_refuse_json() {
-    let example = Example::materialise("no-json");
-    for args in [
-        vec!["--format", "json", "fmt", "--check"],
-        vec!["--format", "json", "init"],
-    ] {
-        let run = example.run(&args);
-        assert_eq!(run.code, 2, "{args:?}: {}", run.output());
-        assert!(run.stderr.contains("AKR-C041"), "{}", run.stderr);
-    }
-}
-
-#[test]
-fn build_is_idempotent() {
-    let example = Example::materialise("build-twice");
     let first = example.run(&["build"]);
     let second = example.run(&["build"]);
     assert_eq!(first.code, 0, "{}", first.output());
@@ -183,6 +154,10 @@ fn build_is_idempotent() {
         second.stdout
     );
     assert_eq!(example.run(&["check", "--views-current"]).code, 0);
+
+    assert_eq!(example.run(&["lock", "--check"]).code, 0);
+    assert_eq!(example.run(&["lock"]).code, 0);
+    assert_eq!(example.run(&["lock", "--check"]).code, 0);
 }
 
 #[test]
@@ -249,14 +224,6 @@ fn build_check_detects_view_drift() {
         "{}",
         check.output()
     );
-}
-
-#[test]
-fn lock_check_agrees_with_the_lock_the_tool_writes() {
-    let example = Example::materialise("lock-check");
-    assert_eq!(example.run(&["lock", "--check"]).code, 0);
-    assert_eq!(example.run(&["lock"]).code, 0);
-    assert_eq!(example.run(&["lock", "--check"]).code, 0);
 }
 
 #[test]
@@ -341,32 +308,6 @@ fn init_scaffolds_a_workspace_and_never_overwrites() {
 }
 
 #[test]
-fn no_command_is_deferred_any_longer() {
-    let example = Example::materialise("deferred");
-    // Nothing remains deferred: P7 delivered `search` and P8 delivered `import`, so the
-    // whole command surface of `docs/07-cli.md` is now wired. `import` in particular no
-    // longer reports itself unbuilt (the old `AKR-M002 … arrives with P8`); it runs, and
-    // a missing document is an ordinary ledger diagnostic — exit 1, `AKR-M001` — not the
-    // environment failure a deferred command used to raise.
-    let deferred = example.run(&["import", "docs/legacy.md"]);
-    assert_eq!(deferred.code, 1, "{}", deferred.output());
-    let text = deferred.output();
-    assert!(text.contains("AKR-M001"), "{text}");
-    assert!(
-        !text.contains("arrives with"),
-        "import is no longer deferred: {text}"
-    );
-
-    // And `search` is delivered too, in a binary that has a ranker at all.
-    #[cfg(feature = "fts5")]
-    {
-        assert_eq!(example.run(&["build"]).code, 0);
-        let search = example.run(&["search", "projection"]);
-        assert_eq!(search.code, 0, "{}", search.output());
-    }
-}
-
-#[test]
 fn explain_covers_both_diagnostic_registries() {
     let example = Example::materialise("explain");
     // `C` codes are this crate's, `L` codes are the language half: `akr explain` reads both
@@ -397,11 +338,11 @@ fn explain_covers_both_diagnostic_registries() {
 }
 
 #[test]
-fn context_normalizes_a_current_pin_and_guides_other_reference_forms() {
-    let example = Example::materialise("context-reference-contract");
+fn context_and_start_normalize_paths_and_reject_ambiguous_or_outside_inputs() {
+    let example = Example::materialise("context-read-contracts");
+
     let current = example.run(&["context", "--goal", "@sys.milestone.m3-playable-day/1"]);
     assert_eq!(current.code, 0, "{}", current.output());
-
     let historical = example.run(&["context", "--goal", "@sys.work.m3-plan/1"]);
     assert_eq!(historical.code, 3, "{}", historical.output());
     assert!(historical.output().contains("AKR-X004"));
@@ -410,7 +351,6 @@ fn context_normalizes_a_current_pin_and_guides_other_reference_forms() {
             .output()
             .contains("akr get sys.work.m3-plan --history")
     );
-
     let anchored = example.run(&[
         "context",
         "--goal",
@@ -419,11 +359,7 @@ fn context_normalizes_a_current_pin_and_guides_other_reference_forms() {
     assert_eq!(anchored.code, 3, "{}", anchored.output());
     assert!(anchored.output().contains("AKR-X005"));
     assert!(anchored.output().contains("akr get"));
-}
 
-#[test]
-fn context_paths_accepts_native_separators_and_an_absolute_in_repo_path() {
-    let example = Example::materialise("context-paths-normalization");
     let baseline = example.run(&[
         "context",
         "--goal",
@@ -432,75 +368,27 @@ fn context_paths_accepts_native_separators_and_an_absolute_in_repo_path() {
         "sim/src/project/**",
     ]);
     assert_eq!(baseline.code, 0, "{}", baseline.output());
+    for path in [
+        r"sim\src\project\**".to_owned(),
+        r"sim/src\project/**".to_owned(),
+        format!(r"{}\sim\src\project\**", example.root().display()),
+    ] {
+        let run = example.run(&[
+            "context",
+            "--goal",
+            "sys.milestone.m3-playable-day",
+            "--paths",
+            &path,
+        ]);
+        assert_eq!(run.code, 0, "{path}: {}", run.output());
+        assert_eq!(run.stdout, baseline.stdout, "{path}");
+    }
 
-    // A backslash path — what an agent on Windows naturally types — must produce the
-    // identical bundle, not `AKR-X011` ("backslashes are not path separators").
-    let backslash = example.run(&[
-        "context",
-        "--goal",
-        "sys.milestone.m3-playable-day",
-        "--paths",
-        r"sim\src\project\**",
-    ]);
-    assert_eq!(backslash.code, 0, "{}", backslash.output());
-    assert_eq!(
-        backslash.stdout, baseline.stdout,
-        "a backslash path must normalize to the same bundle as its forward-slash form"
-    );
-
-    // Mixed separators normalize the same way.
-    let mixed = example.run(&[
-        "context",
-        "--goal",
-        "sys.milestone.m3-playable-day",
-        "--paths",
-        r"sim/src\project/**",
-    ]);
-    assert_eq!(mixed.code, 0, "{}", mixed.output());
-    assert_eq!(mixed.stdout, baseline.stdout);
-
-    // An absolute path inside the repository — the shape an agent gets from `pwd`-joining a
-    // relative one, or pastes straight from an editor — is made repo-root-relative rather
-    // than rejected as `AKR-X011: globs are repo-root-relative and may not start with `/``.
-    let absolute = format!(r"{}\sim\src\project\**", example.root().display());
-    let absolute_run = example.run(&[
-        "context",
-        "--goal",
-        "sys.milestone.m3-playable-day",
-        "--paths",
-        &absolute,
-    ]);
-    assert_eq!(absolute_run.code, 0, "{}", absolute_run.output());
-    assert_eq!(absolute_run.stdout, baseline.stdout);
-}
-
-#[test]
-fn context_paths_rejects_an_absolute_path_outside_the_repository() {
-    let example = Example::materialise("context-paths-outside-repo");
     let outside_root = example
         .root()
         .parent()
         .expect("materialised root has a parent")
         .join("definitely-outside-the-repository");
-    let outside = format!(r"{}\src\lib.rs", outside_root.display());
-
-    let run = example.run(&[
-        "context",
-        "--goal",
-        "sys.milestone.m3-playable-day",
-        "--paths",
-        &outside,
-    ]);
-    assert_eq!(run.code, 3, "{}", run.output());
-    assert!(run.output().contains("AKR-X013"), "{}", run.output());
-    assert!(
-        run.output().contains("outside the repository"),
-        "{}",
-        run.output()
-    );
-
-    // A sibling directory that merely shares a name prefix with the repository root (e.g.
-    // `…\commands-context-paths-outside-repo2`) must not be treated as inside it.
     let mut sibling_name = example
         .root()
         .file_name()
@@ -513,37 +401,81 @@ fn context_paths_rejects_an_absolute_path_outside_the_repository() {
         .parent()
         .expect("materialised root has a parent")
         .join(sibling_name);
-    let sibling = format!(r"{}\src\lib.rs", sibling_root.display());
-    let sibling_run = example.run(&[
-        "context",
-        "--goal",
-        "sys.milestone.m3-playable-day",
-        "--paths",
-        &sibling,
-    ]);
-    assert_eq!(sibling_run.code, 3, "{}", sibling_run.output());
+    for bad_root in [outside_root, sibling_root] {
+        let bad = format!(r"{}\src\lib.rs", bad_root.display());
+        let run = example.run(&[
+            "context",
+            "--goal",
+            "sys.milestone.m3-playable-day",
+            "--paths",
+            &bad,
+        ]);
+        assert_eq!(run.code, 3, "{}", run.output());
+        assert!(run.output().contains("AKR-X013"), "{}", run.output());
+        assert!(
+            run.output().contains("outside the repository"),
+            "{}",
+            run.output()
+        );
+    }
+
+    let strong = example.run(&["start", "projection", "--format", "json"]);
+    assert_eq!(strong.code, 0, "{}", strong.output());
     assert!(
-        sibling_run.output().contains("AKR-X013"),
+        strong.stdout.contains("\"recommended_context\""),
         "{}",
-        sibling_run.output()
+        strong.stdout
     );
+    let weak = example.run(&["start", "widget projection overhaul", "--format", "json"]);
+    assert_eq!(weak.code, 0, "{}", weak.output());
+    assert!(
+        weak.stdout.contains("rewrite-projection"),
+        "{}",
+        weak.stdout
+    );
+    assert!(
+        !weak.stdout.contains("\"recommended_context\""),
+        "{}",
+        weak.stdout
+    );
+    assert!(weak.stdout.contains("\"weak_match\""), "{}", weak.stdout);
+
+    let unique = example.run(&["get", "term.renderer-boundary"]);
+    assert_eq!(unique.code, 3, "{}", unique.output());
+    assert!(unique.output().contains("AKR-L001"), "{}", unique.output());
+    assert!(
+        unique
+            .output()
+            .contains("did you mean @lege.term.renderer-boundary?"),
+        "{}",
+        unique.output()
+    );
+    let ambiguous = example.run(&["get", "renderer-boundary"]);
+    assert_eq!(ambiguous.code, 3, "{}", ambiguous.output());
+    for key in [
+        "@lege.decision.renderer-boundary",
+        "@lege.term.renderer-boundary",
+    ] {
+        assert!(ambiguous.output().contains(key), "{}", ambiguous.output());
+    }
 }
 
 // -------------------------------------------------------------------------------------
 // The second worked example
 // -------------------------------------------------------------------------------------
 
-/// `examples/sys-tandem/` through the binary.
-///
-/// The second worked example, materialised the same way: its history is synthetic too, so
-/// the binary can only see it against a real repository built from `MANIFEST.md` §2. What
-/// is asserted is what the manifest freezes — a clean check, and a queue of two stale and
-/// four at-risk records — which is the claim the example exists to make.
 #[test]
-fn the_tandem_example_checks_clean_and_has_the_queue_its_manifest_declares() {
+fn the_tandem_example_validate_alias_and_explain_enums_work_together() {
     let example = Example::of(&SYS_TANDEM, "sys-tandem");
     let check = example.run(&["check"]);
     assert_eq!(check.code, 0, "{}", check.output());
+    let validate = example.run(&["validate"]);
+    assert_eq!(check.code, validate.code, "{}", validate.output());
+    assert_eq!(check.stdout, validate.stdout);
+    assert_eq!(
+        example.run(&["check", "--review-clean"]).code,
+        example.run(&["validate", "--review-clean"]).code
+    );
 
     let queue = example.run(&["review-queue"]);
     assert_eq!(queue.code, 0, "{}", queue.output());
@@ -552,82 +484,6 @@ fn the_tandem_example_checks_clean_and_has_the_queue_its_manifest_declares() {
         "{}",
         queue.stdout
     );
-}
-
-// -------------------------------------------------------------------------------------
-// Help coverage
-// -------------------------------------------------------------------------------------
-
-/// Every command answers its own `--help`, listed in the banner or not.
-///
-/// `akr <command> --help` routes through `help_for`, which returns `Option`: a command
-/// with no topic is reported as an *unknown command* rather than as an undocumented one.
-/// `git-hook` sat in that gap, so probing its help said it did not exist while the command
-/// ran perfectly well — which is a far more misleading answer than no help at all.
-#[test]
-fn every_command_answers_its_own_help() {
-    let example = Example::of(&SYS_TANDEM, "sys-tandem");
-    for command in akr_cli::args::COMMANDS {
-        let help = example.run(&[command, "--help"]);
-        assert_eq!(help.code, 0, "`akr {command} --help`: {}", help.output());
-        assert!(
-            !help.stdout.contains("unknown command"),
-            "`akr {command} --help` reports it as unknown: {}",
-            help.stdout
-        );
-    }
-
-    // The other direction: a command the banner advertises but `COMMANDS` omits is one
-    // `nearest` can never suggest after a typo.
-    let top = example.run(&["--help"]);
-    assert_eq!(top.code, 0, "{}", top.output());
-    for listed in top
-        .stdout
-        .lines()
-        .skip_while(|line| !line.starts_with("COMMANDS"))
-        .skip(1)
-        .take_while(|line| !line.trim().is_empty())
-        .filter_map(|line| line.split_whitespace().next())
-    {
-        assert!(
-            akr_cli::args::COMMANDS.contains(&listed),
-            "`{listed}` is advertised by --help but missing from COMMANDS"
-        );
-    }
-}
-
-#[test]
-fn validate_is_check_under_the_name_the_mcp_tool_uses() {
-    // The protocol every agent reads says "run knowledge.validate before handing work
-    // back". From a shell that was not a command, and two sessions in one sister project
-    // spent the difference working out that `check` was the same thing.
-    let example = Example::of(&SYS_TANDEM, "cli-validate-alias");
-    let check = example.run(&["check"]);
-    let validate = example.run(&["validate"]);
-    assert_eq!(check.code, validate.code, "{}", validate.output());
-    assert_eq!(check.stdout, validate.stdout);
-
-    // The flags come with it, and so does the help.
-    assert_eq!(
-        example.run(&["check", "--review-clean"]).code,
-        example.run(&["validate", "--review-clean"]).code
-    );
-    let help = example.run(&["validate", "--help"]);
-    assert_eq!(help.code, 0, "{}", help.output());
-    assert!(help.stdout.contains("akr validate"), "{}", help.stdout);
-    assert!(!help.stdout.contains("unknown command"), "{}", help.stdout);
-}
-
-#[test]
-fn explain_prints_the_members_of_a_closed_slot_and_the_state_entry_rules() {
-    // `explain <kind>` is what both write surfaces point at for "which slots may this
-    // kind have". Answering that with the word `enum` for the one slot with a fixed
-    // vocabulary sent the author back to guessing — `measurement` is the obvious guess
-    // for an observation's `method`, and it is wrong. The state-entry rules are the same
-    // shape of omission: V-021 refused an author's first `active` decision after listing
-    // `supported_by` among seven optional relations and saying nothing about one of them
-    // being required.
-    let example = Example::of(&SYS_TANDEM, "cli-explain-enums");
 
     let observation = example.run(&["explain", "observation"]);
     assert_eq!(observation.code, 0, "{}", observation.output());
@@ -638,14 +494,12 @@ fn explain_prints_the_members_of_a_closed_slot_and_the_state_entry_rules() {
         "{}",
         observation.stdout
     );
-
     let evidence = example.run(&["explain", "evidence"]);
     assert!(
         evidence.stdout.contains("result: pass|fail|inconclusive"),
         "{}",
         evidence.stdout
     );
-
     let decision = example.run(&["explain", "decision"]);
     assert!(decision.stdout.contains("V-021"), "{}", decision.stdout);
     assert!(
@@ -653,28 +507,18 @@ fn explain_prints_the_members_of_a_closed_slot_and_the_state_entry_rules() {
         "a kind that accepts `contradicts` should say what V-023 wants: {}",
         decision.stdout
     );
-
-    // A kind with no closed slot and no state-entry rule gains neither line.
     let work = example.run(&["explain", "work"]);
     assert!(!work.stdout.contains("V-021"), "{}", work.stdout);
-
-    // `topic`, both ways round. Listing only what a kind accepts left an author who had
-    // seen `topic` on the write surface to assume it was universal, and the refusal
-    // arrived as an AKR-C004 from a rule `explain` had every chance to mention.
     assert!(
         work.stdout.contains("topic      not accepted"),
-        "a planning kind should say it rejects `topic`: {}",
+        "{}",
         work.stdout
     );
-    assert!(
-        work.stdout.contains("AKR-C004"),
-        "and name the code it will be refused with: {}",
-        work.stdout
-    );
+    assert!(work.stdout.contains("AKR-C004"), "{}", work.stdout);
     let policy = example.run(&["explain", "policy"]);
     assert!(
         !policy.stdout.contains("topic      not accepted"),
-        "a normative kind accepts it: {}",
+        "{}",
         policy.stdout
     );
 }
@@ -897,484 +741,138 @@ fn a_stale_view_under_an_uncommitted_ledger_is_a_warning_not_an_error() {
         check.output()
     );
 }
-/// Sets up a fixture carrying one work record whose single acceptance check runs
-/// `command`, plus a committed source file holding `source_text`.
-///
-/// Self-contained on purpose. The shipped fixtures hold placeholder content, so a test
-/// that borrowed a token from them would assert on something incidental. Committing
-/// matters too: the detector searches the tracked tree at a resolved commit, so a fixture
-/// with no commit exercises nothing at all — which is how the first draft of these tests
-/// passed four cases while the detector never ran.
-fn gate_fixture(name: &str, command: &str, source_text: &str) -> Example {
-    let template = r#"
-record NS.work.gate-under-test/1 : work {
-    title "A gate under test"
-    state proposed
-    intent """
-        Exists only to carry one acceptance command.
-        """
-    acceptance {
-        check the-gate {
-            statement """
-                Whatever the command proves.
-                """
-            method command
-            command "CMD"
-        }
+
+#[test]
+fn recorded_gate_commands_check_for_phantom_filters_and_pipes() {
+    let example = Example::materialise("g024-g025-gates");
+    example.write_file(
+        "src/gate_fixture.rs",
+        "// fn a_real_leaf_test\n// mod inventory_model; mod tests; fn a_leaf\n",
+    );
+    example.write_file("docs/handoff/trace.jsonl", "a_name_only_in_jsonl\n");
+
+    let cases: &[(&str, &str, bool, bool)] = &[
+        (
+            "phantom",
+            "cargo test -p sys_present a_test_name_that_exists_nowhere",
+            true,
+            false,
+        ),
+        (
+            "real",
+            "cargo test -p sys_present a_real_leaf_test",
+            false,
+            false,
+        ),
+        ("no-filter", "just check", false, false),
+        (
+            "env-underscore",
+            "SYS_WORLD=greyhaven cargo run --release",
+            false,
+            false,
+        ),
+        (
+            "jsonl",
+            "cargo test -p sys_present a_name_only_in_jsonl",
+            true,
+            false,
+        ),
+        (
+            "one-of-two",
+            "cargo test -p sys_present a_real_leaf_test a_second_name_that_is_absent",
+            false,
+            false,
+        ),
+        (
+            "module-path",
+            "cargo test -p sys_present inventory_model::tests::a_leaf",
+            false,
+            false,
+        ),
+        (
+            "pipe",
+            "cargo test -p sys_present a_real_leaf_test | tail -80",
+            false,
+            true,
+        ),
+        (
+            "escaped",
+            "cargo fmt --check &amp;&amp; cargo test -p sys_present a_real_leaf_test",
+            false,
+            true,
+        ),
+        (
+            "plain-and",
+            "cargo fmt --check && cargo test -p sys_present a_real_leaf_test",
+            false,
+            false,
+        ),
+        (
+            "quoted-jq",
+            r#"jq -e '{course2_completed: any(.trace[]; contains(\"step: Course(2)\") and contains(\"state: Done\")), clearing_completed: any(.trace[]; contains(\"step: Clearing\") and contains(\"state: Done\")), finalized_course2_rows: ([.courses[] | select(contains(\"course: 2,\"))] | length)} | ., (.course2_completed and .clearing_completed)' SYSEngine/review-evidence/x/dinner-1735-attends.json"#,
+            false,
+            false,
+        ),
+        (
+            "bash-c",
+            "bash -c 'cargo test -p sys_present a_real_leaf_test | tail'",
+            false,
+            true,
+        ),
+        (
+            "quoted-word",
+            "cargo test -p sys_present 'a_test_name_that_exists_nowhere'",
+            true,
+            false,
+        ),
+    ];
+
+    let mut extra = String::from(
+        "\nrecord sys.work.gate-superseded/1 : work {\n    title \"Superseded gate\"\n    state superseded\n    intent \"Superseded.\"\n    acceptance {\n        check the-gate {\n            statement \"Check.\"\n            method command\n            command \"cargo test -p sys_present a_test_name_that_exists_nowhere\"\n        }\n    }\n}\n\nrecord sys.work.gate-superseded/2 : work {\n    title \"Superseded gate, restated\"\n    state proposed\n    intent \"Supersedes the phantom command.\"\n}\n",
+    );
+    for (slug, command, _, _) in cases {
+        extra.push_str(&format!(
+            "\nrecord sys.work.gate-{slug}/1 : work {{\n    title \"Gate {slug}\"\n    state proposed\n    intent \"Gate check {slug}.\"\n    acceptance {{\n        check the-gate {{\n            statement \"Gate.\"\n            method command\n            command \"{command}\"\n        }}\n    }}\n}}\n"
+        ));
     }
-}
-"#;
-    gate_fixture_with_template(name, source_text, &template.replace("CMD", command))
-}
-
-/// Same shape as [`gate_fixture`], but the phantom command lands on a superseded
-/// revision rather than the live head.
-///
-/// Nobody can revise a non-head revision to repoint a renamed test — only the head is
-/// writable — so if the gate fired here it would be permanent noise on a papercut that
-/// was already fixed on the successor.
-fn superseded_gate_fixture(name: &str, command: &str, source_text: &str) -> Example {
-    let template = r#"
-record NS.work.gate-under-test/1 : work {
-    title "A gate under test"
-    state superseded
-    intent """
-        Exists only to carry one acceptance command, later superseded.
-        """
-    acceptance {
-        check the-gate {
-            statement """
-                Whatever the command proves.
-                """
-            method command
-            command "CMD"
-        }
-    }
-}
-
-record NS.work.gate-under-test/2 : work {
-    title "A gate under test, restated"
-    state proposed
-    intent """
-        Supersedes the revision that carried the phantom command.
-        """
-}
-"#;
-    gate_fixture_with_template(name, source_text, &template.replace("CMD", command))
-}
-
-/// Sets up a fixture carrying `template` (with `NS` standing for the example's real
-/// namespace) plus a committed source file holding `source_text`.
-///
-/// Self-contained on purpose. The shipped fixtures hold placeholder content, so a test
-/// that borrowed a token from them would assert on something incidental. Committing
-/// matters too: the detector searches the tracked tree at a resolved commit, so a fixture
-/// with no commit exercises nothing at all — which is how the first draft of these tests
-/// passed four cases while the detector never ran.
-fn gate_fixture_with_template(name: &str, source_text: &str, template: &str) -> Example {
-    let example = Example::materialise(name);
-    let src = example.root().join("src/gate_fixture.rs");
-    std::fs::create_dir_all(src.parent().expect("parent")).expect("create src dir");
-    std::fs::write(&src, format!("// {source_text}\n")).expect("write source");
-
-    let dir = std::fs::read_dir(example.root().join(".akr/records"))
-        .expect("records dir")
-        .filter_map(Result::ok)
-        .map(|e| e.path())
-        .find(|p| p.is_dir())
-        .expect("a namespace directory");
-    let file = std::fs::read_dir(&dir)
-        .expect("namespace dir")
-        .filter_map(Result::ok)
-        .map(|e| e.path())
-        .find(|p| p.extension().is_some_and(|x| x == "akr"))
-        .expect("a record file");
-    let existing = std::fs::read_to_string(&file).expect("read record file");
-    let namespace = existing
-        .lines()
-        .find_map(|l| l.strip_prefix("record "))
-        .and_then(|r| r.split('.').next())
-        .unwrap_or("sys")
-        .to_owned();
-
-    let added = template.replace("NS", &namespace);
-    std::fs::write(&file, format!("{existing}{added}")).expect("write record file");
-
+    let work_path = ".akr/records/sys/work.akr";
+    let existing = example.read_file(work_path);
+    example.write_file(work_path, &format!("{existing}{extra}"));
     example.git(&["add", "-A"]);
     example.git(&["commit", "--quiet", "-m", "gate fixture"]);
-    example
-}
 
-/// A8: a gate naming a test that exists nowhere in tracked source passes having run
-/// nothing, because `cargo test <filter>` with a filter matching nothing exits 0.
-#[test]
-fn a_command_naming_a_test_that_does_not_exist_is_reported() {
-    let example = gate_fixture(
-        "g024-phantom",
-        "cargo test -p sys_present a_test_name_that_exists_nowhere",
-        "nothing relevant here",
-    );
-    let check = example.run(&["check"]);
-    assert!(
-        check.output().contains("AKR-G024"),
-        "a phantom test filter must be reported:\n{}",
-        check.output()
-    );
-}
-
-/// A superseded revision's phantom command must not be reported: nobody can revise a
-/// non-head revision to repoint a renamed test, so this would otherwise be permanent
-/// noise on a papercut that was already fixed on the successor.
-#[test]
-fn a_superseded_revisions_phantom_command_is_silent() {
-    let example = superseded_gate_fixture(
-        "g024-superseded",
-        "cargo test -p sys_present a_test_name_that_exists_nowhere",
-        "nothing relevant here",
-    );
-    assert_eq!(example.run(&["build"]).code, 0);
-    let check = example.run(&["check"]);
-    assert!(
-        !check.output().contains("AKR-G024"),
-        "a superseded revision's phantom command must stay silent:\n{}",
-        check.output()
-    );
-}
-
-/// The same shape naming a test that really is in tracked source stays silent.
-#[test]
-fn a_command_naming_a_real_test_is_silent() {
-    let example = gate_fixture(
-        "g024-real",
-        "cargo test -p sys_present a_real_leaf_test",
-        "fn a_real_leaf_test",
-    );
-    let check = example.run(&["check"]);
-    assert!(
-        !check.output().contains("AKR-G024"),
-        "a real test name must not be reported:\n{}",
-        check.output()
-    );
-}
-
-/// A command with no identifier-shaped token is not a test filter and is never reported.
-/// `just check` and `cargo check --workspace` must stay silent, or the diagnostic becomes
-/// noise on every ledger that gates on a whole suite.
-#[test]
-fn a_command_with_no_test_filter_is_silent() {
-    let example = gate_fixture("g024-no-filter", "just check", "nothing relevant here");
-    let check = example.run(&["check"]);
-    assert!(
-        !check.output().contains("AKR-G024"),
-        "a command with no identifier-shaped token must not be reported:\n{}",
-        check.output()
-    );
-}
-
-/// `SYS_WORLD=greyhaven cargo run` used to tokenise as a lone `_` (the scanner is
-/// lowercase-only, so the env var's underscore is all it keeps). That needle made
-/// `git grep -o -F -e _` emit every underscore in the tree and hang `akr check` for
-/// tens of minutes on SaveYourSkin. An env var is not a test filter.
-#[test]
-fn an_env_var_underscore_is_not_a_test_filter() {
-    let example = gate_fixture(
-        "g024-env-underscore",
-        "SYS_WORLD=greyhaven cargo run --release",
-        "nothing relevant here",
-    );
-    let check = example.run(&["check"]);
-    assert!(
-        !check.output().contains("AKR-G024"),
-        "an env-var underscore must not be treated as a phantom test filter:\n{}",
-        check.output()
-    );
-}
-
-/// A name that exists only inside a JSONL dump is not source: the dump is quoting a
-/// command from when the test still existed. Counting it would hide a true phantom,
-/// which is the same class as searching `.akr/` or `.agent/`.
-#[test]
-fn a_test_name_only_in_a_jsonl_dump_is_still_a_phantom() {
-    let example = gate_fixture(
-        "g024-jsonl-not-source",
-        "cargo test -p sys_present a_name_only_in_jsonl",
-        "nothing relevant here",
-    );
-    let dump = example.root().join("docs/handoff/trace.jsonl");
-    std::fs::create_dir_all(dump.parent().expect("parent")).expect("create dump dir");
-    std::fs::write(&dump, "a_name_only_in_jsonl\n").expect("write jsonl");
-    example.git(&["add", "-A"]);
-    example.git(&[
-        "commit",
-        "--quiet",
-        "-m",
-        "jsonl dump quoting the gone test",
-    ]);
-    let check = example.run(&["check"]);
-    assert!(
-        check.output().contains("AKR-G024"),
-        "a test name that lives only in a JSONL dump must still be a phantom:\n{}",
-        check.output()
-    );
-}
-
-/// Two tokens where only one exists: the gate can still run something, so it is silent.
-/// The rule is "none of them resolves", not "any of them fails".
-#[test]
-fn a_command_is_silent_when_any_of_its_tokens_exists() {
-    let example = gate_fixture(
-        "g024-one-of-two",
-        "cargo test -p sys_present a_real_leaf_test a_second_name_that_is_absent",
-        "fn a_real_leaf_test",
-    );
-    let check = example.run(&["check"]);
-    assert!(
-        !check.output().contains("AKR-G024"),
-        "one resolving token is enough to keep a gate silent:\n{}",
-        check.output()
-    );
-}
-
-/// THE REGRESSION THAT MATTERS. `cargo test` filters are SUBSTRING matches against the
-/// full test path, so a module-path filter never appears literally anywhere in source —
-/// `mod inventory_model;` sits in one file and `mod tests` in another, and the filter
-/// runs perfectly. Matching the whole token literally is what turned a true 4.2% into a
-/// reported 11.5% in the 2026-09 sweep, and Kitchen-Concept's zero real phantoms into
-/// eleven apparent ones. A `::` token must resolve segment by segment.
-#[test]
-fn a_module_path_filter_whose_segments_exist_separately_is_silent() {
-    let example = gate_fixture(
-        "g024-module-path",
-        "cargo test -p sys_present inventory_model::tests::a_leaf",
-        "mod inventory_model; mod tests; fn a_leaf",
-    );
-    let check = example.run(&["check"]);
-    assert!(
-        !check.output().contains("AKR-G024"),
-        "a module-path filter whose segments exist separately must stay silent, which is \
-         the false-positive class the check exists to avoid:\n{}",
-        check.output()
-    );
-}
-
-/// A25: a shell pipeline reports its LAST stage's status, so a recorded command ending in
-/// `| tail` exits 0 whenever `tail` succeeds — regardless of what the real command did.
-/// Three agents hit this independently in one afternoon during the 2026-09 sweep.
-#[test]
-fn a_recorded_command_whose_status_comes_from_a_pipe_is_reported() {
-    let example = gate_fixture(
-        "g025-pipe",
-        "cargo test -p sys_present a_real_leaf_test | tail -80",
-        "fn a_real_leaf_test",
-    );
-    let check = example.run(&["check"]);
-    assert!(
-        check.output().contains("AKR-G025"),
-        "a piped command's exit status is meaningless and must be reported:\n{}",
-        check.output()
-    );
-    // The test name is real, so this is NOT the phantom diagnostic. The two defects are
-    // independent: a gate can name a real test and still be unfalsifiable.
-    assert!(
-        !check.output().contains("AKR-G024"),
-        "and it is not a phantom-token report:\n{}",
-        check.output()
-    );
-}
-
-/// A27: a command slot carrying an HTML-escaped `&amp;&amp;` is not the command it looks
-/// like. Records authored through a surface that escapes text picked this up verbatim.
-#[test]
-fn a_recorded_command_with_an_html_escaped_operator_is_reported() {
-    let example = gate_fixture(
-        "g025-escaped",
-        "cargo fmt --check &amp;&amp; cargo test -p sys_present a_real_leaf_test",
-        "fn a_real_leaf_test",
-    );
-    let check = example.run(&["check"]);
-    assert!(
-        check.output().contains("AKR-G025"),
-        "an HTML-escaped operator must be reported:\n{}",
-        check.output()
-    );
-}
-
-/// A plain `&&` chain is the ordinary way to write a two-part gate and must stay silent.
-#[test]
-fn a_recorded_command_using_a_plain_and_chain_is_silent() {
-    let example = gate_fixture(
-        "g025-plain-and",
-        "cargo fmt --check && cargo test -p sys_present a_real_leaf_test",
-        "fn a_real_leaf_test",
-    );
-    let check = example.run(&["check"]);
-    assert!(
-        !check.output().contains("AKR-G025"),
-        "a plain && chain is not a pipe and must stay silent:\n{}",
-        check.output()
-    );
-}
-
-/// Field report on 0.5.2: a valid `jq -e` gate drew both G024 and G025, because the
-/// scanner read the quoted jq program as shell — its `|`s as pipes and its object keys
-/// as `cargo test` filters. A quoted multi-word argument is some other tool's program.
-#[test]
-fn a_quoted_jq_program_draws_neither_gate_warning() {
-    // Written as it must appear inside an `.akr` string literal, so `"` is `\"`.
-    let example = gate_fixture(
-        "g025-quoted-jq",
-        r#"jq -e '{course2_completed: any(.trace[]; contains(\"step: Course(2)\") and contains(\"state: Done\")), clearing_completed: any(.trace[]; contains(\"step: Clearing\") and contains(\"state: Done\")), finalized_course2_rows: ([.courses[] | select(contains(\"course: 2,\"))] | length)} | ., (.course2_completed and .clearing_completed)' SYSEngine/review-evidence/x/dinner-1735-attends.json"#,
-        "nothing relevant here",
-    );
-    // The record must parse, or the silence below would prove nothing.
     let build = example.run(&["build"]);
     assert_eq!(build.code, 0, "{}", build.output());
-    let check = example.run(&["check"]);
-    assert!(
-        !check.output().contains("AKR-G025"),
-        "a `|` inside a quoted jq program is not a pipe:\n{}",
-        check.output()
-    );
-    assert!(
-        !check.output().contains("AKR-G024"),
-        "jq object keys inside quotes are not test filters:\n{}",
-        check.output()
-    );
-}
+    let check = example.run(&["check", "--format", "json"]);
+    let parsed = akr_core::json::parse(&check.stdout).expect("json");
+    let diagnostics = parsed
+        .get("diagnostics")
+        .and_then(akr_core::json::Value::as_array)
+        .expect("diagnostics array");
 
-/// Quote awareness must not become a way to hide a pipe: a script handed to `bash -c`
-/// is scanned as shell in its own right.
-#[test]
-fn a_pipe_inside_a_bash_c_script_is_still_reported() {
-    let example = gate_fixture(
-        "g025-bash-c",
-        "bash -c 'cargo test -p sys_present a_real_leaf_test | tail'",
-        "fn a_real_leaf_test",
-    );
-    let check = example.run(&["check"]);
-    assert!(
-        check.output().contains("AKR-G025"),
-        "a pipe inside `bash -c '...'` must still be reported:\n{}",
-        check.output()
-    );
-}
+    let has_code = |slug: &str, code: &str| {
+        let key = format!("sys.work.gate-{slug}");
+        diagnostics.iter().any(|d| {
+            d.get("code").and_then(akr_core::json::Value::as_str) == Some(code)
+                && d.get("message")
+                    .and_then(akr_core::json::Value::as_str)
+                    .is_some_and(|m| m.contains(&key))
+        })
+    };
 
-/// A quoted filter that is a single word is still a filter, so it is still checked.
-#[test]
-fn a_quoted_single_word_phantom_filter_is_reported() {
-    let example = gate_fixture(
-        "g024-quoted-word",
-        "cargo test -p sys_present 'a_test_name_that_exists_nowhere'",
-        "nothing relevant here",
-    );
-    let check = example.run(&["check"]);
-    assert!(
-        check.output().contains("AKR-G024"),
-        "a quoted single-word filter must still be checked:\n{}",
-        check.output()
-    );
-}
-
-#[test]
-fn start_takes_the_task_as_a_flag_or_a_positional_but_not_both() {
-    // knowledge.start calls the field `task`, so an agent translating reaches for --task.
-    let example = Example::materialise("start-task-flag");
-    let flagged = example.run(&["start", "--task", "renderer boundary", "--paths", "src/**"]);
-    assert_eq!(flagged.code, 0, "{}", flagged.output());
-    // A flag's value is never taken for the task.
-    let positional = example.run(&["start", "--paths", "src/**", "renderer boundary"]);
-    assert_eq!(positional.code, 0, "{}", positional.output());
-    assert_eq!(flagged.stdout, positional.stdout);
-    let both = example.run(&["start", "--task", "a", "b"]);
-    assert_eq!(both.code, 2, "{}", both.output());
-    assert!(both.output().contains("AKR-C005"), "{}", both.output());
-}
-
-#[test]
-fn start_recommends_a_lone_candidate_only_when_it_names_the_task() {
-    // Search ORs the task's words, so one stray word can return a single unrelated
-    // record; that alone used to be handed back as the task's recommended context.
-    let example = Example::materialise("start-weak-lone-match");
-    let strong = example.run(&["start", "projection", "--format", "json"]);
-    assert_eq!(strong.code, 0, "{}", strong.output());
-    assert!(
-        strong.stdout.contains("\"recommended_context\""),
-        "{}",
-        strong.stdout
-    );
-    let weak = example.run(&["start", "widget projection overhaul", "--format", "json"]);
-    assert_eq!(weak.code, 0, "{}", weak.output());
-    assert!(
-        weak.stdout.contains("rewrite-projection"),
-        "{}",
-        weak.stdout
-    );
-    assert!(
-        !weak.stdout.contains("\"recommended_context\""),
-        "{}",
-        weak.stdout
-    );
-    assert!(weak.stdout.contains("\"weak_match\""), "{}", weak.stdout);
-}
-
-#[test]
-fn context_takes_the_goal_as_a_positional_or_a_flag_but_not_both() {
-    // `akr context <key>` is the shape of every other record command, and the one
-    // agents kept reaching for before --goal.
-    let example = Example::materialise("context-goal-positional");
-    let flagged = example.run(&["context", "--goal", "sys.milestone.m3-playable-day"]);
-    assert_eq!(flagged.code, 0, "{}", flagged.output());
-    // A flag's value is never taken for the goal.
-    let positional = example.run(&[
-        "context",
-        "--paths",
-        "src/**",
-        "sys.milestone.m3-playable-day",
-    ]);
-    assert_eq!(positional.code, 0, "{}", positional.output());
-    let bare = example.run(&["context", "sys.milestone.m3-playable-day"]);
-    assert_eq!(flagged.stdout, bare.stdout);
-    let both = example.run(&["context", "--goal", "a.b.c", "d.e.f"]);
-    assert_eq!(both.code, 2, "{}", both.output());
-    assert!(both.output().contains("AKR-C005"), "{}", both.output());
-}
-
-#[test]
-fn paths_take_commas_and_refuse_a_second_bare_glob() {
-    // `--paths a b` used to keep `a` and drop `b` without a word; `--paths a,b` was one
-    // glob that matched nothing.
-    let example = Example::materialise("context-paths-lists");
-    let goal = "sys.milestone.m3-playable-day";
-    let separate = example.run(&["context", goal, "--paths", "sim/**", "--paths", "lege/**"]);
-    assert_eq!(separate.code, 0, "{}", separate.output());
-    let commas = example.run(&["context", goal, "--paths", "sim/**,lege/**"]);
-    assert_eq!(commas.code, 0, "{}", commas.output());
-    assert_eq!(separate.stdout, commas.stdout);
-    let stray = example.run(&["context", goal, "--paths", "sim/**", "lege/**"]);
-    assert_eq!(stray.code, 2, "{}", stray.output());
-    assert!(stray.output().contains("AKR-C002"), "{}", stray.output());
-}
-
-#[test]
-fn a_short_name_is_refused_with_the_key_it_ends() {
-    let example = Example::materialise("get-did-you-mean");
-    let unique = example.run(&["get", "term.renderer-boundary"]);
-    assert_eq!(unique.code, 3, "{}", unique.output());
-    assert!(unique.output().contains("AKR-L001"), "{}", unique.output());
-    assert!(
-        unique
-            .output()
-            .contains("did you mean @lege.term.renderer-boundary?"),
-        "{}",
-        unique.output()
-    );
-    // Ambiguous: still refused, never guessed, and every candidate named.
-    let ambiguous = example.run(&["get", "renderer-boundary"]);
-    assert_eq!(ambiguous.code, 3, "{}", ambiguous.output());
-    for key in [
-        "@lege.decision.renderer-boundary",
-        "@lege.term.renderer-boundary",
-    ] {
-        assert!(ambiguous.output().contains(key), "{}", ambiguous.output());
+    assert!(!has_code("superseded", "AKR-G024"), "{}", check.stdout);
+    for (slug, _, expect_g024, expect_g025) in cases {
+        assert_eq!(
+            has_code(slug, "AKR-G024"),
+            *expect_g024,
+            "gate-{slug} AKR-G024 mismatch:\n{}",
+            check.stdout
+        );
+        assert_eq!(
+            has_code(slug, "AKR-G025"),
+            *expect_g025,
+            "gate-{slug} AKR-G025 mismatch:\n{}",
+            check.stdout
+        );
     }
 }

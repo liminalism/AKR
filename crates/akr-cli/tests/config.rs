@@ -1,5 +1,5 @@
 //! Configuration edits through the public CLI, including refusal atomicity.
-mod support;
+use crate::support;
 
 use support::Example;
 

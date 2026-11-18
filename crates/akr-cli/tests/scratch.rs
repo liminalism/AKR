@@ -4,7 +4,7 @@
 //! workflow — what an agent tidying up at the end of a session can and cannot delete — and
 //! the part that matters most is the *cannot*.
 
-mod support;
+use crate::support;
 
 use support::Example;
 

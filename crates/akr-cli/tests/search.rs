@@ -14,9 +14,8 @@
 //! The whole file needs a ranker to exist. `tests/search_degraded.rs` is its counterpart
 //! for a binary built without one, where criterion 4 is the only one that still has
 //! meaning — and where it is tested against the real absence rather than a simulated one.
-#![cfg(feature = "fts5")]
 
-mod support;
+use crate::support;
 
 use support::Example;
 

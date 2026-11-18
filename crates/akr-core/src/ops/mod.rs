@@ -2468,6 +2468,7 @@ fn write_refusal(operation: Operation, error: std::io::Error) -> Refused {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod write_error_tests {
     use super::*;
 

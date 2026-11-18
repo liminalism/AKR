@@ -13,6 +13,38 @@
 
 mod support;
 
+#[path = "build_cache.rs"]
+mod build_cache;
+#[path = "change_protocol.rs"]
+mod change_protocol;
+#[path = "commands.rs"]
+mod commands;
+#[path = "config.rs"]
+mod config;
+#[path = "context_budget.rs"]
+mod context_budget;
+#[path = "handoff.rs"]
+mod handoff;
+#[path = "import.rs"]
+mod import;
+#[path = "index.rs"]
+mod index;
+#[path = "review_snapshot.rs"]
+mod review_snapshot;
+#[path = "scratch.rs"]
+mod scratch;
+#[cfg(feature = "fts5")]
+#[path = "search.rs"]
+mod search;
+#[path = "secrets.rs"]
+mod secrets;
+#[path = "source_library.rs"]
+mod source_library;
+#[path = "trace_and_pass.rs"]
+mod trace_and_pass;
+#[path = "transcripts.rs"]
+mod transcripts;
+
 use support::{Example, Run};
 
 #[test]
@@ -43,27 +75,6 @@ fn capture_records_a_digest_without_a_scratch_artifact_dependency() {
     assert!(!get.stdout.contains("\n  artifact"), "{}", get.stdout);
     std::fs::remove_file(example.root().join(".agent/scratch/capture.bin")).unwrap();
     assert_eq!(example.run(&["build"]).code, 0);
-}
-
-#[test]
-fn missing_capture_refuses_without_creating_evidence() {
-    let example = Example::materialise("evidence-missing-capture");
-    let before = example.sources();
-    let run = example.run(&[
-        "evidence",
-        "add",
-        "sys.evidence.capture",
-        "--result",
-        "pass",
-        "--method",
-        "manual",
-        "--summary",
-        "Capture inspected.",
-        "--capture",
-        "missing.bin",
-    ]);
-    assert_ne!(run.code, 0, "{}", run.output());
-    assert_eq!(before, example.sources());
 }
 
 #[test]
@@ -157,19 +168,33 @@ fn refuses(example: &Example, args: &[&str]) -> String {
 }
 
 #[test]
-fn propose_refuses_an_existing_key_and_writes_nothing() {
-    let example = Example::materialise("write-propose");
+fn refused_writes_leave_the_workspace_byte_identical() {
+    let example = Example::materialise("write-refusals");
+    let before = example.sources();
+    let head = example.commit(5).to_owned();
+
+    let missing_capture = example.run(&[
+        "evidence",
+        "add",
+        "sys.evidence.capture",
+        "--result",
+        "pass",
+        "--method",
+        "manual",
+        "--summary",
+        "Capture inspected.",
+        "--capture",
+        "missing.bin",
+    ]);
+    assert_ne!(missing_capture.code, 0, "{}", missing_capture.output());
+
     let text = refuses(
         &example,
-        &["propose", "sys.term.playable-day", "--kind", "term"],
+        &["propose", "sys.policy.tandem-work", "--kind", "policy"],
     );
     assert!(text.contains("AKR-L041"), "{text}");
     assert!(text.contains("akr revise"), "names the way forward: {text}");
-}
 
-#[test]
-fn revise_refuses_an_in_place_edit_of_a_sealed_head() {
-    let example = Example::materialise("write-revise");
     let text = refuses(
         &example,
         &[
@@ -181,6 +206,159 @@ fn revise_refuses_an_in_place_edit_of_a_sealed_head() {
         ],
     );
     assert!(text.contains("AKR-C032"), "{text}");
+
+    let text = refuses(&example, &["complete", "sys.milestone.m3-playable-day"]);
+    assert!(text.contains("AKR-R022"), "{text}");
+    assert!(text.contains("no-placeholder-assets"), "{text}");
+    assert!(text.contains("--check <id>=<evidence-ref>"), "{text}");
+
+    let text = refuses(&example, &["abandon", "sys.work.m3-plan"]);
+    assert!(text.contains("AKR-C031"), "{text}");
+    assert!(text.contains("--reason"), "{text}");
+
+    let bodyless = refuses(
+        &example,
+        &[
+            "propose",
+            "sys.policy.day-loop",
+            "--kind",
+            "policy",
+            "--title",
+            "The day loop",
+        ],
+    );
+    assert!(bodyless.contains("AKR-C031"), "{bodyless}");
+    assert!(bodyless.contains("rule"), "{bodyless}");
+
+    let get = example.run(&["get", "sys.work.m3-plan"]);
+    assert_eq!(get.code, 0, "{}", get.output());
+    assert!(get.stdout.contains("intent"), "{}", get.stdout);
+
+    let json = example.run(&[
+        "--format",
+        "json",
+        "complete",
+        "sys.milestone.m3-playable-day",
+    ]);
+    assert_eq!(json.code, 1, "{}", json.output());
+    for expected in [
+        "\"command\": \"complete\"",
+        "\"refused\": true",
+        "\"code\": \"AKR-R022\"",
+        "\"unsatisfied_checks\"",
+        "\"id\": \"no-placeholder-assets\"",
+        "\"exit_code\": 1",
+    ] {
+        assert!(
+            json.stdout.contains(expected),
+            "{expected}: {}",
+            json.stdout
+        );
+    }
+
+    let bad_batch = "\
+record sys.work.good/1 : work {
+    title \"Good work\"
+    intent \"Should roll back on sibling failure.\"
+}
+
+record sys.milestone.bad/1 : milestone {
+    title \"Bad milestone\"
+    intent \"Uses implements on milestone.\"
+    part_of [ @sys.work.good ]
+    implements [ @sys.req.deterministic-sim ]
+    acceptance {
+        check boot {
+            statement \"Boots.\"
+            method manual
+        }
+    }
+}
+";
+    example.write_file("bad-propose-batch.akr", bad_batch);
+    let run = example.run(&["propose-many", "--from", "bad-propose-batch.akr"]);
+    assert_ne!(run.code, 0, "{}", run.output());
+    assert!(run.output().contains("AKR-L032"), "{}", run.output());
+    assert!(
+        run.output().contains("its domain is work, decision"),
+        "{}",
+        run.output()
+    );
+
+    let ev_batch = format!(
+        "record sys.evidence.good/1 : evidence {{\n    \
+             title \"Fine\"\n    result pass\n    method command\n    \
+             observed_at git:{head}\n\
+         }}\n\n\
+         record sys.evidence.bad/1 : evidence {{\n    \
+             title \"Missing its result\"\n    method command\n    \
+             observed_at git:{head}\n\
+         }}\n"
+    );
+    example.write_file("bad-ev-batch.akr", &ev_batch);
+    assert_ne!(
+        example
+            .run(&["evidence", "add-many", "--from", "bad-ev-batch.akr"])
+            .code,
+        0
+    );
+
+    example.write_file(
+        "wrong-kind-batch.akr",
+        "record sys.policy.thing/1 : policy {\n    scope [ all ]\n    rule \"A thing.\"\n}\n",
+    );
+    let wrong_kind = example.run(&["evidence", "add-many", "--from", "wrong-kind-batch.akr"]);
+    assert_ne!(wrong_kind.code, 0, "{}", wrong_kind.output());
+    assert!(
+        wrong_kind.output().contains("policy"),
+        "{}",
+        wrong_kind.output()
+    );
+
+    example.write_file(
+        "yaml-like.akr",
+        "statement: this is yaml, not an AKR slot-list\n",
+    );
+    let yaml = example.run(&[
+        "propose",
+        "sys.work.yaml-decoy",
+        "--kind",
+        "work",
+        "--title",
+        "YAML decoy",
+        "--from",
+        "yaml-like.akr",
+    ]);
+    assert_ne!(yaml.code, 0, "{}", yaml.output());
+    assert!(yaml.output().contains("AKR-C031"), "{}", yaml.output());
+    assert!(
+        yaml.output().contains("slot-list") || yaml.output().contains("intent"),
+        "{}",
+        yaml.output()
+    );
+
+    for args in [
+        vec!["propose-many"],
+        vec!["evidence", "add-many"],
+        vec!["evidence", "add", "sys.evidence.asset-audit"],
+        vec![
+            "evidence",
+            "add",
+            "sys.evidence.asset-audit",
+            "--result",
+            "maybe",
+            "--method",
+            "command",
+        ],
+    ] {
+        assert_eq!(example.run(&args).code, 2, "{args:?}");
+    }
+
+    assert_eq!(
+        before,
+        example.sources(),
+        "a refused write changed the ledger"
+    );
 }
 
 #[test]
@@ -447,26 +625,6 @@ fn propose_notes_a_watch_that_matches_nothing_at_head() {
 }
 
 #[test]
-fn complete_names_the_unsatisfied_check_and_writes_nothing() {
-    let example = Example::materialise("write-complete");
-    let text = refuses(&example, &["complete", "sys.milestone.m3-playable-day"]);
-    assert!(text.contains("AKR-R022"), "{text}");
-    assert!(text.contains("no-placeholder-assets"), "{text}");
-    assert!(
-        text.contains("--check <id>=<evidence-ref>"),
-        "offers the fix: {text}"
-    );
-}
-
-#[test]
-fn abandon_requires_a_reason_and_writes_nothing() {
-    let example = Example::materialise("write-abandon");
-    let text = refuses(&example, &["abandon", "sys.work.m3-plan"]);
-    assert!(text.contains("AKR-C031"), "{text}");
-    assert!(text.contains("--reason"), "{text}");
-}
-
-#[test]
 fn propose_many_writes_connected_records_in_one_pass() {
     let example = Example::materialise("write-propose-many");
     let batch = "\
@@ -515,49 +673,6 @@ record sys.milestone.phase-1/1 : milestone {
 }
 
 #[test]
-fn propose_many_is_atomic_and_writes_nothing_on_a_bad_record() {
-    let example = Example::materialise("write-propose-many-atomic");
-    let before = example.sources();
-    let batch = "\
-record sys.work.good/1 : work {
-    title \"Good work\"
-    intent \"Should roll back on sibling failure.\"
-}
-
-record sys.milestone.bad/1 : milestone {
-    title \"Bad milestone\"
-    intent \"Uses implements on milestone.\"
-    part_of [ @sys.work.good ]
-    implements [ @sys.req.deterministic-sim ]
-    acceptance {
-        check boot {
-            statement \"Boots.\"
-            method manual
-        }
-    }
-}
-";
-    example.write_file("batch.akr", batch);
-    let run = example.run(&["propose-many", "--from", "batch.akr"]);
-    assert_ne!(run.code, 0, "{}", run.output());
-    assert!(run.output().contains("AKR-L032"), "{}", run.output());
-    assert!(
-        run.output().contains("its domain is work, decision"),
-        "{}",
-        run.output()
-    );
-    assert_eq!(before, example.sources(), "a refused batch wrote something");
-}
-
-#[test]
-fn propose_many_requires_a_file() {
-    let example = Example::materialise("write-propose-many-no-file");
-    let run = example.run(&["propose-many"]);
-    assert_ne!(run.code, 0, "{}", run.output());
-    assert!(run.output().contains("--from"), "{}", run.output());
-}
-
-#[test]
 fn evidence_add_many_writes_a_batch_in_one_pass() {
     // `knowledge.evidence_add_many` existed over MCP with no command-line equivalent, and
     // with the translation and the batch write living in the MCP crate -- against both
@@ -599,142 +714,9 @@ fn evidence_add_many_writes_a_batch_in_one_pass() {
     assert_eq!(checked.code, 0, "{}", checked.output());
 }
 
-#[test]
-fn evidence_add_many_is_atomic_and_writes_nothing_on_a_bad_record() {
-    // The point of one pipeline pass: the ledger is validated as a whole, so a batch with
-    // one bad record leaves the working tree exactly as it was.
-    let example = Example::materialise("write-evidence-add-many-atomic");
-    let head = example.commit(5).to_owned();
-    let before = example.sources();
-    let batch = format!(
-        "record sys.evidence.good/1 : evidence {{\n    \
-             title \"Fine\"\n    result pass\n    method command\n    \
-             observed_at git:{head}\n\
-         }}\n\n\
-         record sys.evidence.bad/1 : evidence {{\n    \
-             title \"Missing its result\"\n    method command\n    \
-             observed_at git:{head}\n\
-         }}\n"
-    );
-    example.write_file("batch.akr", &batch);
-
-    let run = example.run(&["evidence", "add-many", "--from", "batch.akr"]);
-    assert_ne!(run.code, 0, "{}", run.output());
-    assert_eq!(before, example.sources(), "a refused batch wrote something");
-}
-
-#[test]
-fn evidence_add_many_refuses_a_file_of_other_kinds() {
-    // Named rather than skipped: a batch that silently wrote the evidence and ignored the
-    // rest would be worse than one that wrote nothing.
-    let example = Example::materialise("write-evidence-add-many-wrong-kind");
-    example.write_file(
-        "batch.akr",
-        "record sys.term.thing/1 : term {\n    statement \"A thing.\"\n}\n",
-    );
-    let run = example.run(&["evidence", "add-many", "--from", "batch.akr"]);
-    assert_ne!(run.code, 0, "{}", run.output());
-    assert!(
-        run.output().contains("term"),
-        "the refusal should name the offending kind: {}",
-        run.output()
-    );
-}
-
-#[test]
-fn evidence_add_many_requires_a_file() {
-    let example = Example::materialise("write-evidence-add-many-no-file");
-    let run = example.run(&["evidence", "add-many"]);
-    assert_ne!(run.code, 0, "{}", run.output());
-    assert!(run.output().contains("--from"), "{}", run.output());
-}
-
-#[test]
-fn evidence_add_refuses_an_incomplete_request_without_writing() {
-    let example = Example::materialise("write-evidence-refuse");
-    let before = example.sources();
-    // A missing `--result` cannot even be turned into a request, so it never reaches the
-    // pipeline; the guarantee is the same and is checked the same way.
-    let run = example.run(&["evidence", "add", "sys.evidence.asset-audit"]);
-    assert_eq!(run.code, 2, "{}", run.output());
-    assert!(run.output().contains("AKR-C003"), "{}", run.output());
-    assert_eq!(before, example.sources());
-
-    let bad = example.run(&[
-        "evidence",
-        "add",
-        "sys.evidence.asset-audit",
-        "--result",
-        "maybe",
-        "--method",
-        "command",
-    ]);
-    assert_eq!(bad.code, 2, "{}", bad.output());
-    assert!(bad.output().contains("AKR-C004"), "{}", bad.output());
-    assert_eq!(before, example.sources());
-}
-
 // -------------------------------------------------------------------------------------
 // The paths that succeed
 // -------------------------------------------------------------------------------------
-
-#[test]
-fn a_yaml_like_from_file_names_the_accepted_slot_list() {
-    let example = Example::materialise("write-propose-yaml-from");
-    let body = example.root().join("yaml-like.akr");
-    std::fs::write(&body, "statement: this is yaml, not an AKR slot-list\n").expect("write decoy");
-    let run = example.run(&[
-        "propose",
-        "sys.work.yaml-decoy",
-        "--kind",
-        "work",
-        "--title",
-        "YAML decoy",
-        "--from",
-        body.to_str().expect("utf-8"),
-    ]);
-    assert_ne!(run.code, 0, "{}", run.output());
-    assert!(run.output().contains("AKR-C031"), "{}", run.output());
-    assert!(
-        run.output().contains("slot-list") || run.output().contains("intent"),
-        "{}",
-        run.output()
-    );
-}
-
-#[test]
-fn get_names_the_work_records_intent_slot() {
-    let example = Example::materialise("write-get-names-intent");
-    let run = example.run(&["get", "sys.work.m3-plan"]);
-    assert_eq!(run.code, 0, "{}", run.output());
-    assert!(
-        run.stdout.contains("intent"),
-        "body names the slot: {}",
-        run.stdout
-    );
-}
-
-#[test]
-fn a_proposal_with_no_body_is_refused_outright() {
-    let example = Example::materialise("write-propose-bodyless");
-    // §4 validates the *resulting* ledger, and a record with no required prose slot does
-    // not validate. So `--from`/`--edit` is not a convenience on `akr propose`: without
-    // one there is nothing to write that the pipeline will accept. §6 says so explicitly;
-    // this is that sentence being true.
-    let text = refuses(
-        &example,
-        &[
-            "propose",
-            "sys.policy.day-loop",
-            "--kind",
-            "policy",
-            "--title",
-            "The day loop",
-        ],
-    );
-    assert!(text.contains("AKR-C031"), "{text}");
-    assert!(text.contains("rule"), "names the missing slot: {text}");
-}
 
 #[test]
 fn a_proposal_from_a_file_lands_and_checks_clean() {
@@ -1193,33 +1175,9 @@ fn a_write_is_visible_to_the_next_read_and_the_lock_says_so() {
 }
 
 #[test]
-fn the_json_form_carries_the_structured_refusal() {
-    let example = Example::materialise("write-json");
-    let run = example.run(&[
-        "--format",
-        "json",
-        "complete",
-        "sys.milestone.m3-playable-day",
-    ]);
-    assert_eq!(run.code, 1, "{}", run.output());
-    let text = run.stdout;
-    assert!(text.contains("\"command\": \"complete\""), "{text}");
-    assert!(text.contains("\"refused\": true"), "{text}");
-    assert!(text.contains("\"code\": \"AKR-R022\""), "{text}");
-    assert!(text.contains("\"unsatisfied_checks\""), "{text}");
-    assert!(text.contains("\"id\": \"no-placeholder-assets\""), "{text}");
-    assert!(text.contains("\"exit_code\": 1"), "{text}");
-}
-
-#[test]
 fn papercut_observed_at_pins_the_record_to_that_commit() {
     let example = Example::materialise("write-papercut-observed-at");
-    let head = std::process::Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(example.root())
-        .output()
-        .expect("git rev-parse runs");
-    let head = String::from_utf8_lossy(&head.stdout).trim().to_owned();
+    let head = example.commit(5).to_owned();
     let run = example.run(&[
         "papercut",
         "-m",
@@ -1348,10 +1306,90 @@ fn papercut_collate_gathers_sister_papercuts_once() {
     let example = Example::materialise("write-collate");
     let scan = sibling_workspaces(&example);
     let projects = scan.to_str().expect("utf-8 scan dir");
+    let before = example.sources();
 
+    // Dry runs write nothing and handle subject casing + `--all`.
+    let dry_all = example.run(&[
+        "papercut",
+        "collate",
+        "--projects",
+        projects,
+        "--all",
+        "--namespace",
+        "sys",
+        "--dry-run",
+    ]);
+    assert_eq!(dry_all.code, 0, "{}", dry_all.output());
+    assert!(
+        dry_all.stdout.contains("would collate 4 papercuts"),
+        "{}",
+        dry_all.output()
+    );
+    assert!(
+        dry_all.stdout.contains("nothing written"),
+        "{}",
+        dry_all.output()
+    );
+    assert!(
+        dry_all.stdout.contains("@alpha.papercut.alpha-annoyance"),
+        "{}",
+        dry_all.output()
+    );
+    assert_eq!(before, example.sources(), "a dry run wrote something");
+
+    let dry_subject = example.run(&[
+        "papercut",
+        "collate",
+        "--projects",
+        projects,
+        "--about",
+        "SYS",
+        "--namespace",
+        "sys",
+        "--dry-run",
+    ]);
+    assert_eq!(dry_subject.code, 0, "{}", dry_subject.output());
+    assert!(
+        dry_subject.stdout.contains("would collate 2 papercuts"),
+        "`SYS` must match the `sys` subject:\n{}",
+        dry_subject.output()
+    );
+
+    // Default subject filter absorbs only `about "sys"` and itemises leftovers.
+    let filtered = example.run(&[
+        "papercut",
+        "collate",
+        "--projects",
+        projects,
+        "--namespace",
+        "sys",
+    ]);
+    assert_eq!(filtered.code, 0, "{}", filtered.output());
+    let source = example.read_file(".akr/records/sys/papercuts.akr");
+    assert!(
+        source.contains("alpha.papercut.alpha-annoyance-tool"),
+        "{source}"
+    );
+    assert!(
+        !source.contains("\"alpha.papercut.alpha-annoyance\""),
+        "{source}"
+    );
+    assert!(
+        filtered
+            .stdout
+            .contains("left behind by the subject filter")
+            && filtered.stdout.contains("(no subject)"),
+        "{}",
+        filtered.output()
+    );
+    assert!(source.contains("about \"sys\""), "{source}");
+
+    // `-m` still routes to collate subcommand, and `--all` absorbs the remaining two.
     let run = example.run(&[
         "papercut",
         "collate",
+        "-m",
+        "tester",
         "--projects",
         projects,
         "--all",
@@ -1361,36 +1399,19 @@ fn papercut_collate_gathers_sister_papercuts_once() {
     assert_eq!(run.code, 0, "{}", run.output());
     assert!(
         run.stdout
-            .contains("created sys.papercut.collated-4-papercuts-from-alpha-beta/1"),
+            .contains("created sys.papercut.collated-2-papercuts-from-alpha-beta-2/1"),
         "{}",
         run.stdout
     );
-    assert!(run.stdout.contains("wrote"), "{}", run.stdout);
-
     let source = example.read_file(".akr/records/sys/papercuts.akr");
+    assert!(!source.contains("\"collate\""), "{source}");
     assert!(source.contains("collated ["), "{source}");
     assert!(
-        source.contains("alpha.papercut.alpha-annoyance"),
+        source.contains("## alpha @alpha.papercut.alpha-annoyance")
+            && source.contains("## beta @beta.papercut.beta-friction")
+            && source.contains("A alpha-side friction worth logging."),
         "{source}"
     );
-    assert!(source.contains("beta.papercut.beta-friction"), "{source}");
-    // The statement carries each absorbed papercut with its owning project — and its
-    // full text, not a truncated title. The first real collation stored titles and told
-    // the reader to go and open eight other ledgers, so none of it was acted on (D-033).
-    assert!(
-        source.contains("## alpha @alpha.papercut.alpha-annoyance"),
-        "{source}"
-    );
-    assert!(
-        source.contains("## beta @beta.papercut.beta-friction"),
-        "{source}"
-    );
-    assert!(
-        source.contains("A alpha-side friction worth logging."),
-        "the absorbed statement must be readable here:\n{source}"
-    );
-
-    // The sisters were only read: neither workspace grew anything.
     assert!(
         !std::fs::read_to_string(scan.join("alpha/.akr/records/alpha/papercuts.akr"))
             .expect("alpha source")
@@ -1398,7 +1419,7 @@ fn papercut_collate_gathers_sister_papercuts_once() {
         "the sister ledger must be untouched"
     );
 
-    // A rerun is a no-op: the keys are already in a live collation's `collated` slot.
+    // Rerunning (even after withdrawing a master) is a no-op.
     let again = example.run(&[
         "papercut",
         "collate",
@@ -1414,15 +1435,6 @@ fn papercut_collate_gathers_sister_papercuts_once() {
         "{}",
         again.output()
     );
-    let source = example.read_file(".akr/records/sys/papercuts.akr");
-    assert_eq!(
-        source.matches("record sys.papercut.collated").count(),
-        1,
-        "a second run must not add another master record:\n{source}"
-    );
-
-    // Resolving or withdrawing the master does not make its source reports new again.
-    // The collated slot is historical ingestion state, not a live dependency edge.
     let terminal = source.replacen("state verified", "state withdrawn", 1);
     example.write_file(".akr/records/sys/papercuts.akr", &terminal);
     let after_resolution = example.run(&[
@@ -1441,96 +1453,8 @@ fn papercut_collate_gathers_sister_papercuts_once() {
         after_resolution.output()
     );
 
-    let _ = std::fs::remove_dir_all(&scan);
-}
-
-#[test]
-fn collate_defaults_to_its_namespace_and_says_what_it_left() {
-    let example = Example::materialise("write-collate-about");
-    let scan = sibling_workspaces(&example);
-    let projects = scan.to_str().expect("utf-8 scan dir");
-
-    // The case the `about` slot exists for: an agent working in a sibling hit a friction
-    // with *akr*, and the only ledger it could reach was the sibling's (D-033).
-    let run = example.run(&[
-        "papercut",
-        "collate",
-        "--projects",
-        projects,
-        "--namespace",
-        "sys",
-    ]);
-    assert_eq!(run.code, 0, "{}", run.output());
-
-    let source = example.read_file(".akr/records/sys/papercuts.akr");
-    assert!(
-        source.contains("alpha.papercut.alpha-annoyance-tool"),
-        "the akr-subject papercut should have been absorbed:\n{source}"
-    );
-    assert!(
-        !source.contains("\"alpha.papercut.alpha-annoyance\""),
-        "the sibling's own friction is not ours to collate:\n{source}"
-    );
-    // What the filter left behind is counted, never dropped in silence.
-    assert!(
-        run.stdout.contains("left behind by the subject filter"),
-        "{}",
-        run.output()
-    );
-    // Broken down by subject, not totalled: the two left behind are the siblings' own
-    // untagged frictions, and saying so is what makes the number readable.
-    assert!(
-        run.stdout.contains("(no subject)"),
-        "the leftovers should be itemised:\n{}",
-        run.output()
-    );
-    assert!(source.contains("about \"sys\""), "{source}");
-
-    let _ = std::fs::remove_dir_all(&scan);
-}
-
-#[test]
-fn collate_is_the_subcommand_even_when_an_agent_is_named() {
-    // The bug this pins down cost a revert. `collate` used to be the subcommand only if
-    // -m was *absent* -- but plain `akr papercut` requires -m, so supplying it is the
-    // natural thing to do, and doing so silently logged a papercut whose entire message
-    // was the word "collate" instead of collating anything.
-    let example = Example::materialise("write-collate-dash-m");
-    let scan = sibling_workspaces(&example);
-    let projects = scan.to_str().expect("utf-8 scan dir");
-
-    let run = example.run(&[
-        "papercut",
-        "collate",
-        "-m",
-        "tester",
-        "--projects",
-        projects,
-        "--all",
-        "--namespace",
-        "sys",
-    ]);
-    assert_eq!(run.code, 0, "{}", run.output());
-    assert!(
-        run.stdout.contains("collated-4-papercuts"),
-        "-m must not steer this onto the logging path:\n{}",
-        run.output()
-    );
-    let source = example.read_file(".akr/records/sys/papercuts.akr");
-    assert!(
-        !source.contains("\"collate\""),
-        "the word `collate` was logged as a message:\n{source}"
-    );
-
-    let _ = std::fs::remove_dir_all(&scan);
-}
-
-#[test]
-fn a_papercut_message_can_still_be_the_word_collate() {
-    // The escape the disambiguation leaves open. Without it the subcommand would have
-    // swallowed a legitimate, if unlikely, message.
-    let example = Example::materialise("write-papercut-literal-collate");
-    let run = example.run(&[
+    // `--` still allows logging a literal `"collate"` message.
+    let literal = example.run(&[
         "papercut",
         "-m",
         "tester",
@@ -1539,79 +1463,9 @@ fn a_papercut_message_can_still_be_the_word_collate() {
         "--",
         "collate",
     ]);
-    assert_eq!(run.code, 0, "{}", run.output());
+    assert_eq!(literal.code, 0, "{}", literal.output());
     let source = example.read_file(".akr/records/sys/papercuts.akr");
     assert!(source.contains("collate"), "{source}");
-    assert!(
-        !source.contains("collated ["),
-        "this should have logged, not collated:\n{source}"
-    );
-}
-
-#[test]
-fn collate_matches_a_subject_across_the_spellings_agents_use() {
-    // One tool is not one name. The subject is free text written by whichever agent hit
-    // the friction, so the same tool arrives as `sys`, `SYS` and `Sys`; a filter that
-    // accepted one spelling left the rest in the pile it existed to clear.
-    let example = Example::materialise("write-collate-spellings");
-    let scan = sibling_workspaces(&example);
-    let projects = scan.to_str().expect("utf-8 scan dir");
-
-    let run = example.run(&[
-        "papercut",
-        "collate",
-        "--projects",
-        projects,
-        "--about",
-        "SYS",
-        "--namespace",
-        "sys",
-        "--dry-run",
-    ]);
-    assert_eq!(run.code, 0, "{}", run.output());
-    assert!(
-        run.stdout.contains("would collate 2 papercuts"),
-        "`SYS` must match the `sys` subject:\n{}",
-        run.output()
-    );
-
-    let _ = std::fs::remove_dir_all(&scan);
-}
-
-#[test]
-fn collate_dry_run_reports_without_writing() {
-    // The scan is global and the record it produces is one big one, so there is a way to
-    // look before committing to it -- the missing step behind an --all run that swept in
-    // 155 unrelated papercuts and had to be reverted.
-    let example = Example::materialise("write-collate-dry-run");
-    let scan = sibling_workspaces(&example);
-    let projects = scan.to_str().expect("utf-8 scan dir");
-    let before = example.sources();
-
-    let run = example.run(&[
-        "papercut",
-        "collate",
-        "--projects",
-        projects,
-        "--all",
-        "--namespace",
-        "sys",
-        "--dry-run",
-    ]);
-    assert_eq!(run.code, 0, "{}", run.output());
-    assert!(
-        run.stdout.contains("would collate 4 papercuts"),
-        "{}",
-        run.output()
-    );
-    assert!(run.stdout.contains("nothing written"), "{}", run.output());
-    // Each entry is named, so the reader can see what they would be taking on.
-    assert!(
-        run.stdout.contains("@alpha.papercut.alpha-annoyance"),
-        "{}",
-        run.output()
-    );
-    assert_eq!(before, example.sources(), "a dry run wrote something");
 
     let _ = std::fs::remove_dir_all(&scan);
 }

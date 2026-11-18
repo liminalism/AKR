@@ -10,16 +10,21 @@ use std::path::Path;
 /// # Errors
 /// Returns `AKR-C046` without file contents.
 pub fn public_input(root: &Path, path: &Path) -> Result<(), EnvError> {
-    let check = |path| {
-        secrets::require_public_input(root, path).map_err(|_| {
+    let resolved = if path.is_relative() {
+        root.join(path)
+    } else {
+        path.to_path_buf()
+    };
+    let check = |candidate: &Path| {
+        secrets::require_public_input(root, candidate).map_err(|_| {
             EnvError::new(
                 "AKR-C046",
                 "private secret storage cannot be used as public input",
             )
         })
     };
-    check(path)?;
-    if let Ok(actual) = std::fs::canonicalize(path) {
+    check(&resolved)?;
+    if let Ok(actual) = std::fs::canonicalize(&resolved) {
         check(&actual)?;
     }
     Ok(())

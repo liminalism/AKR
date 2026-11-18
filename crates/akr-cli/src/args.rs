@@ -890,6 +890,7 @@ pub const COMMANDS: &[&str] = &[
 /// flags (`AKR-C005`).
 pub fn parse(argv: &[String]) -> Result<Invocation, UsageError> {
     let mut global = Global::default();
+    let mut dir_explicit = false;
     let mut rest: Vec<String> = Vec::new();
     let mut strict_seen = false;
     let mut lenient_seen = false;
@@ -924,7 +925,10 @@ pub fn parse(argv: &[String]) -> Result<Invocation, UsageError> {
                 return ok(global, Command::Help);
             }
             "--version" | "-V" => return ok(global, Command::Version),
-            "--dir" => global.dir = PathBuf::from(value(&mut args, "--dir")?),
+            "--dir" => {
+                global.dir = PathBuf::from(value(&mut args, "--dir")?);
+                dir_explicit = true;
+            }
             "--strict" => {
                 strict_seen = true;
                 global.profile = Profile::Strict;
@@ -990,7 +994,8 @@ pub fn parse(argv: &[String]) -> Result<Invocation, UsageError> {
     let Some((name, tail)) = rest.split_first() else {
         return ok(global, Command::Help);
     };
-    let command = parse_command(name, tail, at_seen)?;
+    let explicit_dir = dir_explicit.then_some(global.dir.as_path());
+    let command = parse_command(name, tail, at_seen, explicit_dir)?;
 
     if global.format == Format::Json && !command.supports_json() {
         return Err(UsageError::new(
@@ -1016,7 +1021,12 @@ fn value<'a>(
         .ok_or_else(|| UsageError::new("AKR-C003", format!("{flag} requires a value")))
 }
 
-fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, UsageError> {
+fn parse_command(
+    name: &str,
+    tail: &[String],
+    at_seen: bool,
+    dir: Option<&std::path::Path>,
+) -> Result<Command, UsageError> {
     let flag_set = |flag: &str| tail.iter().any(|a| a == flag);
     let positional: Vec<&String> = tail.iter().filter(|a| !a.starts_with('-')).collect();
 
@@ -1410,7 +1420,7 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
             }
             Command::DiffStaged
         }
-        "handoff" => parse_handoff(name, &positional, tail)?,
+        "handoff" => parse_handoff(name, &positional, tail, dir)?,
         "change" => parse_change(name, &positional, tail)?,
         "git" => parse_git(name, &positional, tail)?,
         "git-hook" => Command::GitHook {
@@ -2187,6 +2197,7 @@ fn parse_handoff(
     name: &str,
     positional: &[&String],
     tail: &[String],
+    dir: Option<&std::path::Path>,
 ) -> Result<Command, UsageError> {
     let sub = positional.first().map(|s| s.as_str()).ok_or_else(|| {
         UsageError::new(
@@ -2211,6 +2222,16 @@ fn parse_handoff(
         searches: repeated(tail, "--note-search"),
     };
 
+    let resolve_path = |path: &str| -> PathBuf {
+        let candidate = std::path::Path::new(path);
+        if candidate.is_relative()
+            && let Some(dir) = dir
+        {
+            return dir.join(candidate);
+        }
+        candidate.to_path_buf()
+    };
+
     // A verbatim request is often a paragraph with newlines and quotes in it, which a
     // shell mangles. Reading it from a file is the only way to keep "verbatim" literally
     // true for a long one.
@@ -2218,9 +2239,10 @@ fn parse_handoff(
         match option_value(tail, flag) {
             None => Ok(None),
             Some(path) => {
-                refuse_private_argument_file(&path)?;
+                refuse_private_argument_file(dir, &path)?;
+                let resolved = resolve_path(&path);
                 Ok(Some(
-                    std::fs::read_to_string(&path)
+                    std::fs::read_to_string(&resolved)
                         .map_err(|error| {
                             UsageError::new("AKR-C004", format!("{flag} {path}: {error}"))
                         })?
@@ -2263,8 +2285,9 @@ fn parse_handoff(
                 )
                 .with_help("put every field in the spec file; it takes the MCP tool's arguments"));
             }
-            refuse_private_argument_file(&path)?;
-            let text = std::fs::read_to_string(&path)
+            refuse_private_argument_file(dir, &path)?;
+            let resolved = resolve_path(&path);
+            let text = std::fs::read_to_string(&resolved)
                 .map_err(|error| UsageError::new("AKR-C004", format!("--spec {path}: {error}")))?;
             Some(
                 akr_core::json::parse(&text).map_err(|error| {
@@ -2619,10 +2642,22 @@ fn values_skipped<'a>(tail: &'a [String], value_flags: &[&str]) -> Vec<&'a Strin
     out
 }
 
-fn refuse_private_argument_file(path: &str) -> Result<(), UsageError> {
-    let root = std::env::current_dir()
-        .map_err(|_| UsageError::new("AKR-C004", "cannot resolve the input-file directory"))?;
-    akr_core::secrets::require_public_input(&root, PathBuf::from(path).as_path()).map_err(|_| {
+fn refuse_private_argument_file(
+    dir: Option<&std::path::Path>,
+    path: &str,
+) -> Result<(), UsageError> {
+    let root = match dir {
+        Some(dir) => dir.to_path_buf(),
+        None => std::env::current_dir()
+            .map_err(|_| UsageError::new("AKR-C004", "cannot resolve the input-file directory"))?,
+    };
+    let candidate = std::path::Path::new(path);
+    let resolved = if candidate.is_relative() {
+        root.join(candidate)
+    } else {
+        candidate.to_path_buf()
+    };
+    akr_core::secrets::require_public_input(&root, &resolved).map_err(|_| {
         UsageError::new(
             "AKR-C004",
             "private secret storage cannot be used as a handoff input file",
@@ -3486,4 +3521,123 @@ pub fn help() -> String {
     }
     out.push_str("\nEXIT CODES\n    0 ok    1 diagnostics    2 usage    3 environment\n");
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_strs(args: &[&str]) -> Result<Invocation, UsageError> {
+        let argv: Vec<String> = args.iter().map(|s| (*s).to_owned()).collect();
+        parse(&argv)
+    }
+
+    #[test]
+    fn start_and_context_accept_flag_or_positional_equivalently() {
+        let s_flag = parse_strs(&["start", "--task", "renderer boundary", "--paths", "src/**"])
+            .expect("flagged start");
+        let s_pos = parse_strs(&["start", "--paths", "src/**", "renderer boundary"])
+            .expect("positional start");
+        assert_eq!(s_flag.command, s_pos.command);
+        let s_both = parse_strs(&["start", "--task", "a", "b"]).expect_err("both rejected");
+        assert_eq!(s_both.code, "AKR-C005");
+
+        let c_flag = parse_strs(&["context", "--goal", "sys.milestone.m3-playable-day"])
+            .expect("flagged context");
+        let c_pos = parse_strs(&[
+            "context",
+            "--paths",
+            "src/**",
+            "sys.milestone.m3-playable-day",
+        ])
+        .expect("positional context");
+        let c_bare =
+            parse_strs(&["context", "sys.milestone.m3-playable-day"]).expect("bare context");
+        assert_eq!(c_flag.command, c_bare.command);
+        assert!(matches!(
+            c_pos.command,
+            Command::Context { ref goal, ref paths, .. }
+            if goal == "sys.milestone.m3-playable-day"
+                && paths == &[Glob::new("src/**")]
+        ));
+        let c_both =
+            parse_strs(&["context", "--goal", "a.b.c", "d.e.f"]).expect_err("both rejected");
+        assert_eq!(c_both.code, "AKR-C005");
+    }
+
+    #[test]
+    fn paths_take_commas_and_reject_stray_positionals() {
+        let sep = parse_strs(&[
+            "context",
+            "sys.milestone.m3-playable-day",
+            "--paths",
+            "sim/**",
+            "--paths",
+            "lege/**",
+        ])
+        .expect("repeated --paths");
+        let comma = parse_strs(&[
+            "context",
+            "sys.milestone.m3-playable-day",
+            "--paths",
+            "sim/**,lege/**",
+        ])
+        .expect("comma --paths");
+        assert_eq!(sep.command, comma.command);
+
+        let stray = parse_strs(&[
+            "context",
+            "sys.milestone.m3-playable-day",
+            "--paths",
+            "sim/**",
+            "lege/**",
+        ])
+        .expect_err("stray second positional");
+        assert_eq!(stray.code, "AKR-C002");
+    }
+
+    #[test]
+    fn usage_contracts_and_aliases_parse_without_a_workspace() {
+        let help = help_for("propose").expect("propose help");
+        assert!(help.contains("slot-list"), "{help}");
+        assert!(help.contains("intent"), "{help}");
+
+        for args in [
+            vec!["--format", "json", "fmt", "--check"],
+            vec!["--format", "json", "init"],
+        ] {
+            let err = parse_strs(&args).expect_err("json unsupported");
+            assert_eq!(err.code, "AKR-C041");
+        }
+
+        let check = parse_strs(&["check", "--review-clean"]).expect("check");
+        let validate = parse_strs(&["validate", "--review-clean"]).expect("validate");
+        assert_eq!(check.command, validate.command);
+        assert!(help_for("validate").is_some_and(|h| h.contains("akr validate")));
+
+        let diff_err = parse_strs(&["diff"]).expect_err("diff requires --staged");
+        assert_eq!(diff_err.code, "AKR-C003");
+        assert!(diff_err.message.contains("--staged"));
+
+        let s_pos = parse_strs(&["search", "playable day"]).expect("positional search");
+        let s_flag = parse_strs(&["search", "--query", "playable day"]).expect("flagged search");
+        assert_eq!(s_pos.command, s_flag.command);
+        let s_both = parse_strs(&["search", "playable day", "--query", "other"]).expect_err("both");
+        assert_eq!(s_both.code, "AKR-C005");
+
+        for args in [vec!["propose-many"], vec!["evidence", "add-many"]] {
+            let err = parse_strs(&args).expect_err("missing required option");
+            assert_eq!(err.code, "AKR-C003");
+        }
+        assert!(matches!(
+            parse_strs(&["evidence", "add", "sys.evidence.asset-audit"])
+                .expect("parses before workspace check")
+                .command,
+            Command::EvidenceAdd { result: None, .. }
+        ));
+        let bad_cmd = parse_strs(&["chekc"]).expect_err("unknown command");
+        assert_eq!(bad_cmd.code, "AKR-C001");
+        let bad_flag = parse_strs(&["--bogus-flag", "check"]).expect_err("unknown flag");
+        assert_eq!(bad_flag.code, "AKR-C002");
+    }
 }

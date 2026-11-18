@@ -1,5 +1,5 @@
 //! Exercise the public/private boundary through the shipped command line.
-mod support;
+use crate::support;
 use support::Example;
 
 const VALUE: &str = "synthetic-private-value-never-published\nD:\\private\\developer.env\n";

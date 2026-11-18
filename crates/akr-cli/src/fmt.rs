@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 /// # Errors
 /// [`EnvError`] for an unreadable or unwritable file.
 pub fn run(session: &Session, check: bool, paths: &[PathBuf]) -> Result<Output, EnvError> {
-    let targets = if paths.is_empty() {
+    let targets: Vec<PathBuf> = if paths.is_empty() {
         session
             .inputs
             .sources
@@ -25,7 +25,16 @@ pub fn run(session: &Session, check: bool, paths: &[PathBuf]) -> Result<Output, 
             .filter(|path| path.is_file())
             .collect()
     } else {
-        paths.to_vec()
+        paths
+            .iter()
+            .map(|path| {
+                if path.is_relative() {
+                    session.root.join(path)
+                } else {
+                    path.clone()
+                }
+            })
+            .collect()
     };
 
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
