@@ -10,9 +10,11 @@
 // same allow in `src/ops/mod.rs`.
 #![allow(clippy::result_large_err)]
 
-mod ops_support;
+use crate::ops_support;
 
-use akr_core::model::{Kind, Outcome as DispositionOutcome, Reference, key};
+use akr_core::model::{
+    ContentSlot, ContentValue, Kind, Outcome as DispositionOutcome, RecordBuilder, Reference, key,
+};
 use akr_core::ops::{self, DispositionRequest, Edits, ReviseMode, WriteContext};
 use ops_support::Sandbox;
 use std::collections::BTreeMap;
@@ -82,30 +84,57 @@ fn leftover_temporaries(sandbox: &Sandbox) -> bool {
 // -------------------------------------------------------------------------------------
 
 #[test]
-fn every_propose_refusal_writes_nothing() {
+fn propose_revise_and_validation_refusals_write_nothing() {
     let sandbox = Sandbox::save_your_skin();
 
-    refuses_without_writing(&sandbox, "existing key", |context| {
+    // propose refusals (Policy, not retired Term, so validation refusals actually run)
+    let refused = refuses_without_writing(&sandbox, "existing key", |context| {
         ops::propose(
             context,
-            &key("sys.term.playable-day"),
-            Kind::Term,
+            &key("sys.policy.tandem-work"),
+            Kind::Policy,
             "again",
             None,
         )
     });
-    refuses_without_writing(&sandbox, "missing required slot", |context| {
-        ops::propose(context, &key("sys.term.bare"), Kind::Term, "Bare", None)
-    });
-    refuses_without_writing(&sandbox, "undeclared namespace", |context| {
-        ops::propose(context, &key("nope.term.x"), Kind::Term, "Stranger", None)
-    });
-}
+    assert_eq!(refused.code.as_str(), "AKR-L041");
 
-#[test]
-fn every_revise_refusal_writes_nothing() {
-    let sandbox = Sandbox::save_your_skin();
+    let refused = refuses_without_writing(&sandbox, "missing required slot", |context| {
+        ops::propose(context, &key("sys.policy.bare"), Kind::Policy, "Bare", None)
+    });
+    assert_eq!(refused.code.as_str(), "AKR-C031");
+    assert!(
+        refused
+            .diagnostics
+            .iter()
+            .any(|d| d.code.as_str() == "AKR-T001")
+    );
 
+    let mut stranger = RecordBuilder::new("nope.policy.x", 1, Kind::Policy)
+        .title("Stranger")
+        .all_scope()
+        .build();
+    stranger.content.insert(
+        ContentSlot::Rule,
+        ContentValue::prose("Undeclared namespace."),
+    );
+    let refused = refuses_without_writing(&sandbox, "undeclared namespace", |context| {
+        ops::propose(
+            context,
+            &key("nope.policy.x"),
+            Kind::Policy,
+            "Stranger",
+            Some(stranger),
+        )
+    });
+    assert!(
+        refused
+            .diagnostics
+            .iter()
+            .any(|d| d.code.as_str() == "AKR-L004")
+    );
+
+    // revise refusals
     refuses_without_writing(&sandbox, "unknown key", |context| {
         ops::revise(
             context,
@@ -136,6 +165,23 @@ fn every_revise_refusal_writes_nothing() {
             },
         )
     });
+
+    // validation-step refusal after splice and canonical render
+    let refused = refuses_without_writing(&sandbox, "result does not validate", |context| {
+        ops::complete(
+            context,
+            &key("sys.milestone.m3-playable-day"),
+            &[(
+                "no-placeholder-assets".to_owned(),
+                Reference::head(key("sys.evidence.playable-day-demo")),
+            )],
+        )
+    });
+    assert_eq!(refused.code.as_str(), "AKR-C031");
+    assert!(
+        !refused.diagnostics.is_empty(),
+        "the refusal must say what was wrong"
+    );
 }
 
 #[test]
@@ -211,7 +257,7 @@ fn every_supersede_refusal_writes_nothing() {
 }
 
 #[test]
-fn every_complete_refusal_writes_nothing() {
+fn complete_and_abandon_refusals_write_nothing() {
     let sandbox = Sandbox::sys_tandem();
 
     let refused = refuses_without_writing(&sandbox, "unsatisfied check", |context| {
@@ -225,11 +271,6 @@ fn every_complete_refusal_writes_nothing() {
     refuses_without_writing(&sandbox, "unknown key", |context| {
         ops::complete(context, &key("tandem.milestone.absent"), &[])
     });
-}
-
-#[test]
-fn every_abandon_refusal_writes_nothing() {
-    let sandbox = Sandbox::sys_tandem();
 
     refuses_without_writing(&sandbox, "no reason", |context| {
         ops::abandon(
@@ -245,29 +286,6 @@ fn every_abandon_refusal_writes_nothing() {
     refuses_without_writing(&sandbox, "unknown key", |context| {
         ops::abandon(context, &key("tandem.work.absent"), "why not", &[])
     });
-}
-
-/// The deepest failure point: the splice succeeded, the text was rendered, and only then
-/// did validation refuse. Nothing has been written even so.
-#[test]
-fn a_refusal_at_the_validation_step_writes_nothing() {
-    let sandbox = Sandbox::save_your_skin();
-
-    let refused = refuses_without_writing(&sandbox, "result does not validate", |context| {
-        ops::complete(
-            context,
-            &key("sys.milestone.m3-playable-day"),
-            &[(
-                "no-placeholder-assets".to_owned(),
-                Reference::head(key("sys.evidence.playable-day-demo")),
-            )],
-        )
-    });
-    assert_eq!(refused.code.as_str(), "AKR-C031");
-    assert!(
-        !refused.diagnostics.is_empty(),
-        "the refusal must say what was wrong"
-    );
 }
 
 /// Sanity: the harness would notice a write. A successful operation changes the digests,

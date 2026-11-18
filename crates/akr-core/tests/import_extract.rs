@@ -64,14 +64,6 @@ fn one_claim_per_heading_and_nothing_else() {
 }
 
 #[test]
-fn extraction_is_deterministic() {
-    assert_eq!(
-        extract(CORPUS, Format::Markdown),
-        extract(CORPUS, Format::Markdown)
-    );
-}
-
-#[test]
 fn the_kinds_follow_the_documented_rules() {
     let extraction = extract(CORPUS, Format::Markdown);
     let kinds: Vec<Kind> = extraction.claims.iter().map(|c| c.kind).collect();

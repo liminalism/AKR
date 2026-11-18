@@ -11,6 +11,7 @@ use akr_core::model::{Ancestry, Commit, RevisionId, key};
 use akr_core::resolve::{BuildInputs, ResolvedModel, Workspace, evidence_links, load_workspace};
 use akr_core::store::{IndexInputs, IndexStats, build, cache_path};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 /// `MANIFEST.md` §4: five commits, C1 through C5, with C5 as HEAD.
 const COMMITS: [&str; 5] = [
@@ -33,23 +34,26 @@ fn example_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/save-your-skin")
 }
 
-fn example() -> Workspace {
-    let root = example_root();
-    let mut workspace = load_workspace(&root, &root.join(".akr")).expect("the example loads");
-    workspace.ledger.facts.ancestry = Ancestry::from_pairs(vec![
-        (commit(1), commit(0)),
-        (commit(2), commit(1)),
-        (commit(3), commit(2)),
-        (commit(4), commit(3)),
-    ]);
-    workspace.ledger.facts.last_change = [
-        (id("sys.milestone.m1-walking-skeleton", 1), commit(0)),
-        (id("sys.milestone.m2-deterministic-sim", 1), commit(1)),
-        (id("sys.milestone.m3-playable-day", 1), commit(2)),
-        (id("sys.work.m3-plan", 2), commit(3)),
-    ]
-    .into();
-    workspace
+fn example() -> &'static Workspace {
+    static WORKSPACE: OnceLock<Workspace> = OnceLock::new();
+    WORKSPACE.get_or_init(|| {
+        let root = example_root();
+        let mut workspace = load_workspace(&root, &root.join(".akr")).expect("the example loads");
+        workspace.ledger.facts.ancestry = Ancestry::from_pairs(vec![
+            (commit(1), commit(0)),
+            (commit(2), commit(1)),
+            (commit(3), commit(2)),
+            (commit(4), commit(3)),
+        ]);
+        workspace.ledger.facts.last_change = [
+            (id("sys.milestone.m1-walking-skeleton", 1), commit(0)),
+            (id("sys.milestone.m2-deterministic-sim", 1), commit(1)),
+            (id("sys.milestone.m3-playable-day", 1), commit(2)),
+            (id("sys.work.m3-plan", 2), commit(3)),
+        ]
+        .into();
+        workspace
+    })
 }
 
 fn inputs_of(workspace: &Workspace) -> BuildInputs {
@@ -67,7 +71,7 @@ fn inputs_of(workspace: &Workspace) -> BuildInputs {
 /// Builds an index in a scratch directory and hands back the connection and the stats.
 fn built(name: &str) -> (rusqlite::Connection, IndexStats, PathBuf) {
     let workspace = example();
-    let inputs = inputs_of(&workspace);
+    let inputs = inputs_of(workspace);
     let model = ResolvedModel::build(&workspace.ledger, &inputs);
     let queue = akr_core::freshness::ReviewQueue::default();
 
@@ -91,6 +95,36 @@ fn built(name: &str) -> (rusqlite::Connection, IndexStats, PathBuf) {
     (connection, stats, dir)
 }
 
+fn shared_built() -> (rusqlite::Connection, &'static IndexStats) {
+    static SHARED: OnceLock<(PathBuf, IndexStats)> = OnceLock::new();
+    let (path, stats) = SHARED.get_or_init(|| {
+        let workspace = example();
+        let inputs = inputs_of(workspace);
+        let model = ResolvedModel::build(&workspace.ledger, &inputs);
+        let queue = akr_core::freshness::ReviewQueue::default();
+
+        let dir = std::env::temp_dir().join(format!("akr-store-shared-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch directory");
+        let path = cache_path(&dir);
+
+        let stats = build(
+            &path,
+            &IndexInputs {
+                model: &model,
+                queue: &queue,
+                spans: &workspace.spans,
+                diagnostics: &[],
+                today: "2026-08-04",
+            },
+        )
+        .expect("stage E builds");
+        (path, stats)
+    });
+    let connection = rusqlite::Connection::open(path).expect("the cache opens");
+    (connection, stats)
+}
+
 fn count(connection: &rusqlite::Connection, sql: &str) -> i64 {
     connection
         .query_row(sql, [], |row| row.get(0))
@@ -99,7 +133,7 @@ fn count(connection: &rusqlite::Connection, sql: &str) -> i64 {
 
 #[test]
 fn every_citation_is_recorded_with_its_descendant_verdict() {
-    let (connection, _, dir) = built("citations");
+    let (connection, _) = shared_built();
 
     let links = count(&connection, "SELECT count(*) FROM evidence_links");
     assert!(links > 0, "no citation was evaluated");
@@ -132,13 +166,11 @@ fn every_citation_is_recorded_with_its_descendant_verdict() {
         .expect("a row");
     assert_eq!(observed.len(), 40, "{observed}");
     assert!(!observed.starts_with("git:"), "{observed}");
-
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
 fn a_check_is_satisfied_only_by_a_link_that_satisfies_it() {
-    let (connection, _, dir) = built("checks");
+    let (connection, _) = shared_built();
     assert_eq!(
         count(
             &connection,
@@ -163,7 +195,6 @@ fn a_check_is_satisfied_only_by_a_link_that_satisfies_it() {
         0,
         "a check with satisfying evidence is recorded as unsatisfied"
     );
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -173,12 +204,10 @@ fn two_builds_of_the_same_sources_dump_identically() {
     // between runs, only that every query result is. So this compares dumps rather than
     // files — a file comparison would be a stricter test of a weaker promise, and would
     // fail for reasons that do not matter.
-    let (first, _, first_dir) = built("determinism-a");
+    let (first, _) = shared_built();
     let (second, _, second_dir) = built("determinism-b");
     assert_eq!(dump(&first), dump(&second));
-    drop(first);
     drop(second);
-    let _ = std::fs::remove_dir_all(first_dir);
     let _ = std::fs::remove_dir_all(second_dir);
 }
 
@@ -228,9 +257,9 @@ fn dump(connection: &rusqlite::Connection) -> String {
 
 #[test]
 fn the_index_agrees_with_the_model_it_was_built_from() {
-    let (connection, stats, dir) = built("agreement");
+    let (connection, stats) = shared_built();
     let workspace = example();
-    let inputs = inputs_of(&workspace);
+    let inputs = inputs_of(workspace);
     let model = ResolvedModel::build(&workspace.ledger, &inputs);
 
     assert_eq!(
@@ -249,5 +278,4 @@ fn the_index_agrees_with_the_model_it_was_built_from() {
         i64::try_from(model.heads.len()).expect("a count")
     );
     assert_eq!(stats.revisions, model.ledger().records().len());
-    let _ = std::fs::remove_dir_all(dir);
 }

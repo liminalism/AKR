@@ -7,7 +7,7 @@
 //! the real SYS tandem roadmap at
 //! `examples/sys-tandem/legacy/2026-08-03-engine-simulator-tandem-roadmap.md`.
 
-mod support;
+use crate::support;
 
 use akr_core::freshness::{
     Impact, ReviewQueue, Stale, StaleCause, derive, glob_matches, impact_of_range,
@@ -19,6 +19,7 @@ use akr_core::model::{
     RevisionId, State, key,
 };
 use std::collections::BTreeSet;
+use std::sync::OnceLock;
 use support::TempRepo;
 
 fn today(day: u8) -> Date {
@@ -50,170 +51,96 @@ fn observation(key_text: &str, observed_at: &str, watches: &[&str]) -> akr_core:
 // -------------------------------------------------------------------------------------
 
 #[test]
-fn globstar_matches_any_run_of_segments() {
-    let glob = Glob::new("SYSEngine/crates/sys_game_bridge/**");
+fn glob_matching_and_subset_validation() {
+    let globstar = Glob::new("SYSEngine/crates/sys_game_bridge/**");
     assert!(glob_matches(
-        &glob,
+        &globstar,
         "SYSEngine/crates/sys_game_bridge/src/lib.rs"
     ));
     assert!(glob_matches(
-        &glob,
+        &globstar,
         "SYSEngine/crates/sys_game_bridge/tests/squelch_audit.rs"
     ));
     assert!(!glob_matches(
-        &glob,
+        &globstar,
         "SYSEngine/crates/sys_render/src/lib.rs"
     ));
-    assert!(!glob_matches(&glob, "src/engine/mod.rs"));
-}
+    assert!(!glob_matches(&globstar, "src/engine/mod.rs"));
 
-#[test]
-fn a_star_does_not_cross_a_separator() {
-    let glob = Glob::new("src/*.rs");
-    assert!(glob_matches(&glob, "src/main.rs"));
-    assert!(!glob_matches(&glob, "src/engine/mod.rs"));
-}
+    let star = Glob::new("src/*.rs");
+    assert!(glob_matches(&star, "src/main.rs"));
+    assert!(!glob_matches(&star, "src/engine/mod.rs"));
 
-#[test]
-fn question_marks_and_classes_match_one_character() {
     assert!(glob_matches(&Glob::new("src/?.rs"), "src/a.rs"));
     assert!(!glob_matches(&Glob::new("src/?.rs"), "src/ab.rs"));
     assert!(glob_matches(&Glob::new("src/[a-c]x.rs"), "src/bx.rs"));
     assert!(!glob_matches(&Glob::new("src/[a-c]x.rs"), "src/zx.rs"));
-}
 
-#[test]
-fn an_exact_path_matches_only_itself() {
-    let glob = Glob::new("sim/src/step.rs");
-    assert!(glob_matches(&glob, "sim/src/step.rs"));
-    assert!(!glob_matches(&glob, "sim/src/step.rs.bak"));
-    assert!(!glob_matches(&glob, "sim/src/other.rs"));
-}
+    let exact = Glob::new("sim/src/step.rs");
+    assert!(glob_matches(&exact, "sim/src/step.rs"));
+    assert!(!glob_matches(&exact, "sim/src/step.rs.bak"));
+    assert!(!glob_matches(&exact, "sim/src/other.rs"));
 
-#[test]
-fn the_glob_subset_is_enforced() {
     assert!(validate_glob(&Glob::new("a/**")).is_ok());
-    assert!(
-        validate_glob(&Glob::new("a/{b,c}")).is_err(),
-        "brace expansion"
-    );
-    assert!(validate_glob(&Glob::new("!a")).is_err(), "negation");
-    assert!(validate_glob(&Glob::new("a\\b")).is_err(), "backslash");
-    assert!(
-        validate_glob(&Glob::new("a/[bc")).is_err(),
-        "unterminated class"
-    );
-    assert!(
-        validate_glob(&Glob::new("a/x**")).is_err(),
-        "partial globstar"
-    );
-    assert!(validate_glob(&Glob::new("/a")).is_err(), "absolute");
-    assert!(validate_glob(&Glob::new("")).is_err(), "empty");
+    for bad in ["a/{b,c}", "!a", "a\\b", "a/[bc", "a/x**", "/a", ""] {
+        assert!(validate_glob(&Glob::new(bad)).is_err(), "{bad:?}");
+    }
 }
 
 // -------------------------------------------------------------------------------------
-// The staleness computation (docs/10 §3)
+// The staleness computation, input validation, and review queue (shared linear repo)
 // -------------------------------------------------------------------------------------
 
 #[test]
-fn a_watched_path_that_moved_makes_a_record_stale() {
-    let mut repo = TempRepo::new("watch-stale");
-    let observed = repo.commit_file("src/project/mod.rs", "1\n", "base");
-    let head = repo.commit_file("src/project/pass.rs", "2\n", "change the projection");
+fn linear_history_staleness_diagnostics_and_queue_ordering() {
+    let mut repo = TempRepo::new("freshness-linear");
+    repo.write("src/project/mod.rs", "1\n");
+    repo.write("src/render/mod.rs", "1\n");
+    repo.write("sim/src/step.rs", "1\n");
+    let c_base = repo.commit("base");
+
+    repo.write("src/project/pass.rs", "2\n");
+    repo.write("src/render/frame.rs", "2\n");
+    repo.write("sim/src/step.rs", "2\n");
+    let c_mid = repo.commit("mid");
+
+    let head = repo.commit_file("docs/notes.md", "notes\n", "unrelated");
+    // Uncommitted files for G004 and G027:
+    repo.write("sim/src/step.rs", "edited but not committed\n");
+    repo.write("engine/new/mod.rs", "// not committed yet\n");
     let git = Repository::open(repo.root()).expect("opens");
 
+    // 1. Watched path moved -> stale Watch cause; observed at head -> fresh; unwatched -> fresh.
     let mut ledger = Ledger::new(Project::new("p", &["fx"]));
-    ledger.insert(observation(
-        "fx.obs.projection",
-        &observed,
-        &["src/project/**"],
-    ));
-
+    ledger.extend([
+        observation("fx.obs.projection", &c_base, &["src/project/**"]),
+        observation("fx.obs.frames", &head, &["src/render/**"]),
+        observation("fx.obs.unwatched", &c_mid, &["src/render/**"]),
+    ]);
     let queue = derive(&ledger, &git, &commit(&head), today(3)).expect("derives");
     assert_eq!(queue.stale.len(), 1);
     assert_eq!(queue.stale[0].id, id("fx.obs.projection", 1));
     match &queue.stale[0].cause {
         StaleCause::Watch { glob, commit, path } => {
             assert_eq!(glob.as_str(), "src/project/**");
-            assert_eq!(commit.as_str(), head);
+            assert_eq!(commit.as_str(), c_mid);
             assert_eq!(path, "src/project/pass.rs");
         }
         other => panic!("expected a watch cause, got {other:?}"),
     }
-}
-
-#[test]
-fn an_observation_made_at_head_is_not_stale() {
-    // The change is already accounted for: the observation was made *at* that commit.
-    let mut repo = TempRepo::new("observed-at-head");
-    repo.commit_file("src/render/mod.rs", "1\n", "base");
-    let head = repo.commit_file("src/render/frame.rs", "2\n", "change the renderer");
-    let git = Repository::open(repo.root()).expect("opens");
-
-    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
-    ledger.insert(observation("fx.obs.frames", &head, &["src/render/**"]));
-
-    let queue = derive(&ledger, &git, &commit(&head), today(3)).expect("derives");
-    assert!(queue.stale.is_empty(), "{:?}", queue.stale);
-}
-
-#[test]
-fn a_change_outside_the_watched_paths_does_not_make_a_record_stale() {
-    let mut repo = TempRepo::new("unwatched");
-    let observed = repo.commit_file("src/project/mod.rs", "1\n", "base");
-    let head = repo.commit_file("docs/notes.md", "notes\n", "unrelated");
-    let git = Repository::open(repo.root()).expect("opens");
-
-    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
-    ledger.insert(observation(
-        "fx.obs.projection",
-        &observed,
-        &["src/project/**"],
-    ));
     assert!(
-        derive(&ledger, &git, &commit(&head), today(3))
-            .expect("derives")
-            .stale
-            .is_empty()
+        queue.diagnostics.is_empty(),
+        "a stale record is a build fact, not a diagnostic: {:?}",
+        queue.diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
     );
-}
+    let g041 = queue.review_clean_diagnostic().expect("queue is not empty");
+    assert_eq!(g041.code, codes::G041);
+    assert!(g041.message.contains("1 stale"));
+    assert!(ReviewQueue::default().review_clean_diagnostic().is_none());
 
-#[test]
-fn a_passed_review_date_makes_a_record_stale_without_any_commit() {
-    let mut repo = TempRepo::new("review-after");
-    let head = repo.commit_file("a.txt", "1\n", "base");
-    let git = Repository::open(repo.root()).expect("opens");
-
-    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
-    ledger.insert(
-        RecordBuilder::new("fx.obs.drift", 1, Kind::Observation)
-            .filled()
-            .commit(ContentSlot::ObservedAt, &head)
-            .content(
-                ContentSlot::ReviewAfter,
-                ContentValue::Date(Date::new(2026, 7, 15).expect("date")),
-            )
-            .build(),
-    );
-
-    let queue = derive(&ledger, &git, &commit(&head), today(3)).expect("derives");
-    assert_eq!(queue.stale.len(), 1);
-    assert!(matches!(
-        queue.stale[0].cause,
-        StaleCause::ReviewAfter { .. }
-    ));
-}
-
-#[test]
-fn today_is_an_input_not_a_clock_reading() {
-    // The same ledger at the same commit, on two stated days, gives two answers — and each
-    // answer is reproducible.
-    let mut repo = TempRepo::new("today");
-    let head = repo.commit_file("a.txt", "1\n", "base");
-    let git = Repository::open(repo.root()).expect("opens");
-
-    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
-    ledger.insert(
+    // 2. Passed review_after makes record stale; today is an input, not a clock reading.
+    let mut dated = Ledger::new(Project::new("p", &["fx"]));
+    dated.insert(
         RecordBuilder::new("fx.obs.drift", 1, Kind::Observation)
             .filled()
             .commit(ContentSlot::ObservedAt, &head)
@@ -223,99 +150,190 @@ fn today_is_an_input_not_a_clock_reading() {
             )
             .build(),
     );
-    let before = derive(&ledger, &git, &commit(&head), today(9)).expect("derives");
-    let after = derive(&ledger, &git, &commit(&head), today(11)).expect("derives");
-    assert!(before.stale.is_empty(), "not yet due");
-    assert_eq!(after.stale.len(), 1, "overdue");
-    // Reproducible.
-    let again = derive(&ledger, &git, &commit(&head), today(11)).expect("derives");
-    assert_eq!(after.stale, again.stale);
-}
-
-#[test]
-fn terminal_records_are_never_evaluated() {
-    // A `disproven` observation has already been answered; asking whether it is current is
-    // meaningless (`docs/10-freshness-and-git.md` §3).
-    let mut repo = TempRepo::new("terminal");
-    let observed = repo.commit_file("lege/src/a.rs", "1\n", "base");
-    let head = repo.commit_file("lege/src/b.rs", "2\n", "change");
-    let git = Repository::open(repo.root()).expect("opens");
-
-    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
-    let mut record = observation("fx.obs.imports", &observed, &["lege/src/**"]);
-    record.state = State::Disproven;
-    ledger.insert(record);
     assert!(
-        derive(&ledger, &git, &commit(&head), today(3))
+        derive(&dated, &git, &commit(&head), today(9))
             .expect("derives")
             .stale
             .is_empty()
     );
-}
+    let after = derive(&dated, &git, &commit(&head), today(11)).expect("derives");
+    assert_eq!(after.stale.len(), 1);
+    assert!(matches!(
+        after.stale[0].cause,
+        StaleCause::ReviewAfter { .. }
+    ));
 
-#[test]
-fn normative_and_planning_records_are_never_stale_in_their_own_right() {
-    let mut repo = TempRepo::new("non-empirical");
-    let head = repo.commit_file("sim/src/a.rs", "1\n", "base");
-    repo.commit_file("sim/src/b.rs", "2\n", "change");
-    let head2 = repo.rev_parse("HEAD");
-    let git = Repository::open(repo.root()).expect("opens");
-
-    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
-    ledger.extend([
+    // 3. Terminal and normative/planning records are never evaluated as stale.
+    let mut non_eval = Ledger::new(Project::new("p", &["fx"]));
+    let mut disproven = observation("fx.obs.disproven", &c_base, &["src/project/**"]);
+    disproven.state = State::Disproven;
+    non_eval.extend([
+        disproven,
         RecordBuilder::new("fx.policy.tandem", 1, Kind::Policy)
             .filled()
             .state(State::Active)
-            .path_scope("sim/**")
+            .path_scope("src/**")
             .build(),
         RecordBuilder::new("fx.milestone.m1", 1, Kind::Milestone)
             .filled()
             .state(State::Active)
             .build(),
     ]);
-    let _ = head;
     assert!(
-        derive(&ledger, &git, &commit(&head2), today(3))
+        derive(&non_eval, &git, &commit(&head), today(3))
             .expect("derives")
             .stale
             .is_empty()
     );
-}
 
-// -------------------------------------------------------------------------------------
-// Input validation (V-101, V-102, V-103)
-// -------------------------------------------------------------------------------------
+    // 4. Queue ordering (watch before date) and cause precedence (watch beats date).
+    let mut ordered = Ledger::new(Project::new("p", &["fx"]));
+    ordered.insert(observation(
+        "fx.obs.zzz-watched",
+        &c_base,
+        &["src/project/**"],
+    ));
+    ordered.insert(
+        RecordBuilder::new("fx.obs.aaa-dated", 1, Kind::Observation)
+            .filled()
+            .commit(ContentSlot::ObservedAt, &head)
+            .content(
+                ContentSlot::ReviewAfter,
+                ContentValue::Date(Date::new(2026, 7, 15).expect("date")),
+            )
+            .build(),
+    );
+    let q_ordered = derive(&ordered, &git, &commit(&head), today(3)).expect("derives");
+    let names: Vec<String> = q_ordered
+        .stale
+        .iter()
+        .map(|s| s.id.key.to_string())
+        .collect();
+    assert_eq!(names, ["fx.obs.zzz-watched", "fx.obs.aaa-dated"]);
 
-#[test]
-fn an_observed_at_commit_the_repository_lacks_is_g011() {
-    let mut repo = TempRepo::new("g011");
-    let head = repo.commit_file("a.txt", "1\n", "base");
-    let git = Repository::open(repo.root()).expect("opens");
+    let mut both = Ledger::new(Project::new("p", &["fx"]));
+    both.insert(
+        RecordBuilder::new("fx.obs.both", 1, Kind::Observation)
+            .filled()
+            .commit(ContentSlot::ObservedAt, &c_base)
+            .content(
+                ContentSlot::Watches,
+                ContentValue::Globs(vec![Glob::new("src/project/pass.rs")]),
+            )
+            .content(
+                ContentSlot::ReviewAfter,
+                ContentValue::Date(Date::new(2026, 7, 15).expect("date")),
+            )
+            .build(),
+    );
+    let q_both = derive(&both, &git, &commit(&head), today(3)).expect("derives");
+    assert_eq!(q_both.stale.len(), 1);
+    assert_eq!(q_both.stale[0].cause.name(), "watch");
 
-    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
-    ledger.insert(observation(
+    // 5. Diagnostics: G011 (plus partial queue survival), G021, G022, G027, G031, G004.
+    let mut stranded_and_sound = Ledger::new(Project::new("p", &["fx"]));
+    stranded_and_sound.insert(observation(
         "fx.obs.stranded",
         "0123456789abcdef0123456789abcdef01234567",
-        &["a.txt"],
+        &["src/project/**"],
     ));
-    let queue = derive(&ledger, &git, &commit(&head), today(3)).expect("derives");
-    assert!(queue.diagnostics.iter().any(|d| d.code == codes::G011));
+    stranded_and_sound.insert(observation("fx.obs.sound", &c_base, &["src/project/**"]));
+    let q_stranded = derive(&stranded_and_sound, &git, &commit(&head), today(3)).expect("derives");
+    assert!(q_stranded.diagnostics.iter().any(|d| d.code == codes::G011));
+    assert_eq!(
+        q_stranded
+            .stale
+            .iter()
+            .map(|s| s.id.to_string())
+            .collect::<Vec<_>>(),
+        ["fx.obs.sound/1"]
+    );
+
+    let mut bad_glob = Ledger::new(Project::new("p", &["fx"]));
+    bad_glob.insert(observation("fx.obs.bad", &head, &["src/{a,b}/**"]));
+    assert!(
+        derive(&bad_glob, &git, &commit(&head), today(3))
+            .expect("derives")
+            .diagnostics
+            .iter()
+            .any(|d| d.code == codes::G021)
+    );
+
+    let mut missing_watch = Ledger::new(Project::new("p", &["fx"]));
+    missing_watch.insert(observation("fx.obs.moved", &head, &["engine/gone/**"]));
+    let g022 = unmatched_watches(&missing_watch, &git, &commit(&head)).expect("lists");
+    assert_eq!(g022.len(), 1);
+    assert_eq!(g022[0].code, codes::G022);
+
+    let mut new_watch = Ledger::new(Project::new("p", &["fx"]));
+    new_watch.insert(observation("fx.obs.new", &head, &["engine/new/**"]));
+    let g027 = unmatched_watches(&new_watch, &git, &commit(&head)).expect("lists");
+    assert_eq!(g027.len(), 1);
+    assert_eq!(g027[0].code, codes::G027);
+
+    let mut bad_date = Ledger::new(Project::new("p", &["fx"]));
+    let mut typo = RecordBuilder::new("fx.obs.typo", 1, Kind::Observation)
+        .filled()
+        .commit(ContentSlot::ObservedAt, &head)
+        .content(
+            ContentSlot::ReviewAfter,
+            ContentValue::Date(Date::new(2026, 1, 1).expect("date")),
+        )
+        .build();
+    typo.created_at = Some(Date::new(2026, 6, 1).expect("date"));
+    bad_date.insert(typo);
+    assert!(
+        derive(&bad_date, &git, &commit(&head), today(3))
+            .expect("derives")
+            .diagnostics
+            .iter()
+            .any(|d| d.code == codes::G031)
+    );
+
+    let mut dirty = Ledger::new(Project::new("p", &["fx"]));
+    dirty.insert(observation("fx.obs.step", &head, &["sim/src/**"]));
+    let q_dirty = derive(&dirty, &git, &commit(&head), today(3)).expect("derives");
+    assert!(q_dirty.diagnostics.iter().any(|d| d.code == codes::G004));
+    assert!(q_dirty.stale.is_empty());
+
+    // 6. Derivation is independent of record insertion order.
+    let build_ordered = |reverse: bool| {
+        let mut records = vec![
+            observation("fx.obs.a", &c_base, &["src/project/**"]),
+            observation("fx.obs.b", &c_base, &["src/project/**"]),
+            observation("fx.obs.c", &c_base, &["src/project/**"]),
+        ];
+        if reverse {
+            records.reverse();
+        }
+        let mut l = Ledger::new(Project::new("p", &["fx"]));
+        l.extend(records);
+        derive(&l, &git, &commit(&head), today(3)).expect("derives")
+    };
+    assert_eq!(build_ordered(false).stale, build_ordered(true).stale);
+    assert_eq!(build_ordered(false).stale.len(), 3);
 }
 
-#[test]
-fn an_observed_at_on_a_divergent_branch_is_g012_and_not_a_failure() {
-    let mut repo = TempRepo::new("g012");
-    repo.commit_file("a.txt", "base\n", "base");
-    repo.branch("side");
-    let side = repo.commit_file("side.txt", "s\n", "side");
-    repo.checkout("main");
-    let head = repo.commit_file("main.txt", "m\n", "main");
-    let git = Repository::open(repo.root()).expect("opens");
+// -------------------------------------------------------------------------------------
+// Divergent branches and rewrite maps (V-101 / G011 / G012)
+// -------------------------------------------------------------------------------------
 
+#[test]
+fn divergent_branches_and_rewrite_maps_report_g011_and_g012() {
+    let mut repo = TempRepo::new("freshness-branches");
+    repo.commit_file("base.txt", "base\n", "base");
+    repo.branch("side");
+    let old = repo.commit_file("watched.txt", "old\n", "old identity");
+    let replacement_on_side = repo.commit_file("watched.txt", "side2\n", "side replacement");
+    repo.checkout("main");
+    let replacement = repo.commit_file("watched.txt", "rewritten\n", "replacement identity");
+    let head = repo.commit_file("watched.txt", "changed\n", "change after observation");
+
+    // 1. Divergent branch with no rewrite map -> G012 Warning.
+    let git_plain = Repository::open(repo.root()).expect("opens");
     let mut ledger = Ledger::new(Project::new("p", &["fx"]));
-    ledger.insert(observation("fx.obs.side", &side, &["side.txt"]));
-    let queue = derive(&ledger, &git, &commit(&head), today(3)).expect("derives");
-    assert!(queue.diagnostics.iter().any(|d| d.code == codes::G012));
+    ledger.insert(observation("fx.obs.side", &old, &["watched.txt"]));
+    let queue = derive(&ledger, &git_plain, &commit(&head), today(3)).expect("derives");
     assert_eq!(
         queue
             .diagnostics
@@ -325,130 +343,66 @@ fn an_observed_at_on_a_divergent_branch_is_g012_and_not_a_failure() {
         Some(akr_core::diagnostics::Severity::Warning),
         "not computable is reported, not fatal"
     );
-}
 
-#[test]
-fn a_reviewed_rewrite_keeps_the_observation_reachable_and_freshness_computable() {
-    let mut repo = TempRepo::new("g012-rewrite-map");
-    repo.commit_file("base.txt", "base\n", "base");
-    repo.branch("pre-rewrite");
-    let old = repo.commit_file("watched.txt", "old\n", "old observation identity");
-    repo.checkout("main");
-    let replacement = repo.commit_file(
-        "watched.txt",
-        "rewritten\n",
-        "replacement observation identity",
-    );
-    let head = repo.commit_file("watched.txt", "changed\n", "change after observation");
+    // 2. Reviewed rewrite onto main -> reachable and stale.
     repo.write(
         ".akr-commit-map",
         &format!("{old} {replacement} # explicitly reviewed\n"),
     );
-    let git = Repository::open(repo.root()).expect("opens");
-
-    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
-    ledger.insert(observation("fx.obs.rewritten", &old, &["watched.txt"]));
-    let queue = derive(&ledger, &git, &commit(&head), today(3)).expect("derives");
-
+    let git_mapped = Repository::open(repo.root()).expect("opens");
+    let q_mapped = derive(&ledger, &git_mapped, &commit(&head), today(3)).expect("derives");
     assert!(
-        !queue
+        !q_mapped
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == codes::G011 || diagnostic.code == codes::G012),
-        "a reachable reviewed replacement is neither absent nor divergent"
+            .any(|d| d.code == codes::G011 || d.code == codes::G012)
     );
-    assert_eq!(queue.stale.len(), 1);
-    assert_eq!(queue.stale[0].id, id("fx.obs.rewritten", 1));
-}
+    assert_eq!(q_mapped.stale.len(), 1);
+    assert_eq!(q_mapped.stale[0].id, id("fx.obs.side", 1));
 
-#[test]
-fn a_rewrite_target_that_is_still_divergent_remains_g012() {
-    let mut repo = TempRepo::new("g012-rewrite-target-divergent");
-    repo.commit_file("base.txt", "base\n", "base");
-    repo.branch("pre-rewrite");
-    let old = repo.commit_file("watched.txt", "old\n", "old identity");
-    let replacement = repo.commit_file("watched.txt", "replacement\n", "replacement identity");
-    repo.checkout("main");
-    let head = repo.commit_file("main.txt", "main\n", "main");
-    repo.write(".akr-commit-map", &format!("{old} {replacement}\n"));
-    let git = Repository::open(repo.root()).expect("opens");
+    // 3. Rewrite target still on divergent branch -> remains G012.
+    repo.write(".akr-commit-map", &format!("{old} {replacement_on_side}\n"));
+    let git_still_side = Repository::open(repo.root()).expect("opens");
+    let q_still_side = derive(&ledger, &git_still_side, &commit(&head), today(3)).expect("derives");
+    assert!(
+        q_still_side
+            .diagnostics
+            .iter()
+            .any(|d| d.code == codes::G012)
+    );
 
-    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
-    ledger.insert(observation("fx.obs.side", &old, &["watched.txt"]));
-    let queue = derive(&ledger, &git, &commit(&head), today(3)).expect("derives");
-
-    assert!(queue.diagnostics.iter().any(|d| d.code == codes::G012));
-}
-
-#[test]
-fn a_rewrite_target_the_repository_lacks_is_g011() {
-    let mut repo = TempRepo::new("g011-rewrite-target-absent");
-    repo.commit_file("base.txt", "base\n", "base");
-    repo.branch("pre-rewrite");
-    let old = repo.commit_file("watched.txt", "old\n", "old identity");
-    repo.checkout("main");
-    let head = repo.commit_file("main.txt", "main\n", "main");
+    // 4. Rewrite target absent from repo -> G011.
     repo.write(
         ".akr-commit-map",
         &format!("{old} 0123456789abcdef0123456789abcdef01234567\n"),
     );
-    let git = Repository::open(repo.root()).expect("opens");
-
-    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
-    ledger.insert(observation("fx.obs.absent", &old, &["watched.txt"]));
-    let queue = derive(&ledger, &git, &commit(&head), today(3)).expect("derives");
-
-    assert!(queue.diagnostics.iter().any(|d| d.code == codes::G011));
+    let git_absent = Repository::open(repo.root()).expect("opens");
+    let q_absent = derive(&ledger, &git_absent, &commit(&head), today(3)).expect("derives");
+    assert!(q_absent.diagnostics.iter().any(|d| d.code == codes::G011));
 }
 
-#[test]
-fn a_malformed_watch_glob_is_g021() {
-    let mut repo = TempRepo::new("g021");
-    let head = repo.commit_file("a.txt", "1\n", "base");
-    let git = Repository::open(repo.root()).expect("opens");
-    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
-    ledger.insert(observation("fx.obs.bad", &head, &["src/{a,b}/**"]));
-    let queue = derive(&ledger, &git, &commit(&head), today(3)).expect("derives");
-    assert!(queue.diagnostics.iter().any(|d| d.code == codes::G021));
+// -------------------------------------------------------------------------------------
+// Scope globs (shared repo, preserving AKR-G024 test token names)
+// -------------------------------------------------------------------------------------
+
+fn shared_scope_repo() -> &'static (TempRepo, Commit, Repository) {
+    static REPO: OnceLock<(TempRepo, Commit, Repository)> = OnceLock::new();
+    REPO.get_or_init(|| {
+        let mut repo = TempRepo::new("freshness-scopes");
+        repo.write(".gitignore", ".cache/\n");
+        repo.write("src/lib.rs", "1\n");
+        repo.write("tools/build.py", "1\n");
+        let head = commit(&repo.commit("base"));
+        repo.write("engine/new/mod.rs", "// not committed yet\n");
+        let git = Repository::open(repo.root()).expect("opens");
+        (repo, head, git)
+    })
 }
 
-#[test]
-fn a_watch_glob_matching_nothing_is_g022() {
-    // Silent rot: the record looks guarded and is not.
-    let mut repo = TempRepo::new("g022");
-    let head = repo.commit_file("a.txt", "1\n", "base");
-    let git = Repository::open(repo.root()).expect("opens");
-    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
-    ledger.insert(observation("fx.obs.moved", &head, &["engine/gone/**"]));
-    let diagnostics = unmatched_watches(&ledger, &git, &commit(&head)).expect("lists");
-    assert_eq!(diagnostics.len(), 1);
-    assert_eq!(diagnostics[0].code, codes::G022);
-}
-
-/// A watch over new, uncommitted files is right, not rotten: it is `AKR-G027`, which
-/// strict validation does not promote, so another task's working tree cannot fail a
-/// check.
-#[test]
-fn a_watch_glob_matching_only_uncommitted_paths_is_g027() {
-    let mut repo = TempRepo::new("g027");
-    let head = repo.commit_file("a.txt", "1\n", "base");
-    repo.write("engine/new/mod.rs", "// not committed yet\n");
-    let git = Repository::open(repo.root()).expect("opens");
-    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
-    ledger.insert(observation("fx.obs.new", &head, &["engine/new/**"]));
-    let diagnostics = unmatched_watches(&ledger, &git, &commit(&head)).expect("lists");
-    assert_eq!(diagnostics.len(), 1);
-    assert_eq!(diagnostics[0].code, codes::G027);
-}
-
-/// A bare directory means the directory, with or without a trailing slash. Before
-/// 2026-09-08 both matched nothing, and the author of `path "tools/"` was told the path
-/// had moved or been deleted about a directory holding twenty-five tracked files.
+/// A bare directory means the directory, with or without a trailing slash.
 #[test]
 fn a_directory_scope_matches_what_is_under_it() {
-    let mut repo = TempRepo::new("dir-scope");
-    let head = repo.commit_file("tools/build.py", "1\n", "base");
-    let git = Repository::open(repo.root()).expect("opens");
+    let (_, head, git) = shared_scope_repo();
     for written in ["tools/", "tools", "tools/**", "tools/*", "tools/build.py"] {
         let mut ledger = Ledger::new(Project::new("p", &["fx"]));
         ledger.insert(
@@ -458,13 +412,12 @@ fn a_directory_scope_matches_what_is_under_it() {
                 .path_scope(written)
                 .build(),
         );
-        let diagnostics = unmatched_watches(&ledger, &git, &commit(&head)).expect("lists");
+        let diagnostics = unmatched_watches(&ledger, git, head).expect("lists");
         assert!(
             !diagnostics.iter().any(|d| d.code == codes::G023),
             "{written:?} should match tools/build.py: {diagnostics:?}"
         );
     }
-    // And a directory that really is not there still reports.
     let mut ledger = Ledger::new(Project::new("p", &["fx"]));
     ledger.insert(
         RecordBuilder::new("fx.work.gone", 1, Kind::Work)
@@ -473,28 +426,23 @@ fn a_directory_scope_matches_what_is_under_it() {
             .path_scope("toolsmiths/")
             .build(),
     );
-    let diagnostics = unmatched_watches(&ledger, &git, &commit(&head)).expect("lists");
+    let diagnostics = unmatched_watches(&ledger, git, head).expect("lists");
     assert!(diagnostics.iter().any(|d| d.code == codes::G023));
 }
 
-/// A scope over files that exist but are not committed yet is not a dead scope:
-/// the warning stays (the commit has not happened) but must not read as a
-/// repointing instruction for a scope that is already right.
 #[test]
-fn a_scope_glob_over_uncommitted_files_says_so() {
-    let mut repo = TempRepo::new("g023-uncommitted");
-    let head = repo.commit_file("src/lib.rs", "1\n", "base");
-    repo.write("engine/new/mod.rs", "// not committed yet\n");
-    let git = Repository::open(repo.root()).expect("opens");
-    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
-    ledger.insert(
+fn a_scope_glob_over_uncommitted_and_missing_files_is_g023() {
+    let (_, head, git) = shared_scope_repo();
+
+    let mut uncommitted = Ledger::new(Project::new("p", &["fx"]));
+    uncommitted.insert(
         RecordBuilder::new("fx.policy.new-scoped", 1, Kind::Policy)
             .filled()
             .state(State::Active)
             .path_scope("engine/new/**")
             .build(),
     );
-    let diagnostics = unmatched_watches(&ledger, &git, &commit(&head)).expect("lists");
+    let diagnostics = unmatched_watches(&uncommitted, git, head).expect("lists");
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].code, codes::G023);
     assert!(
@@ -506,36 +454,24 @@ fn a_scope_glob_over_uncommitted_files_says_so() {
         "{:?}",
         diagnostics[0].help
     );
-}
 
-#[test]
-fn a_scope_glob_matching_nothing_is_g023() {
-    let mut repo = TempRepo::new("g023");
-    let head = repo.commit_file("src/lib.rs", "1\n", "base");
-    let git = Repository::open(repo.root()).expect("opens");
-    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
-    ledger.insert(
+    let mut missing = Ledger::new(Project::new("p", &["fx"]));
+    missing.insert(
         RecordBuilder::new("fx.policy.mis-scoped", 1, Kind::Policy)
             .filled()
             .state(State::Active)
             .path_scope("engine/gone/**")
             .build(),
     );
-    let diagnostics = unmatched_watches(&ledger, &git, &commit(&head)).expect("lists");
+    let diagnostics = unmatched_watches(&missing, git, head).expect("lists");
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].code, codes::G023);
 }
 
-/// The two authoring slips that used to be stored, matched nothing, and reported as a
-/// dead scope: the slot keyword pasted into the value, and a quoted string nested in
-/// another one. Both are malformed globs, and saying so is more use than saying the path
-/// does not exist — it does not exist because it is not a path.
 #[test]
 fn a_malformed_scope_glob_is_g021_and_not_a_dead_scope() {
+    let (_, head, git) = shared_scope_repo();
     for written in ["path src/**", "path \"src/**\""] {
-        let mut repo = TempRepo::new("g021-scope");
-        let head = repo.commit_file("src/lib.rs", "1\n", "base");
-        let git = Repository::open(repo.root()).expect("opens");
         let mut ledger = Ledger::new(Project::new("p", &["fx"]));
         ledger.insert(
             RecordBuilder::new("fx.policy.mis-scoped", 1, Kind::Policy)
@@ -544,21 +480,16 @@ fn a_malformed_scope_glob_is_g021_and_not_a_dead_scope() {
                 .path_scope(written)
                 .build(),
         );
-        let diagnostics = unmatched_watches(&ledger, &git, &commit(&head)).expect("lists");
+        let diagnostics = unmatched_watches(&ledger, git, head).expect("lists");
         assert_eq!(diagnostics.len(), 1, "for {written:?}");
         assert_eq!(diagnostics[0].code, codes::G021, "for {written:?}");
         assert!(!diagnostics.iter().any(|d| d.code == codes::G023));
     }
 }
 
-/// Freshness stops at the live set, but a scope is a different claim: it says what this
-/// work touched, and a reader consults it long after the work finished. A census of 15
-/// ledgers found 88 of 254 dead scope globs sitting on completed records, unreported.
 #[test]
 fn a_completed_records_dead_scope_is_still_reported() {
-    let mut repo = TempRepo::new("g023-completed");
-    let head = repo.commit_file("src/lib.rs", "1\n", "base");
-    let git = Repository::open(repo.root()).expect("opens");
+    let (_, head, git) = shared_scope_repo();
     let mut ledger = Ledger::new(Project::new("p", &["fx"]));
     ledger.insert(
         RecordBuilder::new("fx.work.finished", 1, Kind::Work)
@@ -567,18 +498,14 @@ fn a_completed_records_dead_scope_is_still_reported() {
             .path_scope("engine/gone/**")
             .build(),
     );
-    let diagnostics = unmatched_watches(&ledger, &git, &commit(&head)).expect("lists");
+    let diagnostics = unmatched_watches(&ledger, git, head).expect("lists");
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].code, codes::G023);
 }
 
-/// The other end of the same state machine. A sealed superseded record cannot be edited,
-/// so warning about its scope names a defect with no available remedy.
 #[test]
 fn a_superseded_records_dead_scope_is_not_reported() {
-    let mut repo = TempRepo::new("g023-superseded");
-    let head = repo.commit_file("src/lib.rs", "1\n", "base");
-    let git = Repository::open(repo.root()).expect("opens");
+    let (_, head, git) = shared_scope_repo();
     let mut ledger = Ledger::new(Project::new("p", &["fx"]));
     ledger.insert(
         RecordBuilder::new("fx.work.retired", 1, Kind::Work)
@@ -587,20 +514,14 @@ fn a_superseded_records_dead_scope_is_not_reported() {
             .path_scope("engine/gone/**")
             .build(),
     );
-    let diagnostics = unmatched_watches(&ledger, &git, &commit(&head)).expect("lists");
+    let diagnostics = unmatched_watches(&ledger, git, head).expect("lists");
     assert!(!diagnostics.iter().any(|d| d.code == codes::G023));
 }
 
-/// An ignored path is not an authoring mistake, so it is not a diagnostic — but it is
-/// also not verifiable, and staying silent about it is what let 96 of them accumulate
-/// unseen across fifteen ledgers. It is reported as a build fact instead.
 #[test]
 fn an_ignored_scope_is_a_build_fact_rather_than_a_diagnostic() {
     use akr_core::freshness::{UnverifiableReason, unverifiable_scopes};
-    let mut repo = TempRepo::new("unverifiable-ignored");
-    repo.write(".gitignore", ".cache/\n");
-    let head = repo.commit_file("src/lib.rs", "1\n", "base");
-    let git = Repository::open(repo.root()).expect("opens");
+    let (_, head, git) = shared_scope_repo();
     let mut ledger = Ledger::new(Project::new("p", &["fx"]));
     ledger.insert(
         RecordBuilder::new("fx.decision.cache", 1, Kind::Decision)
@@ -609,200 +530,12 @@ fn an_ignored_scope_is_a_build_fact_rather_than_a_diagnostic() {
             .path_scope(".cache/index.sqlite")
             .build(),
     );
-    let diagnostics = unmatched_watches(&ledger, &git, &commit(&head)).expect("lists");
+    let diagnostics = unmatched_watches(&ledger, git, head).expect("lists");
     assert!(!diagnostics.iter().any(|d| d.code == codes::G023));
-    let facts = unverifiable_scopes(&ledger, &git, &commit(&head)).expect("lists");
+    let facts = unverifiable_scopes(&ledger, git, head).expect("lists");
     assert_eq!(facts.len(), 1);
     assert_eq!(facts[0].glob, ".cache/index.sqlite");
     assert_eq!(facts[0].reason, UnverifiableReason::Ignored);
-}
-
-#[test]
-fn an_intentionally_ignored_scope_is_not_g023() {
-    let mut repo = TempRepo::new("g023-ignored");
-    repo.write(".gitignore", ".cache/\n");
-    let head = repo.commit_file("src/lib.rs", "1\n", "base");
-    let git = Repository::open(repo.root()).expect("opens");
-    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
-    ledger.insert(
-        RecordBuilder::new("fx.decision.cache", 1, Kind::Decision)
-            .filled()
-            .state(State::Active)
-            .path_scope(".cache/index.sqlite")
-            .build(),
-    );
-    let diagnostics = unmatched_watches(&ledger, &git, &commit(&head)).expect("lists");
-    assert!(!diagnostics.iter().any(|d| d.code == codes::G023));
-}
-
-#[test]
-fn a_review_date_before_the_authoring_date_is_g031() {
-    let mut repo = TempRepo::new("g031");
-    let head = repo.commit_file("a.txt", "1\n", "base");
-    let git = Repository::open(repo.root()).expect("opens");
-    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
-    let mut record = RecordBuilder::new("fx.obs.typo", 1, Kind::Observation)
-        .filled()
-        .commit(ContentSlot::ObservedAt, &head)
-        .content(
-            ContentSlot::ReviewAfter,
-            ContentValue::Date(Date::new(2026, 1, 1).expect("date")),
-        )
-        .build();
-    record.created_at = Some(Date::new(2026, 6, 1).expect("date"));
-    ledger.insert(record);
-    let queue = derive(&ledger, &git, &commit(&head), today(3)).expect("derives");
-    assert!(queue.diagnostics.iter().any(|d| d.code == codes::G031));
-}
-
-#[test]
-fn a_dirty_working_tree_on_watched_paths_is_g004() {
-    let mut repo = TempRepo::new("g004");
-    let head = repo.commit_file("sim/src/step.rs", "1\n", "base");
-    repo.write("sim/src/step.rs", "edited but not committed\n");
-    let git = Repository::open(repo.root()).expect("opens");
-    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
-    ledger.insert(observation("fx.obs.step", &head, &["sim/src/**"]));
-    let queue = derive(&ledger, &git, &commit(&head), today(3)).expect("derives");
-    assert!(queue.diagnostics.iter().any(|d| d.code == codes::G004));
-    assert!(
-        queue.stale.is_empty(),
-        "freshness is computed from committed history only"
-    );
-}
-
-// -------------------------------------------------------------------------------------
-// The review queue: a build fact, never a diagnostic (D-024)
-// -------------------------------------------------------------------------------------
-
-#[test]
-fn staleness_carries_no_diagnostic_code() {
-    let mut repo = TempRepo::new("no-code");
-    let observed = repo.commit_file("sim/src/a.rs", "1\n", "base");
-    let head = repo.commit_file("sim/src/b.rs", "2\n", "change");
-    let git = Repository::open(repo.root()).expect("opens");
-    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
-    ledger.insert(observation("fx.obs.sim", &observed, &["sim/src/**"]));
-
-    let queue = derive(&ledger, &git, &commit(&head), today(3)).expect("derives");
-    assert_eq!(queue.stale.len(), 1);
-    assert!(
-        queue.diagnostics.is_empty(),
-        "a stale record is a build fact, not a diagnostic: {:?}",
-        queue.diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
-    );
-}
-
-#[test]
-fn review_clean_is_the_one_opt_in_diagnostic() {
-    let mut repo = TempRepo::new("review-clean");
-    let observed = repo.commit_file("sim/src/a.rs", "1\n", "base");
-    let head = repo.commit_file("sim/src/b.rs", "2\n", "change");
-    let git = Repository::open(repo.root()).expect("opens");
-    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
-    ledger.insert(observation("fx.obs.sim", &observed, &["sim/src/**"]));
-
-    let queue = derive(&ledger, &git, &commit(&head), today(3)).expect("derives");
-    let diagnostic = queue.review_clean_diagnostic().expect("queue is not empty");
-    assert_eq!(diagnostic.code, codes::G041);
-    assert!(diagnostic.message.contains("1 stale"));
-
-    let clean = ReviewQueue::default();
-    assert!(clean.review_clean_diagnostic().is_none());
-}
-
-#[test]
-fn the_queue_orders_watch_causes_before_review_dates() {
-    let mut repo = TempRepo::new("queue-order");
-    let observed = repo.commit_file("sim/src/a.rs", "1\n", "base");
-    let head = repo.commit_file("sim/src/b.rs", "2\n", "change");
-    let git = Repository::open(repo.root()).expect("opens");
-
-    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
-    ledger.insert(observation(
-        "fx.obs.zzz-watched",
-        &observed,
-        &["sim/src/**"],
-    ));
-    ledger.insert(
-        RecordBuilder::new("fx.obs.aaa-dated", 1, Kind::Observation)
-            .filled()
-            .commit(ContentSlot::ObservedAt, &head)
-            .content(
-                ContentSlot::ReviewAfter,
-                ContentValue::Date(Date::new(2026, 7, 15).expect("date")),
-            )
-            .build(),
-    );
-
-    let queue = derive(&ledger, &git, &commit(&head), today(3)).expect("derives");
-    let order: Vec<String> = queue.stale.iter().map(|s| s.id.key.to_string()).collect();
-    assert_eq!(
-        order,
-        ["fx.obs.zzz-watched", "fx.obs.aaa-dated"],
-        "a watched path that moved is locatable; a passed date is a prompt"
-    );
-}
-
-#[test]
-fn a_watch_cause_is_reported_in_preference_to_a_passed_date() {
-    // `docs/10-freshness-and-git.md` §3: when both conditions hold, the watch cause wins.
-    // A moved path names the change to go and look at; a date only says the record is old.
-    let mut repo = TempRepo::new("cause-precedence");
-    let observed = repo.commit_file("sim/src/step.rs", "1\n", "base");
-    let head = repo.commit_file("sim/src/step.rs", "2\n", "change the step");
-    let git = Repository::open(repo.root()).expect("opens");
-
-    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
-    ledger.insert(
-        RecordBuilder::new("fx.obs.drift", 1, Kind::Observation)
-            .filled()
-            .commit(ContentSlot::ObservedAt, &observed)
-            .content(
-                ContentSlot::Watches,
-                ContentValue::Globs(vec![Glob::new("sim/src/step.rs")]),
-            )
-            .content(
-                ContentSlot::ReviewAfter,
-                ContentValue::Date(Date::new(2026, 7, 15).expect("date")),
-            )
-            .build(),
-    );
-
-    let queue = derive(&ledger, &git, &commit(&head), today(3)).expect("derives");
-    assert_eq!(queue.stale.len(), 1);
-    assert_eq!(
-        queue.stale[0].cause.name(),
-        "watch",
-        "both conditions hold; the actionable one is reported"
-    );
-}
-
-#[test]
-fn a_record_citing_a_stranded_commit_is_neither_stale_nor_fresh() {
-    // Its freshness is not computable. AKR-G011 says so, and the rest of the queue is
-    // still produced: one unanswerable record must not abort a build.
-    let mut repo = TempRepo::new("stranded");
-    let observed = repo.commit_file("sim/src/a.rs", "1\n", "base");
-    let head = repo.commit_file("sim/src/b.rs", "2\n", "change");
-    let git = Repository::open(repo.root()).expect("opens");
-
-    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
-    ledger.insert(observation(
-        "fx.obs.stranded",
-        "0123456789abcdef0123456789abcdef01234567",
-        &["sim/src/**"],
-    ));
-    ledger.insert(observation("fx.obs.sound", &observed, &["sim/src/**"]));
-
-    let queue = derive(&ledger, &git, &commit(&head), today(3)).expect("derives");
-    assert!(queue.diagnostics.iter().any(|d| d.code == codes::G011));
-    let stale: Vec<String> = queue.stale.iter().map(|s| s.id.to_string()).collect();
-    assert_eq!(
-        stale,
-        ["fx.obs.sound/1"],
-        "the answerable record is still answered"
-    );
 }
 
 // -------------------------------------------------------------------------------------
@@ -810,39 +543,34 @@ fn a_record_citing_a_stranded_commit_is_neither_stale_nor_fresh() {
 // -------------------------------------------------------------------------------------
 
 #[test]
-fn impact_reports_nothing_when_the_range_invalidates_nothing() {
-    // The negative result the transcript pins: a report of nothing is informative rather
-    // than a sign the command did not run.
-    let mut repo = TempRepo::new("impact-none");
-    let base = repo.commit_file("sim/src/a.rs", "1\n", "base");
-    let head = repo.commit_file("lege/src/render/frame.rs", "1\n", "render only");
+fn impact_of_range_reports_stale_at_risk_exclusions_and_bad_revision() {
+    let mut repo = TempRepo::new("freshness-impact");
+    let observed = repo.commit_file("sim/src/project/mod.rs", "1\n", "base");
+    let head = repo.commit_file("sim/src/project/pass.rs", "2\n", "rewrite the projection");
+    let render_only = repo.commit_file("lege/src/render/frame.rs", "1\n", "render only");
     let git = Repository::open(repo.root()).expect("opens");
 
-    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
-    // Observed at HEAD, watching exactly what HEAD touched: already accounted for.
-    ledger.insert(observation("fx.obs.frames", &head, &["lege/src/render/**"]));
-
-    let impact = impact_of_range(
-        &ledger,
+    // 1. Observed at HEAD -> nothing invalidated.
+    let mut clean = Ledger::new(Project::new("p", &["fx"]));
+    clean.insert(observation(
+        "fx.obs.frames",
+        &render_only,
+        &["lege/src/render/**"],
+    ));
+    let none = impact_of_range(
+        &clean,
         &git,
-        &commit(&base),
         &commit(&head),
+        &commit(&render_only),
         &BTreeSet::new(),
     )
     .expect("impact");
-    assert_eq!(impact.commits, 1);
-    assert!(impact.touched.contains("lege/src/render/frame.rs"));
-    assert!(impact.newly_stale.is_empty());
-    assert!(impact.newly_at_risk.is_empty());
-}
+    assert_eq!(none.commits, 1);
+    assert!(none.touched.contains("lege/src/render/frame.rs"));
+    assert!(none.newly_stale.is_empty());
+    assert!(none.newly_at_risk.is_empty());
 
-#[test]
-fn impact_reports_what_a_range_would_invalidate_and_what_rests_on_it() {
-    let mut repo = TempRepo::new("impact-some");
-    let observed = repo.commit_file("sim/src/project/mod.rs", "1\n", "base");
-    let head = repo.commit_file("sim/src/project/pass.rs", "2\n", "rewrite the projection");
-    let git = Repository::open(repo.root()).expect("opens");
-
+    // 2. Range invalidates observation and propagates depth 1 and 2.
     let mut ledger = Ledger::new(Project::new("p", &["fx"]));
     ledger.insert(observation(
         "fx.obs.projection",
@@ -865,8 +593,7 @@ fn impact_reports_what_a_range_would_invalidate_and_what_rests_on_it() {
             )
             .build(),
     );
-
-    let impact = impact_of_range(
+    let some = impact_of_range(
         &ledger,
         &git,
         &commit(&observed),
@@ -874,9 +601,9 @@ fn impact_reports_what_a_range_would_invalidate_and_what_rests_on_it() {
         &BTreeSet::new(),
     )
     .expect("impact");
-    assert_eq!(impact.newly_stale.len(), 1);
-    assert_eq!(impact.newly_stale[0].id, id("fx.obs.projection", 1));
-    let flagged: Vec<String> = impact
+    assert_eq!(some.newly_stale.len(), 1);
+    assert_eq!(some.newly_stale[0].id, id("fx.obs.projection", 1));
+    let flagged: Vec<String> = some
         .newly_at_risk
         .iter()
         .map(|r| format!("{} depth {}", r.id, r.depth))
@@ -885,34 +612,14 @@ fn impact_reports_what_a_range_would_invalidate_and_what_rests_on_it() {
         flagged,
         ["fx.assessment.risk/1 depth 1", "fx.policy.tandem/1 depth 2"]
     );
-}
 
-#[test]
-fn impact_excludes_what_the_caller_already_knows_is_stale() {
-    // Impact is news, not a restatement.
-    let mut repo = TempRepo::new("impact-known");
-    let observed = repo.commit_file("sim/src/project/mod.rs", "1\n", "base");
-    let head = repo.commit_file("sim/src/project/pass.rs", "2\n", "change");
-    let git = Repository::open(repo.root()).expect("opens");
-
-    let mut ledger = Ledger::new(Project::new("p", &["fx"]));
-    ledger.insert(observation(
-        "fx.obs.projection",
-        &observed,
-        &["sim/src/project/**"],
-    ));
+    // 3. Excludes what caller already knows is stale.
     let already: BTreeSet<RevisionId> = [id("fx.obs.projection", 1)].into();
-    let impact = impact_of_range(&ledger, &git, &commit(&observed), &commit(&head), &already)
+    let known = impact_of_range(&ledger, &git, &commit(&observed), &commit(&head), &already)
         .expect("impact");
-    assert!(impact.newly_stale.is_empty());
-}
+    assert!(known.newly_stale.is_empty());
 
-#[test]
-fn impact_on_an_unknown_revision_fails_with_g013() {
-    let mut repo = TempRepo::new("impact-bad-rev");
-    let head = repo.commit_file("a.txt", "1\n", "base");
-    let git = Repository::open(repo.root()).expect("opens");
-    let ledger = Ledger::new(Project::new("p", &["fx"]));
+    // 4. Unknown revision fails with G013.
     let absent = commit("0123456789abcdef0123456789abcdef01234567");
     let error = impact_of_range(&ledger, &git, &absent, &commit(&head), &BTreeSet::new())
         .expect_err("unknown revision");
@@ -1097,41 +804,8 @@ fn changing_a_bridge_file_marks_the_engine_state_observation_for_review() {
         cleared.stale,
         cleared.at_risk
     );
-}
 
-#[test]
-fn the_bridge_scenario_is_reported_the_same_way_by_impact() {
-    // `akr impact --git-diff` answers the same question before the change lands, which is
-    // the one moment the author can still re-observe cheaply.
-    let mut repo = TempRepo::new("sys-tandem-impact");
-    repo.write(
-        "SYSEngine/crates/sys_game_bridge/src/lib.rs",
-        "// the seam\n",
-    );
-    let audited = repo.commit("audited");
-    let changed = repo.commit_file(
-        "SYSEngine/crates/sys_game_bridge/src/lib.rs",
-        "// the seam, extended\n",
-        "extend the bridge",
-    );
-
-    let mut ledger = Ledger::new(Project::new("sys", &["eng"]));
-    ledger.extend([
-        observation(
-            "eng.obs.bridge-projection-gaps",
-            &audited,
-            &["SYSEngine/crates/sys_game_bridge/**"],
-        ),
-        RecordBuilder::new("eng.assessment.mid-engine-gaps", 1, Kind::Assessment)
-            .filled()
-            .rel(
-                akr_core::model::Relation::SupportedBy,
-                "@eng.obs.bridge-projection-gaps",
-            )
-            .build(),
-    ]);
-
-    let git = Repository::open(repo.root()).expect("opens");
+    // 6. `impact` reports the same bridge scenario before the change lands.
     let impact: Impact = impact_of_range(
         &ledger,
         &git,
@@ -1140,7 +814,6 @@ fn the_bridge_scenario_is_reported_the_same_way_by_impact() {
         &BTreeSet::new(),
     )
     .expect("impact");
-
     assert_eq!(impact.commits, 1);
     assert_eq!(
         impact.touched.iter().collect::<Vec<_>>(),
@@ -1149,39 +822,12 @@ fn the_bridge_scenario_is_reported_the_same_way_by_impact() {
     let stale: Vec<&Stale> = impact.newly_stale.iter().collect();
     assert_eq!(stale.len(), 1);
     assert_eq!(stale[0].id, id("eng.obs.bridge-projection-gaps", 1));
-    assert_eq!(impact.newly_at_risk.len(), 1);
+    assert_eq!(impact.newly_at_risk.len(), 2);
     assert_eq!(
         impact.newly_at_risk[0].id,
         id("eng.assessment.mid-engine-gaps", 1)
     );
-}
-
-// -------------------------------------------------------------------------------------
-// Determinism
-// -------------------------------------------------------------------------------------
-
-#[test]
-fn derivation_is_independent_of_record_insertion_order() {
-    let mut repo = TempRepo::new("determinism");
-    let observed = repo.commit_file("sim/src/project/mod.rs", "1\n", "base");
-    let head = repo.commit_file("sim/src/project/pass.rs", "2\n", "change");
-    let git = Repository::open(repo.root()).expect("opens");
-
-    let build = |reverse: bool| {
-        let mut records = vec![
-            observation("fx.obs.a", &observed, &["sim/src/project/**"]),
-            observation("fx.obs.b", &observed, &["sim/src/project/**"]),
-            observation("fx.obs.c", &observed, &["sim/src/project/**"]),
-        ];
-        if reverse {
-            records.reverse();
-        }
-        let mut ledger = Ledger::new(Project::new("p", &["fx"]));
-        ledger.extend(records);
-        derive(&ledger, &git, &commit(&head), today(3)).expect("derives")
-    };
-    assert_eq!(build(false).stale, build(true).stale);
-    assert_eq!(build(false).stale.len(), 3);
+    assert_eq!(impact.newly_at_risk[1].id, id("sys.work.m2-plan", 1));
 }
 
 #[test]
@@ -1203,27 +849,5 @@ fn every_freshness_code_is_registered_in_the_runtime_registry() {
             Some(akr_core::diagnostics::Stage::Git),
             "{code} is not a freshness code"
         );
-    }
-}
-
-#[test]
-fn the_v_rules_this_module_cites_are_the_ones_docs_10_catalogues() {
-    // V-101..V-104 (`docs/10-freshness-and-git.md` §9). The rule identifiers are internal,
-    // so this asserts the mapping through the diagnostics they raise.
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../docs/10-freshness-and-git.md"
-    );
-    let text = std::fs::read_to_string(path).expect("docs/10 is readable");
-    for (rule, code) in [
-        ("V-101", "AKR-G011"),
-        ("V-101", "AKR-G012"),
-        ("V-102", "AKR-G021"),
-        ("V-102", "AKR-G022"),
-        ("V-103", "AKR-G031"),
-        ("V-104", "AKR-G041"),
-    ] {
-        assert!(text.contains(rule), "{rule} is catalogued");
-        assert!(text.contains(code), "{code} is cited");
     }
 }

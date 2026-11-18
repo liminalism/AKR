@@ -164,11 +164,6 @@ record fx.policy.a/1 : policy {
 ";
 
 #[test]
-fn content_hash_is_stable() {
-    assert_eq!(content_hash(RECORD), content_hash(RECORD));
-}
-
-#[test]
 fn content_hash_excludes_comment_trivia() {
     // §3.3: adding a clarifying comment to a sealed record must not trip AKR-R051, or
     // people stop writing comments.

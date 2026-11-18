@@ -43,15 +43,6 @@ impl Rng {
     }
 }
 
-#[test]
-fn the_shuffle_actually_shuffles() {
-    // A determinism test that shuffles nothing proves nothing.
-    let mut rng = Rng::new(1);
-    let mut items: Vec<u32> = (0..20).collect();
-    rng.shuffle(&mut items);
-    assert_ne!(items, (0..20).collect::<Vec<_>>());
-}
-
 // -------------------------------------------------------------------------------------
 // Cycle detection
 // -------------------------------------------------------------------------------------

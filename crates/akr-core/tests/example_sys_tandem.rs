@@ -11,7 +11,7 @@
 //! - **Freshness at scale.** One observation goes stale against the synthetic history and
 //!   the doubt reaches four records along three relations, including a live policy.
 
-mod support;
+use crate::support;
 
 use akr_core::diagnostics::FileId;
 use akr_core::freshness::derive;
@@ -22,15 +22,19 @@ use akr_core::syntax::{format, parse};
 use akr_core::validate;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use support::{Step, SyntheticHistory};
 
 fn example_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/sys-tandem")
 }
 
-fn workspace() -> Workspace {
-    let root = example_root();
-    load_workspace(&root, &root.join(".akr")).expect("the tandem example loads")
+fn workspace() -> &'static Workspace {
+    static WORKSPACE: OnceLock<Workspace> = OnceLock::new();
+    WORKSPACE.get_or_init(|| {
+        let root = example_root();
+        load_workspace(&root, &root.join(".akr")).expect("the tandem example loads")
+    })
 }
 
 /// C5 and the frozen "today" of `MANIFEST.md` §3. Inputs, not clock readings.
@@ -351,7 +355,8 @@ fn stale_set(ledger: &Ledger, history: &SyntheticHistory) -> BTreeSet<RevisionId
 }
 
 #[test]
-fn staleness_reaches_the_policy_that_rests_on_it() {
+fn staleness_reaches_the_policy_along_carrying_relations_only() {
+    use akr_core::model::Relation;
     let workspace = workspace();
     let history = history();
     let ledger = history.remap(&workspace.ledger, MAPPING);
@@ -378,25 +383,14 @@ fn staleness_reaches_the_policy_that_rests_on_it() {
         .find(|r| r.id == id("tandem.policy.tandem-work", 1))
         .expect("the tandem policy is at risk");
     assert_eq!(policy.depth, 2, "policy -> assessment -> observation");
-    assert_eq!(policy.via, akr_core::model::Relation::SupportedBy);
+    assert_eq!(policy.via, Relation::SupportedBy);
     assert_eq!(
         policy.path.last(),
         Some(&id("engine.obs.channel-coverage", 1)),
         "the path must end at the stale observation"
     );
-}
 
-/// Every live record the doubt reaches is reached through a relation that carries it.
-///
-/// D-024 propagates along `supported_by`, `depends_on` and `derived_from` and no others,
-/// so a milestone is never flagged merely for being `after` something stale.
-#[test]
-fn doubt_travels_only_along_the_three_relations_that_carry_it() {
-    use akr_core::model::Relation;
-    let workspace = workspace();
-    let history = history();
-    let ledger = history.remap(&workspace.ledger, MAPPING);
-    let at_risk = propagate_staleness(&ledger, &stale_set(&ledger, &history));
+    // D-024 propagates along `supported_by`, `depends_on` and `derived_from` and no others.
     assert!(!at_risk.is_empty());
     for flagged in &at_risk {
         assert!(
@@ -409,8 +403,6 @@ fn doubt_travels_only_along_the_three_relations_that_carry_it() {
             flagged.via
         );
     }
-    // Nothing in the milestone chain is flagged: `after` and `part_of` do not carry it,
-    // which is what keeps the warning from firing on half the project.
     assert!(
         !at_risk
             .iter()

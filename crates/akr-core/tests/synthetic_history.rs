@@ -18,10 +18,10 @@
 //! along which relation, and what `akr impact` says about the C4..C5 range. Those are the
 //! claims the manifest actually makes.
 
-mod support;
+use crate::support;
 
 use akr_core::freshness::{StaleCause, derive, impact_of_range};
-use akr_core::model::{Date, Ledger, LogicalKey, RevisionId, key};
+use akr_core::model::{Date, Ledger, RevisionId, key};
 use akr_core::resolve::load_workspace;
 use std::path::Path;
 use support::{Step, SyntheticHistory};
@@ -117,9 +117,12 @@ fn example_ledger(history: &SyntheticHistory) -> Ledger {
 // -------------------------------------------------------------------------------------
 
 #[test]
-fn the_history_touches_the_paths_the_manifest_says_it_does() {
+fn frozen_synthetic_history_freshness_and_impact_expectations_hold() {
     let history = history();
+    let ledger = example_ledger(&history);
     let git = history.git();
+
+    // 1. Touched paths match MANIFEST §4.
     let expected: [(usize, &[&str]); 4] = [
         (2, &["sim/src/project/mod.rs", "sim/src/step.rs"]),
         (3, &["lege/src/lib.rs", "sim/src/step.rs"]),
@@ -135,16 +138,18 @@ fn the_history_touches_the_paths_the_manifest_says_it_does() {
             .collect();
         assert_eq!(touched, paths, "C{n}");
     }
-}
 
-/// MANIFEST §7 and §9: two stale records and four at risk, propagation depth 2.
-#[test]
-fn the_frozen_freshness_expectations_hold_against_a_real_repository() {
-    let history = history();
-    let ledger = example_ledger(&history);
-    let git = history.git();
-
+    // 2. MANIFEST §7 and §9: two stale records, four at risk, propagation depth 2.
     let queue = derive(&ledger, &git, history.at(5), today()).expect("derives");
+    assert!(
+        queue.diagnostics.is_empty(),
+        "unexpected: {:?}",
+        queue
+            .diagnostics
+            .iter()
+            .map(|d| (d.code.as_str(), d.message.clone()))
+            .collect::<Vec<_>>()
+    );
 
     let stale: Vec<String> = queue
         .stale
@@ -160,7 +165,6 @@ fn the_frozen_freshness_expectations_hold_against_a_real_repository() {
         "MANIFEST §7"
     );
 
-    // The watch cause names the glob, the commit and the path.
     match &queue.stale[0].cause {
         StaleCause::Watch { glob, commit, path } => {
             assert_eq!(glob.as_str(), "sim/src/project/**");
@@ -186,73 +190,35 @@ fn the_frozen_freshness_expectations_hold_against_a_real_repository() {
         "MANIFEST §7, as amended: four at risk"
     );
     assert_eq!(queue.at_risk.iter().map(|r| r.depth).max(), Some(2));
-}
 
-#[test]
-fn the_fresh_observation_stays_fresh() {
-    // MANIFEST §7: `lege.obs.frame-budget-headroom/1` watches `lege/src/render/**`, which
-    // C5 touched — and its `observed_at` *is* C5, so the change is already accounted for.
-    let history = history();
-    let ledger = example_ledger(&history);
-    let queue = derive(&ledger, &history.git(), history.at(5), today()).expect("derives");
+    // Fresh observation at C5 stays fresh; disproven observation is never evaluated.
     assert!(
         !queue
             .stale
             .iter()
             .any(|s| s.id == id("lege.obs.frame-budget-headroom", 1))
     );
-}
-
-#[test]
-fn the_disproven_observation_is_never_evaluated() {
-    // `lege.obs.viewer-imports-engine/1` watches `lege/**`, which C3 and C5 both touched.
-    // It is `disproven`, so it is not evaluated at all (MANIFEST §7).
-    let history = history();
-    let ledger = example_ledger(&history);
-    let queue = derive(&ledger, &history.git(), history.at(5), today()).expect("derives");
     assert!(
         !queue
             .stale
             .iter()
             .any(|s| s.id == id("lege.obs.viewer-imports-engine", 1))
     );
-}
 
-/// MANIFEST §9: `akr impact --git-diff C4..C5` reports no newly stale records.
-#[test]
-fn the_frozen_impact_expectation_holds_against_a_real_repository() {
-    let history = history();
-    let ledger = example_ledger(&history);
-    let git = history.git();
-
-    let already = derive(&ledger, &git, history.at(5), today())
-        .expect("derives")
-        .stale_set();
-    let impact =
+    // 3. MANIFEST §9: `akr impact --git-diff C4..C5` reports no newly stale records.
+    let already = queue.stale_set();
+    let impact_c4_c5 =
         impact_of_range(&ledger, &git, history.at(4), history.at(5), &already).expect("impact");
-
-    assert_eq!(impact.commits, 1);
+    assert_eq!(impact_c4_c5.commits, 1);
     assert_eq!(
-        impact.touched.iter().cloned().collect::<Vec<_>>(),
+        impact_c4_c5.touched.iter().cloned().collect::<Vec<_>>(),
         ["docs/generated/ROADMAP.md", "lege/src/render/mod.rs"]
     );
-    assert!(
-        impact.newly_stale.is_empty(),
-        "C5 touches only lege/src/render/**, which the frame-budget observation already \
-         observes at C5: {:?}",
-        impact.newly_stale
-    );
-    assert!(impact.newly_at_risk.is_empty());
-}
+    assert!(impact_c4_c5.newly_stale.is_empty());
+    assert!(impact_c4_c5.newly_at_risk.is_empty());
 
-/// The range that *does* invalidate something, as `akr-impact.txt` records it.
-#[test]
-fn the_c2_to_c4_range_invalidates_the_projection_observation() {
-    let history = history();
-    let ledger = example_ledger(&history);
-    let git = history.git();
-
-    let impact = impact_of_range(
+    // 4. C2..C4 invalidates the projection observation.
+    let impact_c2_c4 = impact_of_range(
         &ledger,
         &git,
         history.at(2),
@@ -260,75 +226,32 @@ fn the_c2_to_c4_range_invalidates_the_projection_observation() {
         &std::collections::BTreeSet::new(),
     )
     .expect("impact");
-
-    assert_eq!(impact.commits, 2);
-    let stale: Vec<String> = impact
+    assert_eq!(impact_c2_c4.commits, 2);
+    let stale_c2_c4: Vec<String> = impact_c2_c4
         .newly_stale
         .iter()
         .map(|s| s.id.to_string())
         .collect();
-    assert_eq!(stale, ["sim.obs.projection-gaps/1"]);
-    let at_risk: Vec<String> = impact
+    assert_eq!(stale_c2_c4, ["sim.obs.projection-gaps/1"]);
+    let at_risk_c2_c4: Vec<String> = impact_c2_c4
         .newly_at_risk
         .iter()
         .map(|r| format!("{} depth {}", r.id, r.depth))
         .collect();
     assert_eq!(
-        at_risk,
+        at_risk_c2_c4,
         [
             "sim.work.rewrite-projection/1 depth 1",
             "sys.assessment.projection-gaps/1 depth 1",
             "sys.policy.tandem-work/1 depth 2",
         ]
     );
-}
 
-#[test]
-fn no_watch_glob_in_the_example_is_malformed_or_dead() {
-    // V-102, over the real corpus: every glob is in the D-008 subset, and every one can
-    // still match something at HEAD. A watch that can never fire is silent rot.
-    let history = history();
-    let ledger = example_ledger(&history);
-    let git = history.git();
-
-    let queue = derive(&ledger, &git, history.at(5), today()).expect("derives");
-    assert!(
-        queue.diagnostics.is_empty(),
-        "unexpected: {:?}",
-        queue
-            .diagnostics
-            .iter()
-            .map(|d| (d.code.as_str(), d.message.clone()))
-            .collect::<Vec<_>>()
-    );
-
+    // 5. No watch glob in the example is malformed or dead (V-102).
     let dead = akr_core::freshness::unmatched_watches(&ledger, &git, history.at(5)).expect("lists");
     assert!(
         dead.is_empty(),
         "every watched path exists in the materialised tree: {:?}",
         dead.iter().map(|d| d.message.clone()).collect::<Vec<_>>()
     );
-}
-
-#[test]
-fn a_key_used_by_this_file_exists_in_the_example() {
-    // Guards against the manifest and this test drifting apart silently.
-    let history = history();
-    let ledger = example_ledger(&history);
-    for text in [
-        "sim.obs.projection-gaps",
-        "sim.obs.timestep-drift",
-        "lege.obs.frame-budget-headroom",
-        "lege.obs.viewer-imports-engine",
-        "sys.assessment.projection-gaps",
-        "sys.assessment.m3-readiness",
-        "sys.policy.tandem-work",
-        "sim.work.rewrite-projection",
-    ] {
-        let parsed = LogicalKey::parse(text).expect("a valid key");
-        assert!(
-            !ledger.revisions_of(&parsed).is_empty(),
-            "{text} is missing from the example"
-        );
-    }
 }

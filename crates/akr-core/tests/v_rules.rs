@@ -1,6 +1,49 @@
 //! Exit criterion 2: every rule `V-001`..`V-026` has at least one passing and one
 //! failing case, built entirely from model builders with no text format in sight.
 
+#[path = "codes_registry.rs"]
+mod codes_registry;
+#[path = "emit.rs"]
+mod emit;
+#[path = "evidence_attachment.rs"]
+mod evidence_attachment;
+#[path = "fixture_corpus.rs"]
+mod fixture_corpus;
+#[path = "fixtures_format.rs"]
+mod fixtures_format;
+#[path = "fixtures_parse.rs"]
+mod fixtures_parse;
+#[path = "graph_determinism.rs"]
+mod graph_determinism;
+#[path = "hashing.rs"]
+mod hashing;
+#[path = "import_extract.rs"]
+mod import_extract;
+#[path = "lexer_fuzz.rs"]
+mod lexer_fuzz;
+#[path = "lifecycle_properties.rs"]
+mod lifecycle_properties;
+#[path = "lock_roundtrip.rs"]
+mod lock_roundtrip;
+#[path = "lowering.rs"]
+mod lowering;
+#[path = "no_text_format.rs"]
+mod no_text_format;
+#[path = "render.rs"]
+mod render;
+#[path = "render_roadmap.rs"]
+mod render_roadmap;
+#[path = "resolved_model.rs"]
+mod resolved_model;
+#[path = "round_trip.rs"]
+mod round_trip;
+#[path = "scope_properties.rs"]
+mod scope_properties;
+#[path = "vocabulary.rs"]
+mod vocabulary;
+#[path = "worked_example.rs"]
+mod worked_example;
+
 use akr_core::diagnostics::{Code, Diagnostic, codes as c};
 use akr_core::model::{
     Acceptance, CheckMethod, ContentHash, ContentSlot, ContentValue, Kind, Ledger, Outcome,

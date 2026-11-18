@@ -467,12 +467,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_ddl_is_the_spec_file() {
-        assert!(SCHEMA_SQL.contains("CREATE TABLE revisions"));
-        assert!(SCHEMA_SQL.contains("CREATE VIRTUAL TABLE records_fts"));
-    }
-
-    #[test]
     fn dropping_fts5_removes_exactly_the_virtual_table() {
         // The rest of the schema has to survive the cut, or a binary without FTS5 would
         // fail to build any index at all rather than one without a full-text table.

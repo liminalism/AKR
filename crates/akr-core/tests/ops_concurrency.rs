@@ -13,7 +13,7 @@
 //! record and gains another counts the same — so each test checks that every key it asked
 //! for is present.
 
-mod ops_support;
+use crate::ops_support;
 
 use akr_core::model::{ContentSlot, ContentValue, Kind, Record, RecordBuilder, key};
 use akr_core::ops::{self, WriteContext};

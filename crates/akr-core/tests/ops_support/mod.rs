@@ -45,7 +45,7 @@ impl Sandbox {
         let root =
             std::env::temp_dir().join(format!("akr-ops-{example}-{}-{unique}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        copy_dir(&source, &root.join(".akr")).expect("the example copies");
+        copy_akr_dir(&source, &root.join(".akr")).expect("the example copies");
         Self { root }
     }
 
@@ -127,6 +127,28 @@ fn walk(dir: &Path, base: &Path, out: &mut Vec<PathBuf>) {
             out.push(path.strip_prefix(base).unwrap_or(&path).to_path_buf());
         }
     }
+}
+
+/// Copies `.akr/` excluding top-level `cache` and `secrets` directories so tests never
+/// duplicate the 241 KB `cache/index.sqlite` that `ops` never reads.
+fn copy_akr_dir(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if entry.path().is_dir()
+            && (name.eq_ignore_ascii_case("cache") || name.eq_ignore_ascii_case("secrets"))
+        {
+            continue;
+        }
+        let target = to.join(name);
+        if entry.path().is_dir() {
+            copy_dir(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), &target)?;
+        }
+    }
+    Ok(())
 }
 
 fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {

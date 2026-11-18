@@ -265,7 +265,7 @@ fn load_rewrites(root: &Path) -> Result<BTreeMap<String, Commit>, GitError> {
 /// This matters more than it looks: freshness asks the same ancestry questions once per
 /// record per watched path, and on Windows every answer that is not memoised costs a
 /// process creation — hundreds of them, which is seconds of wall clock.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct Memo {
     /// Object name -> does it resolve.
     exists: BTreeMap<String, bool>,
@@ -302,8 +302,18 @@ struct Memo {
     session: Option<(CommitBrief, Option<CommitBrief>)>,
 }
 
+impl Memo {
+    /// Drops only working-tree and movable-ref entries, keeping immutable commit-graph
+    /// and object-store facts anchored to the same `HEAD`.
+    fn clear_worktree(&mut self) {
+        self.worktree = None;
+        self.ignored.clear();
+        self.revisions.retain(|k, _| k == "HEAD");
+    }
+}
+
 /// The commits of one range `(from, to]` and their parents, from a single `rev-list`.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct RangeGraph {
     /// The range it describes, as the `rev-list` argument.
     range: String,
@@ -413,6 +423,11 @@ static SHARED: Mutex<BTreeMap<PathBuf, SharedMemo>> = Mutex::new(BTreeMap::new()
 struct SharedMemo {
     /// `HEAD` plus the working-tree state that the memo was built against.
     key: String,
+    /// `HEAD` commit hash when known, used to share immutable commit-graph memos across
+    /// working-tree edits and cloned fixtures at the same commit.
+    head: Option<String>,
+    /// Reviewed rewrite pairs active for this memo.
+    rewrites: Arc<BTreeMap<String, Commit>>,
     memo: Arc<Mutex<Memo>>,
 }
 
@@ -436,21 +451,56 @@ impl Repository {
     /// As [`Repository::open`].
     pub fn shared(path: &Path) -> Result<Self, GitError> {
         let (probe, head) = Self::open_with_head(path)?;
-        let (key, status) = probe.worktree_key(head);
+        let (key, status) = probe.worktree_key(head.clone());
         let mut registry = SHARED.lock().unwrap_or_else(|error| error.into_inner());
-        let entry = registry
-            .entry(probe.root.clone())
-            .or_insert_with(|| SharedMemo {
-                key: key.clone(),
-                memo: Arc::default(),
-            });
-        if entry.key != key {
-            entry.key = key;
-            entry.memo = Arc::default();
-        }
+        let memo = if let Some(entry) = registry.get_mut(&probe.root) {
+            if entry.key != key {
+                entry.key = key;
+                if entry.head == head && head.is_some() && entry.rewrites == probe.rewrites {
+                    entry
+                        .memo
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .clear_worktree();
+                } else {
+                    entry.head = head;
+                    entry.rewrites = probe.rewrites.clone();
+                    entry.memo = Arc::default();
+                }
+            }
+            entry.memo.clone()
+        } else {
+            let seeded = if head.is_some() {
+                registry
+                    .values()
+                    .find(|existing| existing.head == head && existing.rewrites == probe.rewrites)
+                    .map(|existing| {
+                        let mut cloned = existing
+                            .memo
+                            .lock()
+                            .unwrap_or_else(|error| error.into_inner())
+                            .clone();
+                        cloned.clear_worktree();
+                        Arc::new(Mutex::new(cloned))
+                    })
+            } else {
+                None
+            };
+            let memo = seeded.unwrap_or_default();
+            registry.insert(
+                probe.root.clone(),
+                SharedMemo {
+                    key,
+                    head,
+                    rewrites: probe.rewrites.clone(),
+                    memo: memo.clone(),
+                },
+            );
+            memo
+        };
         let repository = Self {
             root: probe.root,
-            memo: entry.memo.clone(),
+            memo,
             rewrites: probe.rewrites,
             facts: None,
         };
@@ -2676,11 +2726,13 @@ pub fn definition_facts_cached(
                         out.last_change.insert(id, commit);
                     }
                     None => {
-                        if at_head.is_none() {
+                        if timeline.is_some() && at_head.is_none() {
                             at_head = Some(head_maps(repository, &path, &keys)?);
                         }
-                        let maps = at_head.as_ref().expect("filled just above");
-                        if !held_at(maps, &key, revision, &hash) {
+                        let held = at_head
+                            .as_ref()
+                            .is_some_and(|maps| held_at(maps, &key, revision, &hash));
+                        if !held {
                             out.uncommitted.insert(id);
                         }
                     }

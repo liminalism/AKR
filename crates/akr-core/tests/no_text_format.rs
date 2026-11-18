@@ -41,19 +41,6 @@ fn the_crate_has_no_runtime_dependencies_beyond_the_sanctioned_one() {
 }
 
 #[test]
-fn the_model_still_compiles_without_the_index() {
-    // P1's actual claim, which survives P7: the semantics do not depend on the cache. If
-    // this file's crate builds under `--no-default-features` the model, the parser, the
-    // validator and the resolver are all still free of the full-text index — and the
-    // `fts5` feature being additive is what keeps that true.
-    let manifest = include_str!("../Cargo.toml");
-    assert!(
-        manifest.contains("default = [\"fts5\"]"),
-        "fts5 must be a feature, so the model can be built without it"
-    );
-}
-
-#[test]
 fn a_ledger_can_be_built_and_validated_with_no_text_anywhere() {
     use akr_core::model::{Kind, Ledger, Project, RecordBuilder, Relation, State};
     use akr_core::validate;

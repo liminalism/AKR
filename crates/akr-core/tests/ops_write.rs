@@ -6,6 +6,17 @@
 
 mod ops_support;
 
+#[path = "ops_atomicity.rs"]
+mod ops_atomicity;
+#[path = "ops_concurrency.rs"]
+mod ops_concurrency;
+#[path = "secrets.rs"]
+mod secrets;
+#[path = "store_index.rs"]
+mod store_index;
+#[path = "store_schema.rs"]
+mod store_schema;
+
 use akr_core::model::{
     Class, Commit, ContentSlot, ContentValue, Kind, Outcome as DispositionOutcome, Record,
     RecordBuilder, Reference, Relation, RevisionId, Segment, State, key,
@@ -68,15 +79,56 @@ fn propose_creates_revision_one_in_the_conventional_file() {
 }
 
 #[test]
-fn propose_refuses_an_existing_key() {
+fn propose_refuses_invalid_or_duplicate_proposals_without_writing() {
     let sandbox = Sandbox::save_your_skin();
     let context = WriteContext::new(sandbox.akr_dir());
-    let target = key("sys.term.playable-day");
+    let before = sandbox.snapshot();
 
-    let refused = ops::propose(&context, &target, Kind::Policy, "again", None)
-        .expect_err("the key already exists");
+    let refused = ops::propose(
+        &context,
+        &key("sys.term.playable-day"),
+        Kind::Policy,
+        "again",
+        None,
+    )
+    .expect_err("the key already exists");
     assert_eq!(refused.code.as_str(), "AKR-L041");
     assert!(refused.help.is_some_and(|h| h.contains("akr revise")));
+
+    // No `rule`, which V-008 requires of a policy. A bare proposal is refused rather
+    // than written with a placeholder body.
+    let refused = ops::propose(
+        &context,
+        &key("sys.policy.bare"),
+        Kind::Policy,
+        "Bare",
+        None,
+    )
+    .expect_err("a policy with no rule does not validate");
+    assert_eq!(refused.code.as_str(), "AKR-C031");
+    assert!(
+        refused
+            .diagnostics
+            .iter()
+            .any(|d| d.code.as_str() == "AKR-T001")
+    );
+
+    let refused = ops::propose(
+        &context,
+        &key("nope.policy.stranger"),
+        Kind::Policy,
+        "Stranger",
+        Some(term("nope.policy.stranger", "Stranger")),
+    )
+    .expect_err("the namespace is not declared");
+    assert!(
+        refused
+            .diagnostics
+            .iter()
+            .any(|d| d.code.as_str() == "AKR-L004")
+    );
+
+    assert_eq!(before, sandbox.snapshot(), "refusals write nothing");
 }
 
 #[test]
@@ -118,44 +170,6 @@ fn propose_many_rejects_a_duplicate_without_writing_anything() {
     let refused = ops::propose_many(&context, &records).expect_err("duplicate batch key");
     assert_eq!(refused.code.as_str(), "AKR-L041");
     assert_eq!(before, sandbox.snapshot(), "a refused batch writes nothing");
-}
-
-#[test]
-fn propose_refuses_a_record_that_would_not_validate() {
-    let sandbox = Sandbox::save_your_skin();
-    let context = WriteContext::new(sandbox.akr_dir());
-
-    // No `definition`, which V-008 requires of a term. A bare proposal is refused rather
-    // than written with a placeholder body.
-    let refused = ops::propose(&context, &key("sys.term.bare"), Kind::Policy, "Bare", None)
-        .expect_err("a term with no definition does not validate");
-    assert_eq!(refused.code.as_str(), "AKR-C031");
-    assert!(
-        refused
-            .diagnostics
-            .iter()
-            .any(|d| d.code.as_str() == "AKR-T001")
-    );
-}
-
-#[test]
-fn propose_refuses_an_undeclared_namespace() {
-    let sandbox = Sandbox::save_your_skin();
-    let context = WriteContext::new(sandbox.akr_dir());
-    let refused = ops::propose(
-        &context,
-        &key("nope.term.stranger"),
-        Kind::Policy,
-        "Stranger",
-        Some(term("nope.term.stranger", "Stranger")),
-    )
-    .expect_err("the namespace is not declared");
-    assert!(
-        refused
-            .diagnostics
-            .iter()
-            .any(|d| d.code.as_str() == "AKR-L004")
-    );
 }
 
 // -------------------------------------------------------------------------------------
@@ -344,9 +358,11 @@ fn revise_repoints_non_historical_pins_and_leaves_historical_ones() {
 }
 
 #[test]
-fn revise_refuses_an_in_place_edit_of_a_sealed_head() {
+fn revise_refuses_sealed_in_place_and_unknown_key() {
     let sandbox = Sandbox::save_your_skin();
     let context = WriteContext::new(sandbox.akr_dir());
+    let before = sandbox.snapshot();
+
     let refused = ops::revise(
         &context,
         &key("sys.term.playable-day"),
@@ -358,12 +374,7 @@ fn revise_refuses_an_in_place_edit_of_a_sealed_head() {
     )
     .expect_err("sealed bodies are immutable");
     assert_eq!(refused.code.as_str(), "AKR-C032");
-}
 
-#[test]
-fn revise_refuses_an_unknown_key() {
-    let sandbox = Sandbox::save_your_skin();
-    let context = WriteContext::new(sandbox.akr_dir());
     let refused = ops::revise(
         &context,
         &key("sys.term.absent"),
@@ -372,6 +383,7 @@ fn revise_refuses_an_unknown_key() {
     )
     .expect_err("there is nothing to revise");
     assert_eq!(refused.code.as_str(), "AKR-L001");
+    assert_eq!(before, sandbox.snapshot(), "refusals write nothing");
 }
 
 // -------------------------------------------------------------------------------------
@@ -1698,7 +1710,9 @@ fn trace_appends_to_a_sealed_head_in_place_without_a_new_revision() {
     let sandbox = Sandbox::save_your_skin();
     let context = WriteContext::new(sandbox.akr_dir());
     let target = key("lege.work.extract-render-graph");
-    let before = sandbox.ledger().head(&target).expect("head").clone();
+    let before_ledger = sandbox.ledger();
+    let before = before_ledger.head(&target).expect("head").clone();
+    let revisions_before = before_ledger.revisions_of(&target).len();
     assert!(before.is_sealed(), "the point is that the head is sealed");
 
     let applied = ops::trace_append(
@@ -1731,17 +1745,10 @@ fn trace_appends_to_a_sealed_head_in_place_without_a_new_revision() {
     assert_eq!(trace_entries(after).len(), 2);
     assert_eq!(
         ledger.revisions_of(&target).len(),
-        sandbox_revisions(&before, &target),
+        revisions_before,
         "the key has exactly the revisions it had"
     );
     sandbox.assert_canonical();
-}
-
-fn sandbox_revisions(_before: &Record, target: &akr_core::model::LogicalKey) -> usize {
-    Sandbox::save_your_skin()
-        .ledger()
-        .revisions_of(target)
-        .len()
 }
 
 #[test]

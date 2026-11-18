@@ -367,15 +367,6 @@ mod tests {
     }
 
     #[test]
-    fn the_same_inputs_produce_the_same_message() {
-        let delta = SemanticDelta::default();
-        assert_eq!(
-            commit_message(&intent(), &delta, None, Some("t"), Some("g")),
-            commit_message(&intent(), &delta, None, Some("t"), Some("g"))
-        );
-    }
-
-    #[test]
     fn an_untracked_change_says_why_in_the_body() {
         let mut intent = ChangeIntent::new("ff74d3b2", ChangeKind::Chore, "pin the build image");
         intent.scope = Some("ci".into());

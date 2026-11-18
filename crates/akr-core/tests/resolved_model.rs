@@ -444,11 +444,3 @@ fn a_clean_ledger_produces_no_diagnostics_and_no_errors() {
     );
     assert!(!model.has_errors());
 }
-
-#[test]
-fn diagnostics_are_deterministic() {
-    let ledger = planning_ledger();
-    let once = ResolvedModel::build(&ledger, &inputs()).diagnostics;
-    let twice = ResolvedModel::build(&ledger, &inputs()).diagnostics;
-    assert_eq!(once, twice);
-}

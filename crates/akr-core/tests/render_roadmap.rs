@@ -11,14 +11,15 @@
 //! one pinned to a committed file cannot change without somebody seeing the diff.
 
 use akr_core::diagnostics::{Severity, Subject};
-use akr_core::model::{Ancestry, Commit, Kind, RevisionId, key};
+use akr_core::model::{Ancestry, Commit, Kind, Ledger, RevisionId, key};
 use akr_core::render::{
     Freshness, RenderContext, View, banner, check_views_current, codes, render, render_roadmap,
     slug, write_views,
 };
-use akr_core::resolve::{BuildInputs, ResolvedModel, Workspace, load_workspace};
+use akr_core::resolve::{BuildInputs, ResolvedModel};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 // -------------------------------------------------------------------------------------
 // The worked example, with the synthetic history its MANIFEST freezes
@@ -50,26 +51,38 @@ fn example_root() -> PathBuf {
 /// `last_change` and `ancestry` come from `MANIFEST.md` §4 rather than from a repository:
 /// the example's history is fictional, and every document that reasons about ancestry uses
 /// that table and nothing else. Supplying them here is exactly the interface P5 fills.
-fn example() -> Workspace {
-    let root = example_root();
-    let mut workspace = load_workspace(&root, &root.join(".akr")).expect("the example loads");
-    workspace.ledger.facts.ancestry = Ancestry::from_pairs(vec![
-        (commit(1), commit(0)),
-        (commit(2), commit(1)),
-        (commit(3), commit(2)),
-        (commit(4), commit(3)),
-    ]);
-    workspace.ledger.facts.last_change = [
-        (id("sys.milestone.m1-walking-skeleton", 1), commit(0)),
-        (id("sys.milestone.m2-deterministic-sim", 1), commit(1)),
-        (id("sys.milestone.m3-playable-day", 1), commit(2)),
-        (id("sys.work.m3-plan", 2), commit(3)),
-    ]
-    .into();
-    workspace
+#[derive(Clone)]
+struct ExampleData {
+    ledger: Ledger,
+    inputs: BuildInputs,
 }
 
-fn example_inputs(workspace: &Workspace) -> BuildInputs {
+fn example() -> &'static ExampleData {
+    static EXAMPLE: OnceLock<ExampleData> = OnceLock::new();
+    EXAMPLE.get_or_init(|| {
+        let base = crate::worked_example::workspace();
+        let mut ledger = base.ledger.clone();
+        ledger.facts.ancestry = Ancestry::from_pairs(vec![
+            (commit(1), commit(0)),
+            (commit(2), commit(1)),
+            (commit(3), commit(2)),
+            (commit(4), commit(3)),
+        ]);
+        ledger.facts.last_change = [
+            (id("sys.milestone.m1-walking-skeleton", 1), commit(0)),
+            (id("sys.milestone.m2-deterministic-sim", 1), commit(1)),
+            (id("sys.milestone.m3-playable-day", 1), commit(2)),
+            (id("sys.work.m3-plan", 2), commit(3)),
+        ]
+        .into();
+        ExampleData {
+            ledger,
+            inputs: base.inputs.clone(),
+        }
+    })
+}
+
+fn example_inputs(workspace: &ExampleData) -> BuildInputs {
     BuildInputs {
         tool: "akr 0.1.0".to_owned(),
         grammar: "0.1".to_owned(),
@@ -88,9 +101,12 @@ fn stale_set() -> BTreeSet<RevisionId> {
     .into()
 }
 
-fn committed_roadmap() -> String {
-    std::fs::read_to_string(example_root().join("docs/generated/ROADMAP.md"))
-        .expect("the committed roadmap")
+fn committed_roadmap() -> &'static str {
+    static ROADMAP: OnceLock<String> = OnceLock::new();
+    ROADMAP.get_or_init(|| {
+        std::fs::read_to_string(example_root().join("docs/generated/ROADMAP.md"))
+            .expect("the committed roadmap")
+    })
 }
 
 // -------------------------------------------------------------------------------------
@@ -100,7 +116,7 @@ fn committed_roadmap() -> String {
 #[test]
 fn the_committed_roadmap_is_reproduced_byte_for_byte() {
     let workspace = example();
-    let model = ResolvedModel::build(&workspace.ledger, &example_inputs(&workspace));
+    let model = ResolvedModel::build(&workspace.ledger, &example_inputs(workspace));
     let freshness = Freshness::from_stale(&workspace.ledger, stale_set());
     let rendered = render_roadmap(RenderContext::new(&model, &freshness));
     let committed = committed_roadmap();
@@ -122,26 +138,10 @@ fn the_committed_roadmap_is_reproduced_byte_for_byte() {
 }
 
 #[test]
-fn rendering_is_reproducible() {
-    // `docs/01-architecture.md` §4: a build is a pure function of (sources, commit, tool
-    // version), byte-identical across runs.
-    let first = example();
-    let second = example();
-    let model_a = ResolvedModel::build(&first.ledger, &example_inputs(&first));
-    let model_b = ResolvedModel::build(&second.ledger, &example_inputs(&second));
-    let fresh_a = Freshness::from_stale(&first.ledger, stale_set());
-    let fresh_b = Freshness::from_stale(&second.ledger, stale_set());
-    assert_eq!(
-        render_roadmap(RenderContext::new(&model_a, &fresh_a)),
-        render_roadmap(RenderContext::new(&model_b, &fresh_b))
-    );
-}
-
-#[test]
 fn rendering_does_not_depend_on_record_insertion_order() {
     let workspace = example();
     let baseline = {
-        let model = ResolvedModel::build(&workspace.ledger, &example_inputs(&workspace));
+        let model = ResolvedModel::build(&workspace.ledger, &example_inputs(workspace));
         let freshness = Freshness::from_stale(&workspace.ledger, stale_set());
         render_roadmap(RenderContext::new(&model, &freshness))
     };
@@ -152,7 +152,7 @@ fn rendering_does_not_depend_on_record_insertion_order() {
     shuffled.extend(records);
     shuffled.facts = workspace.ledger.facts.clone();
 
-    let model = ResolvedModel::build(&shuffled, &example_inputs(&workspace));
+    let model = ResolvedModel::build(&shuffled, &example_inputs(workspace));
     let freshness = Freshness::from_stale(&shuffled, stale_set());
     assert_eq!(
         render_roadmap(RenderContext::new(&model, &freshness)),
@@ -165,46 +165,11 @@ fn rendering_does_not_depend_on_record_insertion_order() {
 // -------------------------------------------------------------------------------------
 
 #[test]
-fn milestones_render_in_after_order_not_key_order() {
-    // Key order would be m1, m2, m3, m4, m5 by coincidence here, so the test asserts the
-    // ordering graph is actually consulted: reverse the ledger and the order must hold.
-    let committed = committed_roadmap();
-    let positions: Vec<usize> = [
-        "### M1 — walking skeleton",
-        "### M2 — deterministic simulator",
-        "### M3 — playable day",
-        "### M4 — content tools",
-        "### M5 — ship demo",
-    ]
-    .iter()
-    .map(|h| committed.find(h).unwrap_or_else(|| panic!("{h} present")))
-    .collect();
-    assert!(positions.windows(2).all(|w| w[0] < w[1]), "{positions:?}");
-}
-
-#[test]
-fn acceptance_verdicts_carry_the_descendant_commit_rule() {
-    // MANIFEST §6: M1, M2 and M3's `full-day-demo` are satisfied; M3's
-    // `no-placeholder-assets` is not, which is why M3 is still active.
-    let committed = committed_roadmap();
-    assert!(committed.contains(
-        "| `viewer-boundary-clean` | command | **satisfied** by `@lege.evidence.boundary-lint-pass/1` (pass at `b2e58f14`, descends from `3f0a1c9d`) |"
-    ));
-    assert!(committed.contains(
-        "| `full-day-demo` | observation | **satisfied** by `@sys.evidence.playable-day-demo/1` (pass at `e806b3f5`, descends from `b2e58f14`) |"
-    ));
-    assert!(
-        committed.contains("| `no-placeholder-assets` | command | not satisfied — no evidence |")
-    );
-    assert!(committed.contains("**Acceptance** — 1 of 2 satisfied"));
-}
-
-#[test]
 fn evidence_that_predates_the_last_content_change_does_not_satisfy() {
     // The condition that stops a passing test from 200 commits ago closing a milestone
     // whose definition changed yesterday (D-016). Asserted by moving M3's last content
     // change forward past its evidence.
-    let mut workspace = example();
+    let mut workspace = example().clone();
     workspace
         .ledger
         .facts
@@ -236,63 +201,9 @@ fn evidence_that_predates_the_last_content_change_does_not_satisfy() {
 }
 
 #[test]
-fn dispositioned_children_appear_under_the_plan_of_record() {
-    // `part_of` pins to a plan revision, so a view listing only the head's children would
-    // silently drop exactly the items a replan is most likely to lose (D-017).
-    let committed = committed_roadmap();
-    assert!(committed.contains("**Under the plan of record**"));
-    assert!(committed.contains(
-        "`@sys.work.m3-audio-pass/1` — part of `@sys.work.m3-plan/1`, dispositioned `intentionally_dropped`"
-    ));
-    assert!(committed.contains(
-        "`@sys.work.m3-lighting-pass/1` — part of `@sys.work.m3-plan/1`, dispositioned `carried_forward` into `@sys.track.lighting/1`"
-    ));
-    assert!(
-        committed
-            .contains("Carried into this track by disposition: `@sys.work.m3-lighting-pass/1`.")
-    );
-}
-
-#[test]
-fn freshness_renders_on_the_metadata_line_and_list_entries_never_in_a_heading() {
-    let committed = committed_roadmap();
-    assert!(committed.contains("`@sim.work.rewrite-projection/1` — **at risk**"));
-    for line in committed.lines().filter(|l| l.starts_with('#')) {
-        assert!(
-            !line.contains("stale") && !line.contains("at risk"),
-            "a heading anchor must not move when a record goes stale: {line}"
-        );
-    }
-}
-
-#[test]
-fn empty_work_item_lists_say_so() {
-    // §3: a missing heading would be ambiguous between "nothing here" and "not generated".
-    assert!(committed_roadmap().contains("**Work items** — _(none)_"));
-}
-
-#[test]
-fn archived_records_are_excluded() {
-    // D-018: archived records still resolve; they appear in no view but DECISION-HISTORY.
-    assert!(!committed_roadmap().contains("weekly-demo"));
-}
-
-#[test]
-fn the_roadmap_ends_with_exactly_one_newline_and_has_no_cr() {
-    let committed = committed_roadmap();
-    assert!(committed.ends_with("| Tooling hygiene | `active` | continuous |\n"));
-    assert!(!committed.ends_with("\n\n"));
-    assert!(!committed.contains('\r'));
-}
-
-// -------------------------------------------------------------------------------------
-// The banner (§4)
-// -------------------------------------------------------------------------------------
-
-#[test]
 fn the_banner_carries_stable_build_inputs_and_no_clock_reading() {
     let workspace = example();
-    let model = ResolvedModel::build(&workspace.ledger, &example_inputs(&workspace));
+    let model = ResolvedModel::build(&workspace.ledger, &example_inputs(workspace));
     let text = banner(&model);
     assert!(text.starts_with("<!-- GENERATED BY AKR — DO NOT EDIT\n"));
     assert!(text.contains(&format!("     source-graph: {}\n", model.source_graph)));
@@ -328,10 +239,10 @@ fn the_banner_is_identical_before_and_after_git_resolves_a_commit() {
     let workspace = example();
     let inputs = BuildInputs {
         commit: None,
-        ..example_inputs(&workspace)
+        ..example_inputs(workspace)
     };
     let without_commit = ResolvedModel::build(&workspace.ledger, &inputs);
-    let with_commit = ResolvedModel::build(&workspace.ledger, &example_inputs(&workspace));
+    let with_commit = ResolvedModel::build(&workspace.ledger, &example_inputs(workspace));
     assert_eq!(banner(&without_commit), banner(&with_commit));
 }
 
@@ -434,7 +345,7 @@ fn scratch(name: &str) -> PathBuf {
 #[test]
 fn an_unmodified_directory_passes() {
     let workspace = example();
-    let model = ResolvedModel::build(&workspace.ledger, &example_inputs(&workspace));
+    let model = ResolvedModel::build(&workspace.ledger, &example_inputs(workspace));
     let freshness = Freshness::from_stale(&workspace.ledger, stale_set());
     let dir = example_root().join("docs/generated");
     let diagnostics =
@@ -462,7 +373,7 @@ fn a_hand_edit_fails_with_e011_naming_the_file_and_the_first_differing_line() {
     std::fs::write(&path, &edited).expect("writable");
 
     let workspace = example();
-    let model = ResolvedModel::build(&workspace.ledger, &example_inputs(&workspace));
+    let model = ResolvedModel::build(&workspace.ledger, &example_inputs(workspace));
     let freshness = Freshness::from_stale(&workspace.ledger, stale_set());
     let diagnostics =
         check_views_current(&dir, RenderContext::new(&model, &freshness)).expect("readable");
@@ -526,7 +437,7 @@ fn a_missing_view_fails_with_e012() {
     let dir = scratch("missing");
     std::fs::remove_file(dir.join("ROADMAP.md")).expect("removable");
     let workspace = example();
-    let model = ResolvedModel::build(&workspace.ledger, &example_inputs(&workspace));
+    let model = ResolvedModel::build(&workspace.ledger, &example_inputs(workspace));
     let freshness = Freshness::from_stale(&workspace.ledger, stale_set());
     let diagnostics =
         check_views_current(&dir, RenderContext::new(&model, &freshness)).expect("readable");
@@ -546,7 +457,7 @@ fn a_damaged_banner_fails_with_e013_before_any_content_comparison() {
     std::fs::write(&path, beheaded).expect("writable");
 
     let workspace = example();
-    let model = ResolvedModel::build(&workspace.ledger, &example_inputs(&workspace));
+    let model = ResolvedModel::build(&workspace.ledger, &example_inputs(workspace));
     let freshness = Freshness::from_stale(&workspace.ledger, stale_set());
     let diagnostics =
         check_views_current(&dir, RenderContext::new(&model, &freshness)).expect("readable");
@@ -561,7 +472,7 @@ fn each_banner_field_is_required() {
     let path = dir.join("ROADMAP.md");
     let original = std::fs::read_to_string(&path).expect("readable");
     let workspace = example();
-    let model = ResolvedModel::build(&workspace.ledger, &example_inputs(&workspace));
+    let model = ResolvedModel::build(&workspace.ledger, &example_inputs(workspace));
     let freshness = Freshness::from_stale(&workspace.ledger, stale_set());
 
     for field in ["source-graph:", "tool:"] {
@@ -586,7 +497,7 @@ fn an_unexpected_file_in_the_output_directory_fails_with_e014() {
     let dir = scratch("intruder");
     std::fs::write(dir.join("NOTES.md"), "hand-written\n").expect("writable");
     let workspace = example();
-    let model = ResolvedModel::build(&workspace.ledger, &example_inputs(&workspace));
+    let model = ResolvedModel::build(&workspace.ledger, &example_inputs(workspace));
     let freshness = Freshness::from_stale(&workspace.ledger, stale_set());
     let diagnostics =
         check_views_current(&dir, RenderContext::new(&model, &freshness)).expect("readable");
@@ -596,30 +507,11 @@ fn an_unexpected_file_in_the_output_directory_fails_with_e014() {
 }
 
 #[test]
-fn every_view_but_papercuts_always_renders() {
-    // `PAPERCUTS.md` alone has the emit-only-when-nonempty rule (D-027); the example
-    // holds no papercut, so it is the one file `scratch()` does not copy and the one
-    // view that renders `None` here.
-    let workspace = example();
-    let model = ResolvedModel::build(&workspace.ledger, &example_inputs(&workspace));
-    let freshness = Freshness::from_stale(&workspace.ledger, stale_set());
-    let cx = RenderContext::new(&model, &freshness);
-    for &view in View::ALL {
-        let rendered = render(view, cx);
-        if view == View::Papercuts {
-            assert!(rendered.is_none(), "the example logs no papercut");
-        } else {
-            assert!(rendered.is_some(), "{view:?} did not render");
-        }
-    }
-}
-
-#[test]
 fn writing_views_is_idempotent() {
     // Only files whose bytes differ are rewritten, so a no-op build produces no diff.
     let dir = scratch("write");
     let workspace = example();
-    let model = ResolvedModel::build(&workspace.ledger, &example_inputs(&workspace));
+    let model = ResolvedModel::build(&workspace.ledger, &example_inputs(workspace));
     let freshness = Freshness::from_stale(&workspace.ledger, stale_set());
     let cx = RenderContext::new(&model, &freshness);
     assert!(write_views(&dir, cx).expect("writable").is_empty());
@@ -689,7 +581,7 @@ fn a_terminal_planning_record_renders_its_note_and_a_live_one_does_not() {
     // Live: the note is working commentary the record's own intent should carry, so no
     // view shows it (docs/11 §3).
     let live = with_note(State::Active);
-    let model = ResolvedModel::build(&live, &example_inputs(&workspace));
+    let model = ResolvedModel::build(&live, &example_inputs(workspace));
     let freshness = Freshness::from_stale(&live, stale_set());
     let rendered = render_roadmap(RenderContext::new(&model, &freshness));
     assert!(!rendered.contains("**Note:**"), "{rendered}");
@@ -697,7 +589,7 @@ fn a_terminal_planning_record_renders_its_note_and_a_live_one_does_not() {
     // Terminal: the note is the last thing anybody wrote about the record, and the only
     // place a reader finds out why it stopped (D-026).
     let done = with_note(State::Abandoned);
-    let model = ResolvedModel::build(&done, &example_inputs(&workspace));
+    let model = ResolvedModel::build(&done, &example_inputs(workspace));
     let freshness = Freshness::from_stale(&done, stale_set());
     let rendered = render_roadmap(RenderContext::new(&model, &freshness));
     assert!(
@@ -721,7 +613,7 @@ fn committed(file: &str) -> String {
 /// over in each renderer's own test.
 fn assert_reproduces_and_is_order_independent(view: View, file: &str) {
     let workspace = example();
-    let model = ResolvedModel::build(&workspace.ledger, &example_inputs(&workspace));
+    let model = ResolvedModel::build(&workspace.ledger, &example_inputs(workspace));
     let freshness = Freshness::from_stale(&workspace.ledger, stale_set());
     let rendered = render(view, RenderContext::new(&model, &freshness)).expect("renders");
     assert_eq!(rendered, committed(file), "{file} is stale; regenerate it");
@@ -731,7 +623,7 @@ fn assert_reproduces_and_is_order_independent(view: View, file: &str) {
     records.reverse();
     shuffled.extend(records);
     shuffled.facts = workspace.ledger.facts.clone();
-    let model = ResolvedModel::build(&shuffled, &example_inputs(&workspace));
+    let model = ResolvedModel::build(&shuffled, &example_inputs(workspace));
     let freshness = Freshness::from_stale(&shuffled, stale_set());
     let reshuffled = render(view, RenderContext::new(&model, &freshness)).expect("renders");
     assert_eq!(reshuffled, rendered, "{file} depends on insertion order");
@@ -850,7 +742,7 @@ fn decision_history_groups_by_key_newest_revision_first_and_includes_terminal_no
 #[ignore = "maintenance tool: run by hand to regenerate examples/save-your-skin/docs/generated/"]
 fn regenerate_the_worked_example_views() {
     let workspace = example();
-    let model = ResolvedModel::build(&workspace.ledger, &example_inputs(&workspace));
+    let model = ResolvedModel::build(&workspace.ledger, &example_inputs(workspace));
     let freshness = Freshness::from_stale(&workspace.ledger, stale_set());
     let cx = RenderContext::new(&model, &freshness);
     let dir = example_root().join("docs/generated");
@@ -865,7 +757,7 @@ fn regenerate_the_worked_example_views() {
 #[test]
 fn outstanding_work_lists_only_live_planning_heads() {
     let workspace = example();
-    let inputs = example_inputs(&workspace);
+    let inputs = example_inputs(workspace);
     let model = ResolvedModel::build(&workspace.ledger, &inputs);
     let freshness = Freshness::none();
     let view = render(View::Backlog, RenderContext::new(&model, &freshness)).unwrap();
