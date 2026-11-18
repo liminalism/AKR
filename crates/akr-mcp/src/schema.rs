@@ -25,6 +25,21 @@ pub struct Tool {
 /// The catalogue, in §2's order.
 pub const TOOLS: &[Tool] = &[
     Tool {
+        name: "knowledge.secret_put",
+        description: "Store a local-only secret entry from a private UTF-8 file. Returns an opaque {{secret:<id>}} citation, never the value. Cite it in public text; public outputs render [*]. Keep the input file private too.",
+        writes: true,
+    },
+    Tool {
+        name: "knowledge.secret_get",
+        description: "Read a private citation: [*] by default and when absent. Only reveal=true returns local data; do not reveal credentials to a remote agent.",
+        writes: false,
+    },
+    Tool {
+        name: "knowledge.secret_resolve",
+        description: "Render citations in a local document: [*] by default; reveal=true explicitly reads local values. Never write resolved output to public records or published files.",
+        writes: false,
+    },
+    Tool {
         name: "knowledge.config_get",
         description: "Read .akr/project.akr through the supported configuration surface (akr config show).",
         writes: false,
@@ -131,7 +146,20 @@ pub const TOOLS: &[Tool] = &[
         name: "knowledge.propose",
         description: "Create revision 1 of a new key. An existing key is an error: a \
                       proposal is never silently turned into a revision. Pass `acceptance` \
-                      to author its checks — required for a milestone (V-008).",
+                      to author its checks — required for a milestone (V-008). To create \
+                      several connected records in one atomic pass (such as a track plus \
+                      ordered milestones linked by `part_of` or `after`), use \
+                      `knowledge.propose_many` instead of parallel or sequential calls.",
+        writes: true,
+    },
+    Tool {
+        name: "knowledge.propose_many",
+        description: "Create revision 1 of several new keys (1–100) in one atomic pass. All \
+                      records are parsed, lowered, and validated together before anything is \
+                      written, so forward or mutual references (`part_of`, `after`, \
+                      `depends_on`, `plan_of_record`, `implements`) between records in the \
+                      same batch resolve without sequential calls. Either every record lands \
+                      or none does.",
         writes: true,
     },
     Tool {
@@ -323,6 +351,45 @@ pub fn is_host_safe_name(name: &str) -> bool {
 pub fn input_schema(name: &str) -> Option<Value> {
     let name = canonical_tool_name(name).unwrap_or(name);
     let schema = match name {
+        "knowledge.secret_put" => object(
+            vec![(
+                "from",
+                string(
+                    "Private local UTF-8 input file. Contents are stored locally and never echoed; keep this input file private too.",
+                ),
+            )],
+            &["from"],
+        ),
+        "knowledge.secret_get" => object(
+            vec![
+                (
+                    "ref",
+                    string("Opaque {{secret:<id>}} citation or 32 lowercase hex identifier."),
+                ),
+                (
+                    "reveal",
+                    boolean(
+                        "Explicitly allow the local value in this tool response. Default false ([*]); do not reveal credentials to remote agents.",
+                    ),
+                ),
+            ],
+            &["ref"],
+        ),
+        "knowledge.secret_resolve" => object(
+            vec![
+                (
+                    "from",
+                    string("Local document with inline opaque secret citations; never modified."),
+                ),
+                (
+                    "reveal",
+                    boolean(
+                        "Explicitly allow local values in this response. Default false ([*]); resolved output must stay private.",
+                    ),
+                ),
+            ],
+            &["from"],
+        ),
         "knowledge.config_get" => object(Vec::new(), &[]),
         "knowledge.config_edit" => object(
             vec![
@@ -556,38 +623,25 @@ pub fn input_schema(name: &str) -> Option<Value> {
             ],
             &[],
         ),
-        "knowledge.propose" => object(
-            vec![
-                (
-                    "key",
-                    string(
-                        "The new logical key, dot-delimited: namespace.topic.slug. The \
-                         first segment must be a namespace declared in .akr/project.akr.",
+        "knowledge.propose" => propose_record_schema(),
+        "knowledge.propose_many" => object(
+            vec![(
+                "records",
+                Value::object(vec![
+                    ("type", Value::string("array")),
+                    (
+                        "description",
+                        Value::string(
+                            "Records to create in one atomic transaction. Sibling records in \
+                             this array may reference each other.",
+                        ),
                     ),
-                ),
-                ("kind", kind_schema()),
-                ("title", string("The one-line label.")),
-                ("state", string("Override the class's initial state.")),
-                ("scope", scope_schema()),
-                (
-                    "topic",
-                    string(
-                        "The exclusivity handle, normative kinds only. A topic is one \
-                         lowercase ASCII segment containing letters, digits or internal \
-                         hyphens; it is not a dot-delimited key.",
-                    ),
-                ),
-                ("slots", slots_schema()),
-                ("claims", claims_schema()),
-                ("relations", relations_schema()),
-                (
-                    "acceptance",
-                    acceptance_schema("Required to propose a milestone (V-008)."),
-                ),
-                ("sources", sources_schema()),
-                ("acknowledged", acknowledged_schema()),
-            ],
-            &["key", "kind", "title"],
+                    ("items", propose_record_schema()),
+                    ("minItems", Value::integer(1)),
+                    ("maxItems", Value::integer(100)),
+                ]),
+            )],
+            &["records"],
         ),
         "knowledge.revise" => object(
             vec![
@@ -1003,6 +1057,42 @@ pub fn output_schema(name: &str) -> Option<Value> {
         .then(|| Value::object(vec![("type", Value::string("object"))]))
 }
 
+fn propose_record_schema() -> Value {
+    object(
+        vec![
+            (
+                "key",
+                string(
+                    "The new logical key, dot-delimited: namespace.topic.slug. The \
+                     first segment must be a namespace declared in .akr/project.akr.",
+                ),
+            ),
+            ("kind", kind_schema()),
+            ("title", string("The one-line label.")),
+            ("state", string("Override the class's initial state.")),
+            ("scope", scope_schema()),
+            (
+                "topic",
+                string(
+                    "The exclusivity handle, normative kinds only. A topic is one \
+                     lowercase ASCII segment containing letters, digits or internal \
+                     hyphens; it is not a dot-delimited key.",
+                ),
+            ),
+            ("slots", slots_schema()),
+            ("claims", claims_schema()),
+            ("relations", relations_schema()),
+            (
+                "acceptance",
+                acceptance_schema("Required to propose a milestone (V-008)."),
+            ),
+            ("sources", sources_schema()),
+            ("acknowledged", acknowledged_schema()),
+        ],
+        &["key", "kind", "title"],
+    )
+}
+
 fn evidence_schema() -> Value {
     object(
         vec![
@@ -1359,9 +1449,9 @@ fn relations_schema() -> Value {
     let properties = akr_core::model::Relation::ALL
         .iter()
         .map(|relation| {
-            // Each relation names the kinds it may point at. A proposer reading only that
-            // a decision "has supported_by" found out from two refusals in a row that a
-            // constraint is not among them.
+            // Each relation names both the kinds it may point at (range) and the kinds
+            // that may declare it (domain). A proposer reading only target kinds tried to
+            // declare `implements` on milestones and failed six calls in a row.
             let targets = match relation.range() {
                 akr_core::model::Range::Any => "References to any kind.".to_owned(),
                 akr_core::model::Range::SameKind => {
@@ -1376,7 +1466,18 @@ fn relations_schema() -> Value {
                         .join(", ")
                 ),
             };
-            (relation.name().to_owned(), string_array(&targets))
+            let sources = match relation.domain() {
+                akr_core::model::Domain::Any => "Declared on any kind.".to_owned(),
+                akr_core::model::Domain::Kinds(kinds) => format!(
+                    "Declared on: {}.",
+                    kinds
+                        .iter()
+                        .map(|kind| kind.name())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            };
+            (relation.name().to_owned(), string_array(&format!("{targets} {sources}")))
         })
         .collect();
     Value::object(vec![
@@ -1384,16 +1485,22 @@ fn relations_schema() -> Value {
         (
             "description",
             Value::string(
-                "relation name -> array of references. Target kinds are constrained \
-                 (V-005): `implements` accepts requirement, policy, constraint or \
-                 decision, not a work record. Use depends_on for a prerequisite; a \
+                "relation name -> array of references. Both source and target kinds are \
+                 constrained (V-005): `implements` belongs on `work` and `decision` \
+                 (targeting requirement, policy, constraint or decision), not on \
+                 `milestone` or `track` — a milestone uses `depends_on` for \
+                 prerequisites, while `work` items (`part_of` / `plan_of_record` the \
+                 milestone) declare `implements`. Use depends_on for a prerequisite; a \
                  completed planning prerequisite remains satisfied. Use derived_from \
                  for provenance rather than prerequisite ordering. A `contradicts` edge \
                  between two live records needs `acknowledged: true` on one of them, or \
                  one side superseded, or it fails V-023 (AKR-R041). Pin a revision \
                  (`@key/2`) only to cite that revision for good: an unpinned `@key` \
                  follows the head, and a pinned reference to a revision that a later one \
-                 supersedes fails V-006 (AKR-L021).",
+                 supersedes fails V-006 (AKR-L021). When proposing a connected batch \
+                 whose relations (`part_of`, `after`, `depends_on`) reference each \
+                 other, use `knowledge.propose_many` instead of parallel \
+                 `knowledge.propose` calls.",
             ),
         ),
         ("properties", Value::Object(properties)),

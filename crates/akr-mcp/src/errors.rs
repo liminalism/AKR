@@ -65,8 +65,8 @@ pub fn class_of(code: &str) -> Class {
         // Conflict is checked before the `C` range: `AKR-C032` and `AKR-C033` are about a
         // head that moved, not about a malformed invocation.
         "AKR-C032" | "AKR-C033" => Class::Conflict,
-        "AKR-C011" | "AKR-C012" | "AKR-C042" | "AKR-G001" | "AKR-G003" | "AKR-I003"
-        | "AKR-I031" | "AKR-I032" | "AKR-I022" => Class::Environment,
+        "AKR-C011" | "AKR-C012" | "AKR-C042" | "AKR-C045" | "AKR-C046" | "AKR-G001"
+        | "AKR-G003" | "AKR-I003" | "AKR-I031" | "AKR-I032" | "AKR-I022" => Class::Environment,
         "AKR-X041" => Class::Usage,
         "AKR-X099" => Class::Internal,
         "AKR-L001" | "AKR-L004" | "AKR-X001" | "AKR-E003" => Class::NotFound,

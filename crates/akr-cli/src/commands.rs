@@ -101,6 +101,21 @@ pub fn run(session: &mut Session, command: &Command) -> Result<Output, EnvError>
     // any one command, so they are filled in once here rather than by each command that
     // happens to remember.
     let mut output = dispatch(session, command)?;
+    // Public reads never consult private storage. Only the dedicated secret surface
+    // returns citation identities or explicitly requested local values.
+    if !matches!(
+        command,
+        Command::SecretPut { .. }
+            | Command::SecretGet { .. }
+            | Command::SecretResolve { .. }
+            | Command::Get {
+                detail: crate::args::Detail::Canonical,
+                ..
+            }
+    ) {
+        output.text = akr_core::secrets::redact(&output.text);
+        akr_core::secrets::redact_json(&mut output.result);
+    }
     output.commit = session
         .inputs
         .commit
@@ -111,7 +126,40 @@ pub fn run(session: &mut Session, command: &Command) -> Result<Output, EnvError>
 }
 
 fn dispatch(session: &mut Session, command: &Command) -> Result<Output, EnvError> {
+    // All generic input-file routes stay on the public side of the boundary.
     match command {
+        Command::ConfigSet { from }
+        | Command::ProposeMany { from }
+        | Command::EvidenceAddMany { from } => crate::secrets::public_input(&session.root, from)?,
+        Command::Propose {
+            from: Some(from), ..
+        }
+        | Command::Revise {
+            from: Some(from), ..
+        }
+        | Command::Supersede {
+            from: Some(from), ..
+        } => crate::secrets::public_input(&session.root, from)?,
+        Command::Fmt { paths, .. } => {
+            for path in paths {
+                crate::secrets::public_input(&session.root, path)?;
+            }
+        }
+        Command::EvidenceAdd {
+            artifact, capture, ..
+        } => {
+            for path in artifact.iter().chain(capture) {
+                crate::secrets::public_input(&session.root, Path::new(path))?;
+            }
+        }
+        _ => (),
+    }
+    match command {
+        Command::SecretPut { from } => crate::secrets::put(session, from),
+        Command::SecretGet { reference, reveal } => {
+            crate::secrets::get(session, reference, *reveal)
+        }
+        Command::SecretResolve { from, reveal } => crate::secrets::resolve(session, from, *reveal),
         Command::ConfigShow => crate::config::show(session),
         Command::ConfigSet { from } => {
             let path = if from.is_absolute() {
@@ -368,6 +416,7 @@ fn dispatch(session: &mut Session, command: &Command) -> Result<Output, EnvError
             dry_run,
         } => crate::source::finalize(session, id, retain, context, *remove_file, *dry_run),
         Command::Propose { .. }
+        | Command::ProposeMany { .. }
         | Command::Revise { .. }
         | Command::Supersede { .. }
         | Command::Complete { .. }
@@ -910,6 +959,7 @@ fn check(
     review_clean: bool,
     views_current: bool,
 ) -> Result<Output, EnvError> {
+    crate::secrets::ensure_untracked(session)?;
     session.attach_lock();
     let model = session.resolve();
     let mut diagnostics = session.diagnostics(&model);
@@ -1348,6 +1398,7 @@ fn days_from_civil(date: Date) -> i64 {
 // -------------------------------------------------------------------------------------
 
 fn build(session: &mut Session, check: bool) -> Result<Output, EnvError> {
+    crate::secrets::ensure_untracked(session)?;
     session.attach_lock();
     let model = session.resolve();
     let mut diagnostics = session.diagnostics(&model);
@@ -3748,6 +3799,27 @@ const DECISIONS: &str = include_str!("../../../docs/DECISIONS.md");
 /// The registries are compiled in: `akr explain` needs no workspace, which is the point —
 /// somebody reading a CI log should be able to look a code up without a checkout.
 fn explain(subject: &str) -> Output {
+    if subject.eq_ignore_ascii_case("secret") || subject.eq_ignore_ascii_case("secrets") {
+        return Output::plain(
+            format!(
+                "secret — local-only category outside the public record graph\n\n{}\nReference: docs/18-private-secrets.md\n",
+                crate::args::help_for("secret").unwrap_or_default()
+            ),
+            Value::object(vec![
+                ("category", Value::string("secret")),
+                ("storage", Value::string(akr_core::secrets::DIRECTORY)),
+                (
+                    "citation",
+                    Value::string("{{secret:<32 lowercase hex digits>}}"),
+                ),
+                (
+                    "public_rendering",
+                    Value::string(akr_core::secrets::REDACTED),
+                ),
+                ("public_record_kind", Value::bool(false)),
+            ]),
+        );
+    }
     if subject.eq_ignore_ascii_case("acceptance") {
         return Output::plain(
             "acceptance — checks on milestone/work records\n\nacceptance {\n    check smoke {\n        statement \"The command passes on the implementation.\"\n        method command\n        command \"cargo test -p my-crate smoke\"\n        verified_by [ @project.evidence.smoke/1 ]\n    }\n}\n\nMethods: manual, command, observation. A command check requires command.\nverified_by cites passing evidence; evidence describes observations, not what it verifies.\ncomplete --check smoke=@project.evidence.smoke/1 can attach evidence at completion.\nA revise acceptance overlay replaces the entire check set; include all checks to retain.\nReference: docs/02-data-model.md, docs/07-cli.md.\n",

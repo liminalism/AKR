@@ -3,6 +3,11 @@
 The complete `akr` command surface: invocation model, global flags, exit codes, the
 write pipeline, per-command reference, JSON output, and CI recipes.
 
+Since 0.6.5, `akr secret put --from <private-file>` stores a local-only secret entry and
+returns an opaque inline citation. `akr secret get <citation>` and `akr secret resolve
+--from <document>` redact as `[*]` unless `--reveal` is explicit. See
+[local-only secrets](18-private-secrets.md) for the privacy boundary and full workflow.
+
 Normative for command names, flag names, exit codes, the write pipeline's atomicity
 guarantee, and the JSON envelope. Output text shown below is illustrative in wording and
 normative in *content*: every field shown is present, and no command prints information
@@ -689,6 +694,23 @@ error[AKR-C031]: write aborted: this write would introduce 1 diagnostic(s); noth
 error[AKR-T001]: term requires slot `definition`
 nothing written
 ```
+
+---
+
+### `akr propose-many`
+
+```
+akr propose-many --from <file>
+```
+
+Creates revision 1 of several new keys in one atomic pipeline pass — the general
+counterpart to `akr evidence add-many --from`. The file is an ordinary AKR fragment
+holding one or more `record <key>/1 : <kind> { ... }` blocks (the `akr 0.1` /
+`project` header may be omitted). All records are parsed, lowered, and validated
+together before anything touches disk, so connected records (such as a `track` and
+ordered `milestone`s connected by `part_of`, `after`, `depends_on`, `plan_of_record`,
+or `implements`) resolve references within the batch without sequential calls. Either
+every record lands or none does.
 
 ---
 

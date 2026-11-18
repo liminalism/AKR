@@ -467,6 +467,97 @@ fn abandon_requires_a_reason_and_writes_nothing() {
 }
 
 #[test]
+fn propose_many_writes_connected_records_in_one_pass() {
+    let example = Example::materialise("write-propose-many");
+    let batch = "\
+record sys.track.phased/1 : track {
+    title \"Phased track\"
+    intent \"Coordinate phased milestones.\"
+}
+
+record sys.milestone.phase-0/1 : milestone {
+    title \"Phase 0\"
+    intent \"Initial skeleton.\"
+    part_of [ @sys.track.phased ]
+    depends_on [ @sys.req.deterministic-sim ]
+    acceptance {
+        check skeleton {
+            statement \"Skeleton compiles.\"
+            method manual
+        }
+    }
+}
+
+record sys.milestone.phase-1/1 : milestone {
+    title \"Phase 1\"
+    intent \"Follow-on milestone.\"
+    part_of [ @sys.track.phased ]
+    after [ @sys.milestone.phase-0 ]
+    acceptance {
+        check loop {
+            statement \"Loop runs.\"
+            method manual
+        }
+    }
+}
+";
+    example.write_file("batch.akr", batch);
+    let run = example.run(&["propose-many", "--from", "batch.akr"]);
+    assert_eq!(run.code, 0, "{}", run.output());
+    assert!(
+        run.stdout.contains("3 records written in one pass"),
+        "{}",
+        run.output()
+    );
+    assert_eq!(example.run(&["build"]).code, 0);
+    let checked = example.run(&["check"]);
+    assert_eq!(checked.code, 0, "{}", checked.output());
+}
+
+#[test]
+fn propose_many_is_atomic_and_writes_nothing_on_a_bad_record() {
+    let example = Example::materialise("write-propose-many-atomic");
+    let before = example.sources();
+    let batch = "\
+record sys.track.good/1 : track {
+    title \"Good track\"
+    intent \"Should roll back on sibling failure.\"
+}
+
+record sys.milestone.bad/1 : milestone {
+    title \"Bad milestone\"
+    intent \"Uses implements on milestone.\"
+    part_of [ @sys.track.good ]
+    implements [ @sys.req.deterministic-sim ]
+    acceptance {
+        check boot {
+            statement \"Boots.\"
+            method manual
+        }
+    }
+}
+";
+    example.write_file("batch.akr", batch);
+    let run = example.run(&["propose-many", "--from", "batch.akr"]);
+    assert_ne!(run.code, 0, "{}", run.output());
+    assert!(run.output().contains("AKR-L032"), "{}", run.output());
+    assert!(
+        run.output().contains("its domain is work, decision"),
+        "{}",
+        run.output()
+    );
+    assert_eq!(before, example.sources(), "a refused batch wrote something");
+}
+
+#[test]
+fn propose_many_requires_a_file() {
+    let example = Example::materialise("write-propose-many-no-file");
+    let run = example.run(&["propose-many"]);
+    assert_ne!(run.code, 0, "{}", run.output());
+    assert!(run.output().contains("--from"), "{}", run.output());
+}
+
+#[test]
 fn evidence_add_many_writes_a_batch_in_one_pass() {
     // `knowledge.evidence_add_many` existed over MCP with no command-line equivalent, and
     // with the translation and the batch write living in the MCP crate -- against both

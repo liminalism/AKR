@@ -64,7 +64,8 @@ pub fn budget_for(tool: &str) -> Budget {
         "knowledge.handoff_results" | "knowledge.handoff_coverage" => Budget::new(1_200, 2_500),
         "knowledge.handoff_capsule" | "knowledge.handoff_session_show" => Budget::new(1_000, 2_000),
         "knowledge.handoff_list" | "knowledge.handoff_verify" => Budget::new(600, 1_000),
-        // Every write tool. A successful write has nothing to say but where it landed.
+        "knowledge.propose_many" | "knowledge.evidence_add_many" => Budget::new(1_500, 5_000),
+        // Every other write tool. A successful write has nothing to say but where it landed.
         _ => Budget::new(300, 500),
     }
 }

@@ -37,7 +37,7 @@ $ echo $?
 $ akr check --format json
 {
   "akr": "0.1",
-  "tool_version": "0.6.1",
+  "tool_version": "0.6.5",
   "command": "check",
   "commit": null,
   "source_graph_hash": "sha256:5159d2714f688627a85906b161def17b0358155fbfc2a3fc00b681d29a305f55",
@@ -122,8 +122,9 @@ akr check — save-your-skin
   commit (none), grammar 0.1, vocabulary 0.2, today 2026-08-03
 
   stages A-D                                 ok
-  stage F  emit (in memory)   7 views        ok
+  stage F  emit (in memory)   8 views        ok
     ROADMAP.md               current
+    OUTSTANDING-WORK.md      current
     CURRENT-STATE.md         current
     ACTIVE-WORK.md           current
     REVIEW-REQUIRED.md       current
@@ -147,8 +148,9 @@ akr check — save-your-skin
   commit (none), grammar 0.1, vocabulary 0.2, today 2026-08-03
 
   stages A-D                                 ok
-  stage F  emit (in memory)   7 views        FAILED
+  stage F  emit (in memory)   8 views        FAILED
     ROADMAP.md               DIFFERS
+    OUTSTANDING-WORK.md      current
     CURRENT-STATE.md         current
     ACTIVE-WORK.md           current
     REVIEW-REQUIRED.md       current
@@ -171,8 +173,9 @@ akr check — save-your-skin
   commit (none), grammar 0.1, vocabulary 0.2, today 2026-08-03
 
   stages A-D                                 ok
-  stage F  emit (in memory)   7 views        ok
+  stage F  emit (in memory)   8 views        ok
     ROADMAP.md               current
+    OUTSTANDING-WORK.md      current
     CURRENT-STATE.md         current
     ACTIVE-WORK.md           current
     REVIEW-REQUIRED.md       current

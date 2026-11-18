@@ -335,7 +335,7 @@ impl<'a> RenderContext<'a> {
 /// (D-027) — the only view with an emit-only-when-nonempty rule.
 #[must_use]
 pub fn render(view: View, context: RenderContext<'_>) -> Option<String> {
-    match view {
+    let rendered = match view {
         View::Roadmap => Some(render_roadmap(context)),
         View::Backlog => Some(backlog::render(context)),
         View::CurrentState => Some(render_current_state(context)),
@@ -344,7 +344,8 @@ pub fn render(view: View, context: RenderContext<'_>) -> Option<String> {
         View::OpenQuestions => Some(render_open_questions(context)),
         View::DecisionHistory => Some(render_decision_history(context)),
         View::Papercuts => render_papercuts(context),
-    }
+    };
+    rendered.map(|text| crate::secrets::redact(&text))
 }
 
 /// The banner every generated file opens with, on line 1 (D-025).
@@ -378,7 +379,7 @@ pub fn banner(model: &ResolvedModel<'_>) -> String {
 /// come from the required `title` slot (§3), so this is a pure function of a title.
 #[must_use]
 pub fn slug(heading: &str) -> String {
-    let mut text = heading.replace(['`', '*'], "");
+    let mut text = crate::secrets::redact(heading).replace(['`', '*'], "");
     // Strip `[label](target)` down to `label`.
     while let Some(open) = text.find("](") {
         if let Some(close) = text[open..].find(')') {

@@ -26,6 +26,13 @@ Consult at task and state-transition boundaries, not after every edit.
 - `knowledge.get` reads a record; `knowledge.search` finds one. Ranking is not authority.
 - Outside advice is `sources/`. `knowledge.source_search` / `knowledge.source_get` are **non-authoritative** until a record adopts them. Never edit a registered source.
 - Never hand-edit `.akr/` or `docs/generated/`.
+- Private paths, filenames and credentials: `knowledge.secret_put` with a private UTF-8
+  input file (`akr secret put --from <file>`), then cite its opaque `{{secret:<id>}}` token
+  in public text. Normal outputs show `[*]`; canonical retrieval retains opaque tokens.
+  Only explicit `secret get` / `secret resolve --reveal` reads local values; absent data
+  stays `[*]`. Do not reveal keys to remote agents or copy values into public records,
+  evidence, sources or handoffs. `.akr/secrets/` and original input files stay private,
+  outside Git and published archives. Share secrets only through a separate trusted channel.
 
 ### When knowledge changes
 

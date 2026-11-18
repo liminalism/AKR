@@ -5,6 +5,9 @@ humans and AI agents. It gives project decisions, requirements, observations,
 evidence, questions, and work items stable identities, lifecycle states,
 scope, typed relations, freshness, and Git provenance.
 
+Version 0.6.5 adds [local-only secrets and opaque citations](docs/18-private-secrets.md):
+keep developer paths and private values off Git while public ledger text renders `[*]`.
+
 The Rust workspace currently includes the compiler and validator, the `akr`
 CLI, the `knowledge.*` MCP server, full-text search and migration tooling, and
 a read-only native desktop review workbench. The project is under active

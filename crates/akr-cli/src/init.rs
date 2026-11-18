@@ -35,6 +35,15 @@ Durable project knowledge lives in `.akr/` as typed records, not in Markdown.
 - Look things up with `knowledge.get`; find them with `knowledge.search`.
   Search ranks results; it never grants authority. A record's standing comes from its
   state, its scope, and its relations.
+- Private developer information belongs in the local-only secrets category, never in
+  public record prose, titles, evidence commands or source copies. Use
+  `knowledge.secret_put` with a private UTF-8 input file (`akr secret put --from <file>`),
+  then embed its opaque `{{secret:<id>}}` citation in text slots or claims. Keep input
+  files private too. Public output shows `[*]`, even on a developer's machine.
+  `akr secret get <citation> --reveal` or `akr secret resolve --from <file> --reveal`
+  explicitly resolves local values; missing entries stay `[*]`. Do not reveal keys to
+  remote agents or paste resolved output into public records. `.akr/secrets/` is private,
+  gitignored, never indexed or published; share it only through a separate trusted channel.
 - Scratch notes go in `.agent/scratch/`. Nobody reviews them and nothing depends on them
   — but **nothing empties it either**. It is a gitignored directory inside the repository,
   not the OS temp directory and not `target/`, so it survives every session and grows
@@ -76,10 +85,14 @@ Durable project knowledge lives in `.akr/` as typed records, not in Markdown.
 - `knowledge.validate`. If it reports diagnostics, fix them or say so explicitly.
 "#;
 
-/// The paths a workspace must not track: the rebuildable index cache, and the two
-/// disposable agent subtrees (D-036, D-040).
-pub(crate) const GITIGNORE_ENTRIES: &[&str] =
-    &[".akr/cache/", ".agent/scratch/", ".agent/handoffs/"];
+/// The paths a workspace must not track: the rebuildable index cache, the two
+/// disposable agent subtrees (D-036, D-040), and local-only secret entries.
+pub(crate) const GITIGNORE_ENTRIES: &[&str] = &[
+    ".akr/cache/",
+    ".agent/scratch/",
+    ".agent/handoffs/",
+    ".akr/secrets/",
+];
 
 /// The entries `init` would write that `root`'s `.gitignore` does not have.
 ///
@@ -218,7 +231,9 @@ pub fn run_in(
         if !merged.is_empty() && !merged.ends_with('\n') {
             merged.push('\n');
         }
-        merged.push_str("\n# AKR: a rebuildable cache and disposable agent notes.\n");
+        merged.push_str(
+            "\n# AKR: rebuildable cache, disposable agent notes and local-only secrets.\n",
+        );
         for entry in &missing {
             merged.push_str(&format!("{entry}\n"));
         }

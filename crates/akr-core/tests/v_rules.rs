@@ -235,7 +235,50 @@ fn v005_fails_when_a_kind_is_out_of_domain() {
             .rel(Relation::Implements, "@fx.req.something")
             .build(),
     ]);
-    assert_raises(&validate::v005_targets_kind_correct(&l), c::L032);
+    let found = validate::v005_targets_kind_correct(&l);
+    assert_raises(&found, c::L032);
+    let diagnostic = found
+        .iter()
+        .find(|diagnostic| diagnostic.code == c::L032)
+        .expect("out-of-domain relation is diagnosed");
+    assert_eq!(
+        diagnostic.message,
+        "a term may not declare `implements`; its domain is work, decision"
+    );
+    assert_eq!(
+        diagnostic.help.as_deref(),
+        Some("valid term relations for these targets: depends_on, contradicts, derived_from")
+    );
+}
+
+#[test]
+fn v005_milestone_implements_names_domain_and_work_alternative() {
+    let l = ledger(vec![
+        rec("fx.req.something", 1, Kind::Requirement).build(),
+        rec("fx.ms.phase", 1, Kind::Milestone)
+            .rel(Relation::Implements, "@fx.req.something")
+            .build(),
+    ]);
+    let found = validate::v005_targets_kind_correct(&l);
+    assert_raises(&found, c::L032);
+    let diagnostic = found
+        .iter()
+        .find(|diagnostic| diagnostic.code == c::L032)
+        .expect("milestone implements is diagnosed");
+    assert!(
+        diagnostic.message.contains("its domain is work, decision"),
+        "{}",
+        diagnostic.message
+    );
+    let help = diagnostic.help.as_deref().unwrap_or("");
+    assert!(
+        help.contains("valid milestone relations for these targets: depends_on, contradicts, derived_from"),
+        "{help}"
+    );
+    assert!(
+        help.contains("put `implements` on `work` items (`part_of` / `plan_of_record`)"),
+        "{help}"
+    );
 }
 
 #[test]

@@ -1521,12 +1521,122 @@ fn a_claim_named_like_a_required_slot_says_where_the_text_goes() {
 #[test]
 fn relation_schemas_name_their_target_kinds() {
     // A decision proposer learned from two refusals that supported_by cannot point at a
-    // constraint; the schema now says which kinds it can.
+    // constraint; the schema now says both which kinds it can target and which kinds may
+    // declare each relation.
     let schema = akr_mcp::schema::input_schema("knowledge.propose")
         .expect("propose has a schema")
         .to_pretty();
     assert!(
-        schema.contains("References to: observation, evidence, assessment (V-005)."),
+        schema.contains("References to: observation, evidence, assessment (V-005). Declared on: "),
         "{schema}"
     );
+    assert!(
+        schema.contains("Declared on: work, decision."),
+        "implements should name its domain: {schema}"
+    );
+    assert!(
+        schema.contains("Declared on: milestone, work."),
+        "after should name its domain: {schema}"
+    );
+    assert!(
+        schema.contains("knowledge.propose_many"),
+        "relations description should recommend propose_many for connected batches: {schema}"
+    );
+}
+
+#[test]
+fn propose_many_writes_connected_track_and_ordered_milestones_atomically() {
+    let example = Example::materialise("mcp-propose-many");
+    let arguments = r#"{
+        "records": [
+            {
+                "key": "sys.track.launcher",
+                "kind": "track",
+                "title": "Launcher track",
+                "slots": { "intent": "Standing track for phased launcher work." }
+            },
+            {
+                "key": "sys.milestone.phase-0",
+                "kind": "milestone",
+                "title": "Phase 0: app skeleton",
+                "slots": { "intent": "Stand up the initial app skeleton." },
+                "relations": {
+                    "part_of": ["@sys.track.launcher"],
+                    "depends_on": ["@sys.req.deterministic-sim"]
+                },
+                "acceptance": [
+                    { "id": "skeleton-boots", "statement": "App skeleton boots.", "method": "manual" }
+                ]
+            },
+            {
+                "key": "sys.milestone.phase-1",
+                "kind": "milestone",
+                "title": "Phase 1: core loop",
+                "slots": { "intent": "Wire the core loop." },
+                "relations": {
+                    "part_of": ["@sys.track.launcher"],
+                    "after": ["@sys.milestone.phase-0"],
+                    "depends_on": ["@sys.req.deterministic-sim"]
+                },
+                "acceptance": [
+                    { "id": "core-loop", "statement": "Core loop passes tests.", "method": "command", "command": "cargo test" }
+                ]
+            }
+        ]
+    }"#;
+    let (payload, is_error) = call(&example, "knowledge.propose_many", arguments);
+    assert!(!is_error, "{}", error_text(&payload));
+    assert_eq!(payload.get("written").and_then(Value::as_integer), Some(3));
+    assert_eq!(
+        payload
+            .get("records")
+            .and_then(Value::as_array)
+            .map(<[Value]>::len),
+        Some(3)
+    );
+    let tracks = example.read_file(".akr/records/sys/tracks.akr");
+    assert!(tracks.contains("sys.track.launcher/1"), "{tracks}");
+    let milestones = example.read_file(".akr/records/sys/milestones.akr");
+    assert!(milestones.contains("sys.milestone.phase-0/1"), "{milestones}");
+    assert!(milestones.contains("sys.milestone.phase-1/1"), "{milestones}");
+    assert!(milestones.contains("after [ @sys.milestone.phase-0 ]"), "{milestones}");
+    assert_eq!(example.run(&["build"]).code, 0);
+    let check = example.run(&["check"]);
+    assert_eq!(check.code, 0, "{}", check.output());
+}
+
+#[test]
+fn propose_many_is_atomic_and_diagnoses_milestone_implements() {
+    let example = Example::materialise("mcp-propose-many-atomic");
+    let before = example.sources();
+    let arguments = r#"{
+        "records": [
+            {
+                "key": "sys.track.launcher",
+                "kind": "track",
+                "title": "Launcher track",
+                "slots": { "intent": "Standing track." }
+            },
+            {
+                "key": "sys.milestone.phase-0",
+                "kind": "milestone",
+                "title": "Phase 0",
+                "slots": { "intent": "Mis-declared implements on a milestone." },
+                "relations": {
+                    "part_of": ["@sys.track.launcher"],
+                    "implements": ["@sys.req.deterministic-sim"]
+                },
+                "acceptance": [
+                    { "id": "boot", "statement": "Boots cleanly.", "method": "manual" }
+                ]
+            }
+        ]
+    }"#;
+    let (payload, is_error) = call(&example, "knowledge.propose_many", arguments);
+    assert!(is_error, "{payload:?}");
+    let text = error_text(&payload);
+    assert!(text.contains("AKR-L032"), "{text}");
+    assert!(text.contains("its domain is work, decision"), "{text}");
+    assert!(text.contains("depends_on"), "{text}");
+    assert_eq!(before, example.sources(), "a refused batch must write nothing");
 }

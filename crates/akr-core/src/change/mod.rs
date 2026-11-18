@@ -576,7 +576,10 @@ pub fn staged_akr_files(
 ) -> Result<Vec<(String, String)>, ChangeError> {
     let mut out = Vec::new();
     for entry in entries {
-        if entry.path.starts_with(".akr/") && entry.path.ends_with(".akr") {
+        if entry.path.starts_with(".akr/")
+            && entry.path.ends_with(".akr")
+            && !crate::secrets::is_private_path(&entry.path)
+        {
             out.push((entry.path.clone(), repository.blob(&entry.blob)?));
         }
     }
@@ -595,6 +598,7 @@ pub fn akr_files_at(
     for path in repository.run_ls_tree(commit)? {
         if path.starts_with(".akr/")
             && path.ends_with(".akr")
+            && !crate::secrets::is_private_path(&path)
             && let Some(text) = repository.file_at(commit, &path)?
         {
             out.push((path, text));

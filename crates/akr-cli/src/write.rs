@@ -95,6 +95,10 @@ pub fn run(session: &Session, command: &Command) -> Result<Output, EnvError> {
             note_unmatched_watches(session, &mut result, &key, template.as_ref());
             render(session, result)
         }
+        Command::ProposeMany { from } => {
+            let records = propose_records_from_file(session, from)?;
+            propose_many(session, &context, &records)
+        }
         Command::Revise {
             key,
             from,
@@ -756,6 +760,54 @@ pub fn evidence_add(
     )
 }
 
+/// `akr propose-many` / `knowledge.propose_many`: several records in one atomic pass.
+///
+/// Proposing a plan or feature often means writing connected records together — a parent
+/// track, ordered milestones linked by `after` / `part_of`, or initial work records —
+/// where each record cites siblings from the same batch. `propose_many` resolves and
+/// validates the *resulting* ledger once, so either every record lands or none does.
+///
+/// # Errors
+/// [`EnvError`] for an empty batch or a commit the repository does not have.
+pub fn propose_many(
+    session: &Session,
+    context: &WriteContext,
+    records: &[Record],
+) -> Result<Output, EnvError> {
+    if records.is_empty() {
+        return Err(EnvError::new(
+            "AKR-C003",
+            "propose-many needs at least one record",
+        ));
+    }
+    let commits: Vec<Commit> = records.iter().flat_map(commits_named_by).collect();
+    ensure_commits_exist(session, &commits)?;
+    let count = records.len();
+    let mut result = akr_core::ops::propose_many(context, records);
+    for record in records {
+        note_unmatched_watches(session, &mut result, &record.id.key, Some(record));
+    }
+    render(session, result).map(|mut output| {
+        output
+            .text
+            .push_str(&format!("{count} records written in one pass\n"));
+        output
+    })
+}
+
+/// Reads a file of arbitrary records for `akr propose-many --from`.
+///
+/// # Errors
+/// [`EnvError`] when the file cannot be read, does not parse, or holds no records.
+pub fn propose_records_from_file(session: &Session, path: &Path) -> Result<Vec<Record>, EnvError> {
+    records_from_file(
+        session,
+        path,
+        "records",
+        "the file holds one or more `record <key>/1 : <kind> { ... }` blocks",
+    )
+}
+
 /// `akr evidence add-many` / `knowledge.evidence_add_many`: one atomic pipeline pass.
 ///
 /// A verification run produces several evidence records at once, and writing them one at a
@@ -810,6 +862,32 @@ pub fn evidence_add_many(
 /// [`EnvError`] when the file cannot be read, does not parse, or holds a record of another
 /// kind.
 pub fn evidence_records_from_file(session: &Session, path: &Path) -> Result<Vec<Record>, EnvError> {
+    let records = records_from_file(
+        session,
+        path,
+        "evidence",
+        "the file holds one or more `record <key>/1 : evidence { ... }` blocks, each with result, method and observed_at",
+    )?;
+    if let Some(other) = records.iter().find(|r| r.kind != Kind::Evidence) {
+        return Err(EnvError::new(
+            "AKR-C031",
+            format!(
+                "{} holds {}, which is a {} record; evidence add-many writes evidence only",
+                path.display(),
+                other.id,
+                other.kind.name()
+            ),
+        ));
+    }
+    Ok(records)
+}
+
+fn records_from_file(
+    session: &Session,
+    path: &Path,
+    expected: &str,
+    help: &str,
+) -> Result<Vec<Record>, EnvError> {
     let text = std::fs::read_to_string(path)
         .map_err(|e| EnvError::new("AKR-C042", format!("cannot read {}: {e}", path.display())))?;
     let text = with_header(&text, session);
@@ -821,12 +899,9 @@ pub fn evidence_records_from_file(session: &Session, path: &Path) -> Result<Vec<
     let refuse = |message: String| {
         EnvError::new(
             "AKR-C031",
-            format!("{} does not parse as evidence: {message}", path.display()),
+            format!("{} does not parse as {expected}: {message}", path.display()),
         )
-        .help(
-            "the file holds one or more `record <key>/1 : evidence { ... }` blocks, each \
-             with result, method and observed_at",
-        )
+        .help(help)
     };
     let Some(tree) = parsed.file else {
         let first = parsed
@@ -846,17 +921,6 @@ pub fn evidence_records_from_file(session: &Session, path: &Path) -> Result<Vec<
     }
 
     let records: Vec<Record> = ledger.records().to_vec();
-    if let Some(other) = records.iter().find(|r| r.kind != Kind::Evidence) {
-        return Err(EnvError::new(
-            "AKR-C031",
-            format!(
-                "{} holds {}, which is a {} record; evidence add-many writes evidence only",
-                path.display(),
-                other.id,
-                other.kind.name()
-            ),
-        ));
-    }
     if records.is_empty() {
         return Err(EnvError::new(
             "AKR-C031",

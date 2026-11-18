@@ -100,6 +100,26 @@ impl ToolResult {
 pub fn call(root: &Path, name: &str, arguments: &Value) -> Result<ToolResult, ToolError> {
     let name = crate::schema::canonical_tool_name(name).unwrap_or(name);
     match name {
+        "knowledge.secret_put" => run_write(
+            root,
+            Command::SecretPut {
+                from: PathBuf::from(required_str(arguments, "from")?),
+            },
+        ),
+        "knowledge.secret_get" => run_read(
+            root,
+            Command::SecretGet {
+                reference: required_str(arguments, "ref")?.to_owned(),
+                reveal: secret_reveal(arguments)?,
+            },
+        ),
+        "knowledge.secret_resolve" => run_read(
+            root,
+            Command::SecretResolve {
+                from: PathBuf::from(required_str(arguments, "from")?),
+                reveal: secret_reveal(arguments)?,
+            },
+        ),
         "knowledge.config_get" => run_read(root, Command::ConfigShow),
         "knowledge.config_edit" => config_edit(root, arguments),
         "knowledge.search" => search(root, arguments),
@@ -119,6 +139,7 @@ pub fn call(root: &Path, name: &str, arguments: &Value) -> Result<ToolResult, To
         "knowledge.impact" => impact(root, arguments),
         "knowledge.validate" => validate(root, arguments),
         "knowledge.propose" => propose(root, arguments),
+        "knowledge.propose_many" => propose_many(root, arguments),
         "knowledge.revise" => revise(root, arguments),
         "knowledge.supersede" => supersede(root, arguments),
         "knowledge.complete" => complete(root, arguments),
@@ -194,6 +215,14 @@ pub fn call(root: &Path, name: &str, arguments: &Value) -> Result<ToolResult, To
 // -------------------------------------------------------------------------------------
 // read tools
 // -------------------------------------------------------------------------------------
+
+fn secret_reveal(arguments: &Value) -> Result<bool, ToolError> {
+    match arguments.get("reveal") {
+        None => Ok(false),
+        Some(Value::Bool(value)) => Ok(*value),
+        _ => Err(ToolError::new("AKR-C004", "reveal must be a boolean")),
+    }
+}
 
 fn source_list(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
     run_read(
@@ -809,8 +838,10 @@ fn config_edit(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> 
     Ok(ToolResult::Structured(finish(&session.sources, output)?))
 }
 
-fn propose(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
-    let session = open(root, true)?;
+fn build_proposed_record(
+    session: &Session,
+    arguments: &Value,
+) -> Result<(LogicalKey, akr_core::model::Kind, String, akr_core::model::Record), ToolError> {
     let key = required_str(arguments, "key")?;
     let kind_name = required_str(arguments, "kind")?;
     let title = required_str(arguments, "title")?;
@@ -831,13 +862,63 @@ fn propose(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
         arguments,
     )?;
     let template = record::parse(&source, &parsed)?;
+    Ok((parsed, kind, title.to_owned(), template))
+}
+
+fn propose(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
+    let session = open(root, true)?;
+    let (parsed, kind, title, template) = build_proposed_record(&session, arguments)?;
     akr_cli::write::ensure_commits_exist(&session, &akr_cli::write::commits_named_by(&template))
         .map_err(environment)?;
     let context = write_context(&session);
-    let mut result = akr_core::ops::propose(&context, &parsed, kind, title, Some(template.clone()));
+    let mut result = akr_core::ops::propose(&context, &parsed, kind, &title, Some(template.clone()));
     akr_cli::write::note_unmatched_watches(&session, &mut result, &parsed, Some(&template));
     Ok(ToolResult::Structured(write_result(
         &session, &parsed, result,
+    )?))
+}
+
+fn propose_many(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
+    let session = open(root, true)?;
+    let items = arguments
+        .get("records")
+        .and_then(Value::as_array)
+        .ok_or_else(|| ToolError::new("AKR-C003", "`records` must be a non-empty array"))?;
+    if items.is_empty() {
+        return Err(ToolError::new(
+            "AKR-C003",
+            "`records` must contain at least one record",
+        ));
+    }
+    if items.len() > 100 {
+        return Err(ToolError::new(
+            "AKR-C004",
+            "`records` accepts at most 100 records per transaction",
+        ));
+    }
+
+    let mut records = Vec::with_capacity(items.len());
+    for item in items {
+        let (_, _, _, template) = build_proposed_record(&session, item)?;
+        records.push(template);
+    }
+    let first_target = records[0].id.key.clone();
+    let commits: Vec<akr_core::model::Commit> = records
+        .iter()
+        .flat_map(akr_cli::write::commits_named_by)
+        .collect();
+    akr_cli::write::ensure_commits_exist(&session, &commits).map_err(environment)?;
+
+    let context = write_context(&session);
+    let mut result = akr_core::ops::propose_many(&context, &records);
+    for record in &records {
+        akr_cli::write::note_unmatched_watches(&session, &mut result, &record.id.key, Some(record));
+    }
+    Ok(ToolResult::Structured(write_many_result(
+        &session,
+        &first_target,
+        "records",
+        result,
     )?))
 }
 
@@ -1115,7 +1196,7 @@ fn evidence_add_many(root: &Path, arguments: &Value) -> Result<ToolResult, ToolE
     .map_err(environment)?;
     let result = akr_core::ops::propose_many(&context, &records);
     Ok(ToolResult::Structured(write_many_result(
-        &session, &target, result,
+        &session, &target, "evidence", result,
     )?))
 }
 
@@ -1687,6 +1768,7 @@ fn write_result(
 fn write_many_result(
     session: &Session,
     first_target: &LogicalKey,
+    collection_key: &str,
     result: akr_core::ops::WriteResult,
 ) -> Result<Value, ToolError> {
     let applied = match result {
@@ -1725,7 +1807,7 @@ fn write_many_result(
         })
         .collect();
     let mut fields = vec![
-        ("evidence", Value::array(entries)),
+        (collection_key, Value::array(entries)),
         (
             "written",
             Value::integer(i64::try_from(applied.changes.len()).unwrap_or(i64::MAX)),

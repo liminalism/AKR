@@ -52,6 +52,13 @@ against a declared section set (§10) rather than adding a case to the renderer.
 
 These hold in every view, and they are what make the output diffable.
 
+**Private citations render as `[*]`.** Inline `{{secret:<32 lowercase hex digits>}}`
+tokens are redacted without opening private storage, even on developer machines. No
+generated public view expands private values or links to the secret directory. This is
+separate from the public `@key` reference system. Canonical source retrieval preserves
+opaque citation tokens; explicit local resolution is described in
+[private secrets](18-private-secrets.md).
+
 **Headings come from `title`.** Every record carries a required `title` slot (D-012), and
 that string, verbatim, is the heading. Nothing is derived from prose, truncated from a
 statement, or synthesised. Two selected records with the same title in one view produce

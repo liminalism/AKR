@@ -24,6 +24,7 @@ pub fn add(
     observed_at: Option<&str>,
     scope: Option<&str>,
 ) -> Result<Output, EnvError> {
+    crate::secrets::public_input(&session.root, path)?;
     let workspace_root = session.root.clone();
     let origin = origin.unwrap_or("external");
     let origin_ty = SourceOrigin::from_str(origin).ok_or_else(|| {
@@ -608,6 +609,7 @@ pub fn supersede(
     new_path: &Path,
     new_id: Option<&str>,
 ) -> Result<Output, EnvError> {
+    crate::secrets::public_input(&session.root, new_path)?;
     let workspace_root = session.root.clone();
     let mut catalog = source::load_catalog(&workspace_root).map_err(to_env)?;
     let old = catalog

@@ -1,5 +1,7 @@
 # AKR index cache — a rebuildable artifact, never canonical (see D-019).
 .akr/cache/
+# Local-only secret entries. Public records contain opaque citations, never values.
+.akr/secrets/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal

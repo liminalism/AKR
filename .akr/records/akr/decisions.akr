@@ -817,6 +817,23 @@ record akr.decision.post-commit-validation/1 : decision {
     supported_by [ @akr.evidence.post-commit-validation-suite/1 ]
 }
 
+record akr.decision.private-citations-outside-public-graph/1 : decision {
+    title "Secret citations name local entries outside the public knowledge graph"
+    state active
+    scope [ path "crates/**", path "docs/**", path "scripts/**" ]
+    decision """
+        Keep immutable secret-category entries under gitignored .akr/secrets, outside all public ledger discovery. Public text carries {{secret:<32 lowercase hex digits>}} opaque citations whose identities are independent of their values. Normal outputs render [*] without reading private storage; canonical retrieval preserves citation tokens. Only explicit local secret get/resolve reveal operations may read values, with missing entries rendered [*]. Add shared CLI/MCP tools, standard agent guidance, guards against private data in the Git index and public input workflows, and version 0.6.5.
+        """
+    context """
+        Normal AKR records flow into locks, SQLite indexes, generated views and handoffs. A secret kind inside that graph would make private bytes part of public compiler state.
+        """
+    consequences """
+        Public clones do not contain values, value-derived hashes, retrieval endpoints or required secret targets. Developers share private stores through a separate trusted channel. Storage is plaintext under OS permissions, not encrypted credential management. Explicit MCP reveals send values to the caller and model provider; credentials that must stay local use the CLI. Ignore rules and AKR Git guards do not police arbitrary third-party upload/archive tools or remove old leaks from Git history.
+        """
+    implements [ @akr.requirement.developer-information-stays-private/1 ]
+    author "dk"
+}
+
 record akr.decision.proposed-means-recorded-and-an-observation-is-support/1 : decision {
     title "D-042 — proposed on a normative record means recorded, not pending; and an observation is support"
     state active

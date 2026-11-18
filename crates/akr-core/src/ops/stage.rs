@@ -54,6 +54,13 @@ impl std::error::Error for LoadError {}
 fn collect(dir: &Path, base: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
     for entry in fs::read_dir(dir)? {
         let path = entry?.path();
+        if dir == base
+            && path
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case("secrets"))
+        {
+            continue;
+        }
         if path.is_dir() {
             collect(&path, base, out)?;
         } else if path.extension().is_some_and(|e| e == "akr") {

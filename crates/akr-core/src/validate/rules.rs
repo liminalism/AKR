@@ -6,8 +6,9 @@
 use crate::diagnostics::codes as c;
 use crate::diagnostics::{Diagnostic, Label, RuleId, SlotRef, Subject};
 use crate::model::{
-    Class, Commit, ContentSlot, ContentValue, EvidenceResult, HeadError, Kind, Ledger, LogicalKey,
-    Range, Record, Reference, Relation, RevisionId, ScopeTerm, SourceKind, State, scopes_overlap,
+    Class, Commit, ContentSlot, ContentValue, Domain, EvidenceResult, HeadError, Kind, Ledger,
+    LogicalKey, Range, Record, Reference, Relation, RevisionId, ScopeTerm, SourceKind, State,
+    scopes_overlap,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -332,20 +333,62 @@ pub fn v005_targets_kind_correct(ledger: &Ledger) -> Vec<Diagnostic> {
     for record in ordered(ledger) {
         for (relation, targets) in &record.relations {
             if !relation.domain().accepts(record.kind) {
-                let legal = Relation::ALL
+                let allowed_sources = match relation.domain() {
+                    Domain::Any => "any kind".to_owned(),
+                    Domain::Kinds(kinds) => kinds
+                        .iter()
+                        .map(|kind| kind.name())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                };
+                let target_kinds: Vec<Kind> = targets
                     .iter()
-                    .filter(|candidate| candidate.domain().accepts(record.kind))
+                    .filter_map(|reference| target_of(ledger, reference).map(|target| target.kind))
+                    .collect();
+                let compatible = Relation::ALL
+                    .iter()
+                    .filter(|candidate| {
+                        candidate.domain().accepts(record.kind)
+                            && !target_kinds.is_empty()
+                            && target_kinds
+                                .iter()
+                                .all(|kind| candidate.range().accepts(record.kind, *kind))
+                    })
                     .map(|candidate| candidate.name())
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                    .collect::<Vec<_>>();
+                let mut help = if !compatible.is_empty() {
+                    format!(
+                        "valid {} relations for these targets: {}",
+                        record.kind,
+                        compatible.join(", ")
+                    )
+                } else {
+                    let legal = Relation::ALL
+                        .iter()
+                        .filter(|candidate| candidate.domain().accepts(record.kind))
+                        .map(|candidate| candidate.name())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("valid {} relations: {legal}", record.kind)
+                };
+                if *relation == Relation::Implements
+                    && matches!(record.kind, Kind::Milestone | Kind::Track)
+                {
+                    help.push_str(
+                        "; use `depends_on` for prerequisites, or put `implements` on `work` items (`part_of` / `plan_of_record`) or `decision` records",
+                    );
+                }
                 out.push(
                     Diagnostic::error(
                         c::L032,
                         RULE,
                         slot_subject(record, SlotRef::Relation(*relation)),
-                        format!("a {} may not declare `{relation}`", record.kind),
+                        format!(
+                            "a {} may not declare `{relation}`; its domain is {allowed_sources}",
+                            record.kind
+                        ),
                     )
-                    .help(format!("valid {} relations: {legal}", record.kind)),
+                    .help(help),
                 );
             }
             for reference in targets {

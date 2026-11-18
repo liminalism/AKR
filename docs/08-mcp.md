@@ -124,6 +124,9 @@ in prose and in these two checks, not in a schema anyone can validate against.
 
 | Tool | Kind | CLI equivalent | Idempotent |
 | --- | --- | --- | --- |
+| `knowledge.secret_put` | write | `akr secret put --from` | no (new opaque entry) |
+| `knowledge.secret_get` | read | `akr secret get` | yes |
+| `knowledge.secret_resolve` | read | `akr secret resolve --from` | yes |
 | `knowledge.search` | read | `akr search` | yes |
 | `knowledge.start` | read | `akr start` | yes |
 | `knowledge.explain` | read | `akr explain` | yes |
@@ -143,11 +146,12 @@ in prose and in these two checks, not in a schema anyone can validate against.
 | `knowledge.config_get` | read | `akr config show` | yes |
 | `knowledge.config_edit` | write | `akr config set`, `akr config untracked add/remove` | by configuration |
 | `knowledge.propose` | write | `akr propose` | by key |
+| `knowledge.propose_many` | write | `akr propose-many --from` | by all keys |
 | `knowledge.revise` | write | `akr revise` | no |
 | `knowledge.supersede` | write | `akr supersede` | no |
 | `knowledge.complete` | write | `akr complete` | by state |
 | `knowledge.evidence_add` | write | `akr evidence add` | by key |
-| `knowledge.evidence_add_many` | write | — | by all keys |
+| `knowledge.evidence_add_many` | write | `akr evidence add-many --from` | by all keys |
 | `knowledge.papercut` | write | `akr papercut` | no |
 | `knowledge.handoff_capsule` | read | `akr handoff capsule` | yes |
 | `knowledge.handoff_session_begin` | write | `akr handoff session begin` | no |
@@ -498,6 +502,29 @@ than the request:
   references in play at the one moment somebody is looking. `akr revise` prints the same
   lines.
 
+### `knowledge.propose_many`
+
+```jsonc
+{ "records": [
+    { "key": "app.track.launcher", "kind": "track", "title": "Launcher track",
+      "slots": { "intent": "Standing track for launcher phases." } },
+    { "key": "app.milestone.phase-0", "kind": "milestone", "title": "Phase 0",
+      "relations": { "part_of": ["@app.track.launcher"] },
+      "acceptance": [ { "id": "boot", "statement": "App boots", "method": "manual" } ] },
+    { "key": "app.milestone.phase-1", "kind": "milestone", "title": "Phase 1",
+      "relations": { "part_of": ["@app.track.launcher"],
+                     "after": ["@app.milestone.phase-0"] },
+      "acceptance": [ { "id": "core", "statement": "Core tests pass", "method": "command", "command": "cargo test" } ] }
+] }
+```
+
+Accepts 1–100 `knowledge.propose` payloads in `records`, validates all of them together as
+one resulting ledger, and commits every record or none. Use it when proposing connected
+records (`part_of`, `after`, `depends_on`, `plan_of_record`, `implements`) rather than
+issuing parallel or sequential `knowledge.propose` calls. Existing or duplicate keys reject
+the whole batch without partial writes. Returns `{ "records": [...], "written": n,
+"lock_stale": true, ... }`.
+
 ### `knowledge.revise`
 
 ```jsonc
@@ -616,6 +643,23 @@ the way, and — as a bonus — a guess at the cause or fix. The message is the 
 ceremony: the key, the commit, the author and the date are filled in by the tool. Not
 idempotent, deliberately: a log never refuses an entry, so the same message twice is two
 records with distinct keys. The aggregate renders to `PAPERCUTS.md` on the next build.
+
+### Local-only secret tools (0.6.5)
+
+`knowledge.secret_put` takes `from`, a private local UTF-8 file, and returns a `citation`
+such as `{{secret:0123456789abcdef0123456789abcdef}}`. It never returns the value. The
+entry is in the local secret category, outside the public typed-record graph.
+`knowledge.secret_get` takes `ref`; `knowledge.secret_resolve` takes `from`, a document
+with inline citations. Both default to `[*]`. `reveal: true` explicitly permits values
+in the response; missing entries still render `[*]`. CLI counterparts are `akr secret
+put --from`, `akr secret get` and `akr secret resolve --from`, with `--reveal` on reads.
+
+These tools do not alter the public ledger or its source graph. `secret_put` is a write
+tool; the others are reads. The handshake and installed agent section instruct agents
+to keep sensitive developer details out of public records and use opaque citations.
+Revealed MCP responses reach the agent/model provider: credentials that must stay on
+the local machine should be resolved through the CLI. See
+[private secrets](18-private-secrets.md) for storage, sharing and publication rules.
 
 ## 5. Error mapping
 
@@ -736,6 +780,13 @@ Consult at task and state-transition boundaries, not after every edit.
 - `knowledge.get` reads a record; `knowledge.search` finds one. Ranking is not authority.
 - Outside advice is `sources/`. `knowledge.source_search` / `knowledge.source_get` are **non-authoritative** until a record adopts them. Never edit a registered source.
 - Never hand-edit `.akr/` or `docs/generated/`.
+- Private paths, filenames and credentials: `knowledge.secret_put` with a private UTF-8
+  input file (`akr secret put --from <file>`), then cite its opaque `{{secret:<id>}}` token
+  in public text. Normal outputs show `[*]`; canonical retrieval retains opaque tokens.
+  Only explicit `secret get` / `secret resolve --reveal` reads local values; absent data
+  stays `[*]`. Do not reveal keys to remote agents or copy values into public records,
+  evidence, sources or handoffs. `.akr/secrets/` and original input files stay private,
+  outside Git and published archives. Share secrets only through a separate trusted channel.
 
 ### When knowledge changes
 

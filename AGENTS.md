@@ -77,6 +77,14 @@ Consult AKR at task and state-transition boundaries, not after every edit.
 - Scratch notes go in `.agent/scratch/`. Nobody reviews them and nothing depends on them
   — but **nothing empties it either**, so they are still yours. See "Scratch" below.
 
+Private filenames, paths and credentials belong in local-only secret entries. Use
+`knowledge.secret_put` with a private UTF-8 input file (`akr secret put --from <file>`),
+then embed the returned opaque `{{secret:<id>}}` citation in public text slots or claims.
+Normal outputs show `[*]`; canonical retrieval retains citation tokens. Only explicit
+`secret get` / `secret resolve --reveal` reads local values. Do not reveal credentials
+to remote agents or paste resolved values into public records, evidence, sources or
+handoffs. `.akr/secrets/` and original input files must stay private and out of Git.
+
 **When something becomes durable**
 - New knowledge: `knowledge.propose`. Observations need `observed_at` and, if they can
   go out of date, `watches`.

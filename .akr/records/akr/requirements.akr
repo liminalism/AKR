@@ -1,0 +1,15 @@
+akr 0.1
+project akr
+
+record akr.requirement.developer-information-stays-private/1 : requirement {
+    title "Developer-specific information must stay outside the published ledger"
+    state active
+    scope [ path "crates/**", path "docs/**", path "scripts/**" ]
+    statement """
+        Provide a local-only secrets category for developer-specific filenames, paths and credentials. Public ledger text can cite private entries through opaque identifiers; readers without the private data see [*], can build and validate normally, and have no AKR route to retrieve the missing values. Teach agents this workflow in the standard MCP prompt and release it as 0.6.5.
+        """
+    rationale """
+        User request on 2026-11-10: ordinary development must not require uploading developer information or credentials to public repositories or published ledger views.
+        """
+    author "dk"
+}

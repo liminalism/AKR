@@ -74,8 +74,13 @@ load-bearing one in the whole design:
 | Layer | Contents | Canonical | Written by |
 | --- | --- | --- | --- |
 | Scratch | `.agent/scratch/` — disposable working notes | No | Agents, freely, with no ceremony — and cleaned up by them, since nothing else does (D-036) |
-| Ledger | `.akr/**` — typed records | **Yes** | Humans and agents, through validated operations |
+| Ledger | Public `.akr/` sources — typed records; excludes cache and secrets | **Yes** | Humans and agents, through validated operations |
 | Views | `docs/generated/**` | No | `akr build`, never by hand |
+
+The local-only [secret category](18-private-secrets.md), introduced in 0.6.5, sits outside
+these public layers. `.akr/secrets/` holds private developer values; public text stores
+opaque citations and generated views show `[*]`. Secret entries are never compiler
+inputs or indexed knowledge, and are excluded from Git/publication.
 
 ## 3. What the compiler does and does not guarantee
 

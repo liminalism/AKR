@@ -228,12 +228,25 @@ impl Server {
         } else {
             ("knowledge.context", "knowledge.validate")
         };
+        let secret_put = if self.host_safe_tool_names.load(Ordering::Relaxed) {
+            "knowledge_secret_put"
+        } else {
+            "knowledge.secret_put"
+        };
+        let privacy = format!(
+            " Keep private paths, filenames and credentials in local-only secret entries \
+             using {secret_put} from a private UTF-8 file; cite the returned opaque \
+             {{{{secret:<id>}}}} token in public text. Public output renders [*]. Never copy \
+             resolved values into public records, sources, evidence or handoffs. Secret \
+             storage (.akr/secrets/) must stay out of Git and published files. Reveal \
+             is explicit and sends values to the caller; do not reveal keys to remote agents."
+        );
         if self.rootless {
             return Value::string(format!(
                 "No AKR ledger at {}; the workspaces are below it. Pass `workspace` (a \
                  workspace directory, absolute or relative to that directory) with every \
                  call. Call {context} before touching code, and {validate} before handing \
-                 work back.",
+                 work back.{privacy}",
                 std::path::absolute(&self.root)
                     .unwrap_or_else(|_| self.root.clone())
                     .display()
@@ -241,7 +254,7 @@ impl Server {
         }
         Value::string(format!(
             "AKR knowledge ledger at {}. Call {context} before touching \
-             code, and {validate} before handing work back.",
+             code, and {validate} before handing work back.{privacy}",
             self.root.display()
         ))
     }

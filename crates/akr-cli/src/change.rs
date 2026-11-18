@@ -39,6 +39,7 @@ fn to_env(error: change::ChangeError) -> EnvError {
 
 /// Parses the `.akr` files of two trees and compares them.
 fn staged_delta(session: &Session) -> Result<(SemanticDelta, Vec<IndexEntry>), EnvError> {
+    crate::secrets::ensure_untracked(session)?;
     let repository = repository(session)?;
     let entries = repository
         .staged_entries()

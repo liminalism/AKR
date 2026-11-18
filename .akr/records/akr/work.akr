@@ -2481,6 +2481,90 @@ record akr.work.post-commit-validation/2 : work {
     supersedes [ @akr.work.post-commit-validation/1 ]
 }
 
+record akr.work.private-secret-citations/1 : work {
+    title "Keep developer secrets local and cite them safely from the public ledger"
+    state superseded
+    scope [
+        path ".gitignore",
+        path "AGENTS.md",
+        path "Cargo.lock",
+        path "Cargo.toml",
+        path "crates/**",
+        path "docs/**",
+        path "spec/**"
+    ]
+    intent """
+        Add a private secrets category outside the canonical public ledger, opaque citations with [*] fallback, explicit local resolution, Git/publication safeguards, agent MCP guidance, and version 0.6.5.
+        """
+    acceptance {
+        check citation-workflow {
+            statement """
+                CLI and MCP can write local secrets, cite them and explicitly resolve locally; public readers get [*]; agent instructions teach the boundary.
+                """
+            method command
+        }
+        check private-boundary {
+            statement """
+                Secret values stay outside public ledger, generated views, caches, handoffs and Git; missing local data does not invalidate public records.
+                """
+            method command
+        }
+        check release {
+            statement """
+                Workspace is version 0.6.5 and relevant automated checks pass.
+                """
+            method command
+        }
+    }
+    author "dk"
+}
+
+record akr.work.private-secret-citations/2 : work {
+    title "Keep developer secrets local and cite them safely from the public ledger"
+    state completed
+    scope [
+        path ".gitignore",
+        path "AGENTS.md",
+        path "Cargo.lock",
+        path "Cargo.toml",
+        path "README.md",
+        path "crates/**",
+        path "docs/**",
+        path "examples/save-your-skin/transcripts/**",
+        path "scripts/**",
+        path "spec/**"
+    ]
+    intent """
+        Add a private secrets category outside the canonical public ledger, opaque citations with [*] fallback, explicit local resolution, Git/publication safeguards, agent MCP guidance, and version 0.6.5.
+        """
+    acceptance {
+        check citation-workflow {
+            statement """
+                CLI and MCP can write local secrets, cite them and explicitly resolve locally; public readers get [*]; agent instructions teach the boundary.
+                """
+            method command
+            verified_by [ @akr.evidence.private-secret-interface-suite/1 ]
+        }
+        check private-boundary {
+            statement """
+                Secret values stay outside public ledger, generated views, caches, handoffs and Git; missing local data does not invalidate public records.
+                """
+            method command
+            verified_by [ @akr.evidence.private-secret-interface-suite/1 ]
+        }
+        check release {
+            statement """
+                Workspace is version 0.6.5 and relevant automated checks pass.
+                """
+            method command
+            verified_by [ @akr.evidence.private-secret-release-checks/1 ]
+        }
+    }
+    implements [ @akr.requirement.developer-information-stays-private/1 ]
+    supersedes [ @akr.work.private-secret-citations/1 ]
+    author "dk"
+}
+
 record akr.work.propose-dry-run-introspection/1 : work {
     title "Dry-run or schema-introspection mode for propose validation"
     state proposed

@@ -116,6 +116,25 @@ pub struct Invocation {
 /// The commands of `docs/07-cli.md` §6.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
+    /// Store a local-only immutable secret entry from a UTF-8 file.
+    SecretPut {
+        /// Input file; its value is never accepted as a command-line argument.
+        from: PathBuf,
+    },
+    /// Read a local secret citation, redacted unless explicitly revealed.
+    SecretGet {
+        /// Opaque citation or identifier.
+        reference: String,
+        /// Explicitly allow private values in this output.
+        reveal: bool,
+    },
+    /// Render a local document containing secret citations.
+    SecretResolve {
+        /// Input document, never modified.
+        from: PathBuf,
+        /// Explicitly allow private values in this output.
+        reveal: bool,
+    },
     /// Read project configuration through the supported surface.
     ConfigShow,
     /// Replace project configuration from a complete project file.
@@ -469,6 +488,11 @@ pub enum Command {
         /// A file holding the record body.
         from: Option<PathBuf>,
     },
+    /// `akr propose-many --from <file>`.
+    ProposeMany {
+        /// A file holding one or more `record <key>/1 : <kind> { ... }` blocks.
+        from: PathBuf,
+    },
     /// `akr revise <key>`.
     Revise {
         /// The key to revise.
@@ -679,6 +703,9 @@ impl Command {
     #[must_use]
     pub fn name(&self) -> String {
         match self {
+            Self::SecretPut { .. } => "secret put".to_owned(),
+            Self::SecretGet { .. } => "secret get".to_owned(),
+            Self::SecretResolve { .. } => "secret resolve".to_owned(),
             Self::ConfigShow | Self::ConfigSet { .. } | Self::ConfigUntracked { .. } => {
                 "config".to_owned()
             }
@@ -727,6 +754,7 @@ impl Command {
             | Self::SourceDependents { .. }
             | Self::SourceFinalize { .. } => "source".to_owned(),
             Self::Propose { .. } => "propose".to_owned(),
+            Self::ProposeMany { .. } => "propose-many".to_owned(),
             Self::Revise { .. } => "revise".to_owned(),
             Self::Supersede { .. } => "supersede".to_owned(),
             Self::Complete { .. } => "complete".to_owned(),
@@ -801,6 +829,7 @@ impl UsageError {
 /// command missing here is a command no typo ever finds and whose `--help` nobody
 /// notices is absent — which is how `git-hook` came to answer "unknown command".
 pub const COMMANDS: &[&str] = &[
+    "secret",
     "config",
     "init",
     "fmt",
@@ -999,6 +1028,47 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
     };
 
     Ok(match name {
+        "secret" => {
+            known_flags(&["--from", "--reveal"])?;
+            if at_seen {
+                return Err(UsageError::new(
+                    "AKR-C005",
+                    "local secret entries have no Git history; --at is not supported",
+                ));
+            }
+            let bare = values_skipped(tail, &["--from"]);
+            let sub = bare.first().ok_or_else(|| {
+                UsageError::new("AKR-C003", "secret requires put, get or resolve")
+            })?;
+            let from = || {
+                option_value(tail, "--from")
+                    .map(PathBuf::from)
+                    .ok_or_else(|| {
+                        UsageError::new("AKR-C003", "secret put/resolve requires --from <file>")
+                    })
+            };
+            match sub.as_str() {
+                "put" if !flag_set("--reveal") && bare.len() == 1 => {
+                    Command::SecretPut { from: from()? }
+                }
+                "get" if option_value(tail, "--from").is_none() && bare.len() == 2 => {
+                    Command::SecretGet {
+                        reference: bare[1].to_owned(),
+                        reveal: flag_set("--reveal"),
+                    }
+                }
+                "resolve" if bare.len() == 1 => Command::SecretResolve {
+                    from: from()?,
+                    reveal: flag_set("--reveal"),
+                },
+                _ => {
+                    return Err(UsageError::new(
+                        "AKR-C004",
+                        "use secret put --from <file>, get <citation> [--reveal], or resolve --from <file> [--reveal]",
+                    ));
+                }
+            }
+        }
         "config" => match tail.first().map(String::as_str).unwrap_or("show") {
             "show" if tail.len() <= 1 => Command::ConfigShow,
             "set" => {
@@ -1338,6 +1408,28 @@ fn parse_command(name: &str, tail: &[String], at_seen: bool) -> Result<Command, 
                 kind: option_value(tail, "--kind"),
                 title: option_value(tail, "--title"),
                 from: option_value(tail, "--from").map(PathBuf::from),
+            }
+        }
+        "propose-many" => {
+            refuse_edit(tail)?;
+            known_flags(&["--from"])?;
+            let bare = values_skipped(tail, &["--from"]);
+            if let Some(extra) = bare.first() {
+                return Err(UsageError::new(
+                    "AKR-C002",
+                    format!(
+                        "unexpected argument {extra:?}; propose-many reads keys from --from"
+                    ),
+                ));
+            }
+            Command::ProposeMany {
+                from: option_value(tail, "--from")
+                    .map(PathBuf::from)
+                    .ok_or_else(|| {
+                        UsageError::new("AKR-C003", "propose-many requires --from <file>").with_help(
+                            "the file holds one or more `record <key>/1 : <kind> { ... }` blocks",
+                        )
+                    })?,
             }
         }
         "revise" => {
@@ -2063,14 +2155,17 @@ fn parse_handoff(
     let from_file = |flag: &str| -> Result<Option<String>, UsageError> {
         match option_value(tail, flag) {
             None => Ok(None),
-            Some(path) => Ok(Some(
-                std::fs::read_to_string(&path)
-                    .map_err(|error| {
-                        UsageError::new("AKR-C004", format!("{flag} {path}: {error}"))
-                    })?
-                    .trim_end_matches(['\n', '\r'])
-                    .to_owned(),
-            )),
+            Some(path) => {
+                refuse_private_argument_file(&path)?;
+                Ok(Some(
+                    std::fs::read_to_string(&path)
+                        .map_err(|error| {
+                            UsageError::new("AKR-C004", format!("{flag} {path}: {error}"))
+                        })?
+                        .trim_end_matches(['\n', '\r'])
+                        .to_owned(),
+                ))
+            }
         }
     };
     let one_of = |inline: &str, file: &str| -> Result<Option<String>, UsageError> {
@@ -2106,6 +2201,7 @@ fn parse_handoff(
                 )
                 .with_help("put every field in the spec file; it takes the MCP tool's arguments"));
             }
+            refuse_private_argument_file(&path)?;
             let text = std::fs::read_to_string(&path)
                 .map_err(|error| UsageError::new("AKR-C004", format!("--spec {path}: {error}")))?;
             Some(
@@ -2461,6 +2557,17 @@ fn values_skipped<'a>(tail: &'a [String], value_flags: &[&str]) -> Vec<&'a Strin
     out
 }
 
+fn refuse_private_argument_file(path: &str) -> Result<(), UsageError> {
+    let root = std::env::current_dir()
+        .map_err(|_| UsageError::new("AKR-C004", "cannot resolve the input-file directory"))?;
+    akr_core::secrets::require_public_input(&root, PathBuf::from(path).as_path()).map_err(|_| {
+        UsageError::new(
+            "AKR-C004",
+            "private secret storage cannot be used as a handoff input file",
+        )
+    })
+}
+
 /// Every value of a repeatable flag, in order.
 /// `--paths a b` takes `a` and leaves `b` as a second positional, which used to be
 /// dropped without a word. One positional is the most either command takes.
@@ -2520,6 +2627,7 @@ fn mcp_equivalent(name: &str) -> Option<String> {
     let (head, tail) = match rest.split_once('_') {
         Some(("evidence", tail)) => ("evidence", Some(tail.replace('_', "-"))),
         Some(("source", tail)) => ("source", Some(tail.replace('_', "-"))),
+        Some(("secret", tail)) => ("secret", Some(tail.replace('_', "-"))),
         Some(("handoff", tail)) => ("handoff", Some(tail.replace('_', "-"))),
         _ => (rest, None),
     };
@@ -2570,6 +2678,9 @@ fn distance(a: &str, b: &str) -> usize {
 #[must_use]
 #[allow(clippy::too_many_lines)]
 pub fn help_for(name: &str) -> Option<String> {
+    if name == "secret" {
+        return Some("akr secret put --from <private-utf8-file>\nakr secret get <citation> [--reveal]\nakr secret resolve --from <document> [--reveal]\n\nLocal-only secret category in .akr/secrets/. put returns an opaque {{secret:<id>}}\ncitation; embed that token in public record text. Public output always shows [*].\nOnly --reveal reads private values. Missing private data also shows [*].\nInput files and revealed output must stay private. Do not reveal credentials to\nremote agents. Share the private store only through a separate trusted channel.\n".to_owned());
+    }
     let text = match name {
         "config" => {
             "akr config show\nakr config set --from <file>\nakr config untracked add|remove <glob>\n\nRead or edit .akr/project.akr through the locked write pipeline.\nset accepts a complete AKR project file; records and project renames are refused.\nUntracked edits preserve other declarations. Invalid edits write nothing.\nRun `akr build` after changing configuration.\n"
@@ -2968,9 +3079,14 @@ pub fn help_for(name: &str) -> Option<String> {
         }
         "propose" => {
             "akr propose <key> [--kind <kind>] [--title <text>] [--from <file>]\n\
+             akr propose-many --from <file>\n\
              \n\
              Creates revision 1 of a new key in its class's initial state. An existing\n\
              key is an error: use `akr revise`.\n\
+             \n\
+             To create several connected records in one atomic pass (for example a\n\
+             track and milestones linked by `part_of` or `after`), use\n\
+             `akr propose-many --from <file>`.\n\
              \n\
              <key> is dot-delimited: namespace.topic.slug — the first segment must be a\n\
              namespace declared in .akr/project.akr. Every segment starts with a\n\
@@ -2995,6 +3111,22 @@ pub fn help_for(name: &str) -> Option<String> {
              \x20                     names a file whose record line declares one\n\
              \x20   --title <text>    the one-line label\n\
              \x20   --from <file>     a file holding an AKR slot-list fragment\n"
+        }
+        "propose-many" => {
+            "akr propose-many --from <file>\n\
+             \n\
+             Creates revision 1 of several new keys in one atomic pipeline pass: all\n\
+             records are parsed, lowered, and validated together before any file is\n\
+             written, so forward or mutual references (`part_of`, `after`,\n\
+             `depends_on`, `plan_of_record`, `implements`) between records in the\n\
+             same batch resolve without sequential round-trips. Either every record\n\
+             lands or none does.\n\
+             \n\
+             The file holds one or more `record <key>/1 : <kind> { ... }` blocks in\n\
+             ordinary AKR syntax; the `akr 0.1` / `project` header may be omitted.\n\
+             \n\
+             FLAGS\n\
+             \x20   --from <file>     a file holding one or more `record <key>/1 : <kind> { ... }` blocks\n"
         }
         "revise" => {
             "akr revise <key> [--from <file>] [--state <state>] [--title <text>]\n\
@@ -3172,6 +3304,10 @@ pub fn help() -> String {
          COMMANDS\n",
     );
     for (name, summary) in [
+        (
+            "secret",
+            "local-only secret entries and opaque citations; put, get, resolve",
+        ),
         ("init", "scaffold a workspace"),
         (
             "config",
@@ -3215,6 +3351,10 @@ pub fn help() -> String {
         ),
         ("git", "generate and make the commit; message, commit, log"),
         ("propose", "create a record; --kind, --title, --from"),
+        (
+            "propose-many",
+            "create several connected records in one atomic pass; --from",
+        ),
         (
             "revise",
             "create the next revision; --from, --state, --title",
