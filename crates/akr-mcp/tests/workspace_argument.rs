@@ -7,13 +7,11 @@
 //! honoured for reads and writes, a malformed one is a usage error, and a server inside a
 //! workspace keeps exactly the schemas it always had.
 
-mod support;
-
 use std::path::{Path, PathBuf};
 
-use akr_core::json::{Value, parse};
+use crate::support::{Example, mcp_rpc};
+use akr_core::json::Value;
 use akr_mcp::schema::{TOOLS, input_schema};
-use support::{Example, mcp_binary};
 
 /// A fresh directory with no ledger above it, removed on drop.
 struct Parent(PathBuf);
@@ -34,39 +32,12 @@ impl Drop for Parent {
 }
 
 fn rpc(dir: &Path, requests: &[String]) -> Vec<Value> {
-    use std::io::Write as _;
-    use std::process::{Command, Stdio};
-
-    let mut child = Command::new(mcp_binary())
-        .arg("--dir")
-        .arg(dir)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("akr-mcp runs");
     let mut input = String::new();
     for request in requests {
         input.push_str(request);
         input.push('\n');
     }
-    child
-        .stdin
-        .as_mut()
-        .expect("stdin")
-        .write_all(input.as_bytes())
-        .expect("write");
-    let output = child.wait_with_output().expect("akr-mcp exits");
-    assert!(
-        output.status.success(),
-        "akr-mcp failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| parse(line).expect("a JSON-RPC response"))
-        .collect()
+    mcp_rpc(dir, &input)
 }
 
 fn list(id: u32) -> String {

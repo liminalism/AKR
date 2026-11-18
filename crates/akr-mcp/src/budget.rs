@@ -17,6 +17,8 @@
 
 use akr_core::json::Value;
 
+use crate::schema::ToolId;
+
 /// What a tool's output should cost, and what it must not exceed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Budget {
@@ -35,7 +37,58 @@ impl Budget {
     }
 }
 
-/// The budget for a tool.
+/// The budget for a tool by typed identifier.
+#[must_use]
+pub const fn budget_for_id(tool: ToolId) -> Budget {
+    match tool {
+        ToolId::Start => Budget::new(1_500, 2_000),
+        ToolId::Search | ToolId::SourceSearch => Budget::new(600, 1_000),
+        ToolId::Get | ToolId::ConfigGet => Budget::new(1_000, 1_500),
+        ToolId::SourceGet => Budget::new(1_500, 2_500),
+        ToolId::Context => Budget::new(3_000, 4_000),
+        ToolId::Impact | ToolId::Explain => Budget::new(800, 1_500),
+        ToolId::Validate => Budget::new(500, 3_000),
+        // An advisor packet is the one deliberately large read on this surface: the point
+        // of it is that the second model arrives knowing the workspace. It is also
+        // addressable, so the overflow path has somewhere real to send the caller -- one
+        // section at a time, rather than a truncated everything.
+        ToolId::HandoffOpen => Budget::new(2_000, 3_500),
+        ToolId::HandoffExpand | ToolId::HandoffReveal => Budget::new(1_000, 2_000),
+        // A result is what a parent reads instead of a transcript, and the coverage
+        // roll-up is what it delegates the next wave from; both are read repeatedly by
+        // one agent, so they get room without getting the packet's.
+        ToolId::HandoffResults | ToolId::HandoffCoverage => Budget::new(1_200, 2_500),
+        ToolId::HandoffCapsule | ToolId::HandoffSessionShow => Budget::new(1_000, 2_000),
+        ToolId::HandoffList | ToolId::HandoffVerify => Budget::new(600, 1_000),
+        ToolId::ProposeMany | ToolId::EvidenceAddMany => Budget::new(1_500, 5_000),
+        // Every other tool (writes and secret/source/coordination actions).
+        ToolId::SecretPut
+        | ToolId::SecretGet
+        | ToolId::SecretResolve
+        | ToolId::ConfigEdit
+        | ToolId::SourceList
+        | ToolId::SourceAdd
+        | ToolId::SourceVerify
+        | ToolId::SourceSupersede
+        | ToolId::SourceStatus
+        | ToolId::SourceDependents
+        | ToolId::SourceFinalize
+        | ToolId::Propose
+        | ToolId::Revise
+        | ToolId::Supersede
+        | ToolId::Complete
+        | ToolId::Trace
+        | ToolId::EvidenceAdd
+        | ToolId::HandoffSessionBegin
+        | ToolId::HandoffSessionEnd
+        | ToolId::HandoffCreate
+        | ToolId::HandoffResult
+        | ToolId::HandoffDiscard
+        | ToolId::Papercut => Budget::new(300, 500),
+    }
+}
+
+/// The budget for a tool by name.
 ///
 /// These are engineering targets rather than protocol requirements, and they are the
 /// table from `sources/context-reduction.md` with one change: validation *failure* gets
@@ -43,31 +96,7 @@ impl Budget {
 /// extra round trip.
 #[must_use]
 pub fn budget_for(tool: &str) -> Budget {
-    match tool {
-        "knowledge.start" => Budget::new(1_500, 2_000),
-        "knowledge.search" | "knowledge.source_search" => Budget::new(600, 1_000),
-        "knowledge.get" | "knowledge.config_get" => Budget::new(1_000, 1_500),
-        "knowledge.source_get" => Budget::new(1_500, 2_500),
-        "knowledge.context" => Budget::new(3_000, 4_000),
-        "knowledge.impact" => Budget::new(800, 1_500),
-        "knowledge.explain" => Budget::new(800, 1_500),
-        "knowledge.validate" => Budget::new(500, 3_000),
-        // An advisor packet is the one deliberately large read on this surface: the point
-        // of it is that the second model arrives knowing the workspace. It is also
-        // addressable, so the overflow path has somewhere real to send the caller -- one
-        // section at a time, rather than a truncated everything.
-        "knowledge.handoff_open" => Budget::new(2_000, 3_500),
-        "knowledge.handoff_expand" | "knowledge.handoff_reveal" => Budget::new(1_000, 2_000),
-        // A result is what a parent reads instead of a transcript, and the coverage
-        // roll-up is what it delegates the next wave from; both are read repeatedly by
-        // one agent, so they get room without getting the packet's.
-        "knowledge.handoff_results" | "knowledge.handoff_coverage" => Budget::new(1_200, 2_500),
-        "knowledge.handoff_capsule" | "knowledge.handoff_session_show" => Budget::new(1_000, 2_000),
-        "knowledge.handoff_list" | "knowledge.handoff_verify" => Budget::new(600, 1_000),
-        "knowledge.propose_many" | "knowledge.evidence_add_many" => Budget::new(1_500, 5_000),
-        // Every other write tool. A successful write has nothing to say but where it landed.
-        _ => Budget::new(300, 500),
-    }
+    ToolId::from_name(tool).map_or_else(|| Budget::new(300, 500), budget_for_id)
 }
 
 /// The crude token estimate the per-tool ceilings use: words plus punctuation.
@@ -98,6 +127,26 @@ pub struct Enforced {
     pub estimated_tokens: usize,
 }
 
+/// Applies `tool`'s budget to a result using a typed identifier.
+#[must_use]
+pub fn enforce_id(
+    tool: ToolId,
+    text: Option<&str>,
+    structured: &Value,
+    internally_budgeted: Option<usize>,
+    arguments: &Value,
+) -> Enforced {
+    enforce_with_budget(
+        Some(tool),
+        tool.name(),
+        budget_for_id(tool),
+        text,
+        structured,
+        internally_budgeted,
+        arguments,
+    )
+}
+
 /// Applies `tool`'s budget to a result.
 ///
 /// Under the hard limit, nothing happens — most calls are small and paying a rewrite for
@@ -111,7 +160,31 @@ pub fn enforce(
     internally_budgeted: Option<usize>,
     arguments: &Value,
 ) -> Enforced {
-    let budget = budget_for(tool);
+    let id = ToolId::from_name(tool);
+    let name = match id {
+        Some(id) => id.name(),
+        None => tool,
+    };
+    enforce_with_budget(
+        id,
+        name,
+        budget_for(name),
+        text,
+        structured,
+        internally_budgeted,
+        arguments,
+    )
+}
+
+fn enforce_with_budget(
+    id: Option<ToolId>,
+    tool: &str,
+    budget: Budget,
+    text: Option<&str>,
+    structured: &Value,
+    internally_budgeted: Option<usize>,
+    arguments: &Value,
+) -> Enforced {
     // Start and context already assembled to the caller's explicit budget. Applying a
     // second ceiling afterwards both wastes that work and makes the input contract
     // untrue, especially because MCP duplicates some information across text and
@@ -140,7 +213,7 @@ pub fn enforce(
         };
     }
 
-    let (summary, structured) = if matches!(tool, "knowledge.search" | "knowledge.source_search") {
+    let (summary, structured) = if matches!(id, Some(ToolId::Search | ToolId::SourceSearch)) {
         search_page(tool, structured, arguments, hard_tokens, estimated)
     } else {
         compact_preview(tool, structured, arguments, hard_tokens, estimated)

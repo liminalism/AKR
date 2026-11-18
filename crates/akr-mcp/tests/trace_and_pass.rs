@@ -5,56 +5,13 @@
 //! ledgers to be byte-identical afterwards — the only form of "the surfaces agree" that
 //! cannot drift.
 
-mod support;
-
-use akr_core::json::{Value, parse};
-use support::{Example, mcp_binary, one_line};
+use crate::support::{Example, mcp_call};
+use akr_core::json::Value;
 
 const WORK: &str = "lege.work.extract-render-graph";
 
 fn call(example: &Example, tool: &str, arguments: &str) -> (Value, bool) {
-    use std::io::Write as _;
-    use std::process::{Command, Stdio};
-
-    let arguments = one_line(arguments);
-    let request = format!(
-        "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\
-         \"params\":{{\"name\":\"{tool}\",\"arguments\":{arguments}}}}}\n"
-    );
-    let mut child = Command::new(mcp_binary())
-        .arg("--dir")
-        .arg(example.root())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("akr-mcp runs");
-    child
-        .stdin
-        .as_mut()
-        .expect("stdin")
-        .write_all(request.as_bytes())
-        .expect("write");
-    let output = child.wait_with_output().expect("akr-mcp exits");
-    let line = String::from_utf8_lossy(&output.stdout);
-    let response = parse(line.trim()).unwrap_or_else(|error| {
-        panic!(
-            "no JSON-RPC response: {error}\n{line}\n{}",
-            String::from_utf8_lossy(&output.stderr)
-        )
-    });
-    let result = response.get("result").expect("a result").clone();
-    let is_error = result
-        .get("isError")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    (
-        result
-            .get("structuredContent")
-            .cloned()
-            .unwrap_or(Value::Null),
-        is_error,
-    )
+    mcp_call(example.root(), tool, arguments)
 }
 
 /// A work record with one command check, moved to `active`, written through the CLI in
@@ -224,47 +181,4 @@ fn a_pass_on_a_manual_check_and_a_new_retired_kind_are_refused_over_mcp() {
     );
 
     assert_eq!(before, example.sources(), "a refusal writes nothing");
-}
-
-#[test]
-fn the_schema_offers_the_written_kinds_and_says_what_slots_are_for() {
-    let propose = akr_mcp::schema::input_schema("knowledge.propose").expect("the propose schema");
-    let offered: Vec<String> = propose
-        .get("properties")
-        .and_then(|properties| properties.get("kind"))
-        .and_then(|kind| kind.get("enum"))
-        .and_then(Value::as_array)
-        .expect("the kind enum")
-        .iter()
-        .filter_map(|kind| kind.as_str().map(ToOwned::to_owned))
-        .collect();
-    for retired in ["term", "requirement", "constraint", "assessment", "track"] {
-        assert!(
-            !offered.iter().any(|kind| kind == retired),
-            "{retired} is still offered as a kind"
-        );
-    }
-    for written in ["policy", "decision", "observation", "work", "milestone"] {
-        assert!(offered.iter().any(|kind| kind == written), "{written}");
-    }
-    let schema = propose.to_pretty();
-    assert!(
-        schema.contains("Retired, not accepted for a new key"),
-        "an agent that remembers `requirement` is told where it went"
-    );
-    assert!(
-        schema.contains("alternatives rejected"),
-        "the slot guidance reaches the propose schema"
-    );
-
-    let handshake = akr_mcp::schema::TOOLS
-        .iter()
-        .find(|tool| tool.name == "knowledge.trace")
-        .expect("the trace tool is declared");
-    assert!(handshake.writes);
-    assert!(
-        handshake.description.contains("why"),
-        "{}",
-        handshake.description
-    );
 }

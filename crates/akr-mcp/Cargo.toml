@@ -6,6 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
+autotests = false
 
 [lints]
 workspace = true
@@ -17,6 +18,14 @@ path = "src/main.rs"
 [lib]
 name = "akr_mcp"
 path = "src/lib.rs"
+
+[[test]]
+name = "conformance"
+path = "tests/conformance.rs"
+
+[[test]]
+name = "writes"
+path = "tests/writes.rs"
 
 # No runtime dependencies. The server speaks JSON-RPC over stdio, and both halves of that
 # — the framing and the JSON — are small enough to own outright

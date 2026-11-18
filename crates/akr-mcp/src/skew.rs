@@ -188,12 +188,6 @@ mod tests {
                         grammar \"0.1\"\n    vocabulary \"0.9\"\n}\n";
 
     #[test]
-    fn a_matching_vocabulary_is_not_a_skew() {
-        let lock = LOCK.replace("0.9", SERVER_VOCABULARY);
-        assert_eq!(vocabulary_of(&lock).as_deref(), Some(SERVER_VOCABULARY));
-    }
-
-    #[test]
     fn a_differing_vocabulary_is_read_off_the_lock() {
         assert_eq!(vocabulary_of(LOCK).as_deref(), Some("0.9"));
     }

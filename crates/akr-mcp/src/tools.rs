@@ -24,15 +24,12 @@ use std::path::{Path, PathBuf};
 
 use crate::errors::{Class, ToolError, class_of, first_error_code};
 use crate::record;
+use crate::schema::ToolId;
 
 /// Whether a tool writes to `.akr/records/` (§2).
 #[must_use]
 pub fn is_write(name: &str) -> bool {
-    let name = crate::schema::canonical_tool_name(name).unwrap_or(name);
-    crate::schema::TOOLS
-        .iter()
-        .find(|tool| tool.name == name)
-        .is_some_and(|tool| tool.writes)
+    ToolId::from_name(name).is_some_and(ToolId::writes)
 }
 
 fn missing_commit(session: &Session, suggest_observed_at: bool) -> ToolError {
@@ -93,61 +90,104 @@ impl ToolResult {
     }
 }
 
-/// Runs a tool.
+/// Runs a tool by name.
 ///
 /// # Errors
 /// [`ToolError`] carrying §5's class, summary and diagnostic array.
 pub fn call(root: &Path, name: &str, arguments: &Value) -> Result<ToolResult, ToolError> {
-    let name = crate::schema::canonical_tool_name(name).unwrap_or(name);
-    match name {
-        "knowledge.secret_put" => run_write(
+    call_at(root, name, arguments, None)
+}
+
+/// Runs a tool by name with an optional frozen `today` date.
+///
+/// # Errors
+/// [`ToolError`] carrying §5's class, summary and diagnostic array.
+pub fn call_at(
+    root: &Path,
+    name: &str,
+    arguments: &Value,
+    today: Option<akr_core::model::Date>,
+) -> Result<ToolResult, ToolError> {
+    let Some(id) = ToolId::from_name(name) else {
+        return Err(ToolError::new(
+            "AKR-X041",
+            format!("unknown tool {name:?}; the catalogue is closed for 0.1"),
+        ));
+    };
+    call_id_at(root, id, arguments, today)
+}
+
+/// Runs a tool by typed identifier.
+///
+/// # Errors
+/// [`ToolError`] carrying §5's class, summary and diagnostic array.
+pub fn call_id(root: &Path, id: ToolId, arguments: &Value) -> Result<ToolResult, ToolError> {
+    call_id_at(root, id, arguments, None)
+}
+
+/// Runs a tool by typed identifier with an optional frozen `today` date.
+///
+/// # Errors
+/// [`ToolError`] carrying §5's class, summary and diagnostic array.
+pub fn call_id_at(
+    root: &Path,
+    id: ToolId,
+    arguments: &Value,
+    today: Option<akr_core::model::Date>,
+) -> Result<ToolResult, ToolError> {
+    match id {
+        ToolId::SecretPut => run_write_at(
             root,
+            today,
             Command::SecretPut {
                 from: PathBuf::from(required_str(arguments, "from")?),
             },
         ),
-        "knowledge.secret_get" => run_read(
+        ToolId::SecretGet => run_read_at(
             root,
+            today,
             Command::SecretGet {
                 reference: required_str(arguments, "ref")?.to_owned(),
                 reveal: secret_reveal(arguments)?,
             },
         ),
-        "knowledge.secret_resolve" => run_read(
+        ToolId::SecretResolve => run_read_at(
             root,
+            today,
             Command::SecretResolve {
                 from: PathBuf::from(required_str(arguments, "from")?),
                 reveal: secret_reveal(arguments)?,
             },
         ),
-        "knowledge.config_get" => run_read(root, Command::ConfigShow),
-        "knowledge.config_edit" => config_edit(root, arguments),
-        "knowledge.search" => search(root, arguments),
-        "knowledge.start" => start(root, arguments),
-        "knowledge.explain" => explain(arguments),
-        "knowledge.get" => get(root, arguments),
-        "knowledge.context" => context(root, arguments),
-        "knowledge.source_list" => source_list(root, arguments),
-        "knowledge.source_add" => source_add(root, arguments),
-        "knowledge.source_search" => source_search(root, arguments),
-        "knowledge.source_get" => source_get(root, arguments),
-        "knowledge.source_verify" => source_verify(root, arguments),
-        "knowledge.source_supersede" => source_supersede(root, arguments),
-        "knowledge.source_status" => source_status(root, arguments),
-        "knowledge.source_dependents" => source_dependents(root, arguments),
-        "knowledge.source_finalize" => source_finalize(root, arguments),
-        "knowledge.impact" => impact(root, arguments),
-        "knowledge.validate" => validate(root, arguments),
-        "knowledge.propose" => propose(root, arguments),
-        "knowledge.propose_many" => propose_many(root, arguments),
-        "knowledge.revise" => revise(root, arguments),
-        "knowledge.supersede" => supersede(root, arguments),
-        "knowledge.complete" => complete(root, arguments),
-        "knowledge.trace" => trace(root, arguments),
-        "knowledge.evidence_add" => evidence_add(root, arguments),
-        "knowledge.evidence_add_many" => evidence_add_many(root, arguments),
-        "knowledge.handoff_capsule" => run_read(
+        ToolId::ConfigGet => run_read_at(root, today, Command::ConfigShow),
+        ToolId::ConfigEdit => config_edit(root, arguments),
+        ToolId::Search => search(root, arguments),
+        ToolId::Start => start(root, arguments),
+        ToolId::Explain => explain(arguments),
+        ToolId::Get => get(root, arguments),
+        ToolId::Context => context(root, arguments),
+        ToolId::SourceList => source_list(root, arguments),
+        ToolId::SourceAdd => source_add(root, arguments),
+        ToolId::SourceSearch => source_search(root, arguments),
+        ToolId::SourceGet => source_get(root, arguments),
+        ToolId::SourceVerify => source_verify(root, arguments),
+        ToolId::SourceSupersede => source_supersede(root, arguments),
+        ToolId::SourceStatus => source_status(root, arguments),
+        ToolId::SourceDependents => source_dependents(root, arguments),
+        ToolId::SourceFinalize => source_finalize(root, arguments),
+        ToolId::Impact => impact_at(root, arguments, today),
+        ToolId::Validate => validate_at(root, arguments, today),
+        ToolId::Propose => propose(root, arguments),
+        ToolId::ProposeMany => propose_many(root, arguments),
+        ToolId::Revise => revise(root, arguments),
+        ToolId::Supersede => supersede(root, arguments),
+        ToolId::Complete => complete(root, arguments),
+        ToolId::Trace => trace(root, arguments),
+        ToolId::EvidenceAdd => evidence_add(root, arguments),
+        ToolId::EvidenceAddMany => evidence_add_many(root, arguments),
+        ToolId::HandoffCapsule => run_read_at(
             root,
+            today,
             Command::HandoffCapsule {
                 refresh: arguments
                     .get("refresh")
@@ -156,13 +196,14 @@ pub fn call(root: &Path, name: &str, arguments: &Value) -> Result<ToolResult, To
                 boundaries: string_list(arguments, "boundaries"),
             },
         ),
-        "knowledge.handoff_session_begin" => handoff_session_begin(root, arguments),
-        "knowledge.handoff_session_show" => run_read(root, Command::HandoffSessionShow),
-        "knowledge.handoff_session_end" => run_coordination(root, Command::HandoffSessionEnd),
-        "knowledge.handoff_create" => handoff_create(root, arguments),
-        "knowledge.handoff_list" => run_read(root, Command::HandoffList),
-        "knowledge.handoff_open" => run_read(
+        ToolId::HandoffSessionBegin => handoff_session_begin(root, arguments),
+        ToolId::HandoffSessionShow => run_read_at(root, today, Command::HandoffSessionShow),
+        ToolId::HandoffSessionEnd => run_coordination(root, Command::HandoffSessionEnd),
+        ToolId::HandoffCreate => handoff_create(root, arguments),
+        ToolId::HandoffList => run_read_at(root, today, Command::HandoffList),
+        ToolId::HandoffOpen => run_read_at(
             root,
+            today,
             Command::HandoffOpen {
                 id: required_str(arguments, "packet")?.to_owned(),
                 // The MCP surface has no reveal-on-open shorthand on purpose: `open` is
@@ -172,44 +213,43 @@ pub fn call(root: &Path, name: &str, arguments: &Value) -> Result<ToolResult, To
                 reveal: false,
             },
         ),
-        "knowledge.handoff_expand" => run_read(
+        ToolId::HandoffExpand => run_read_at(
             root,
+            today,
             Command::HandoffExpand {
                 id: required_str(arguments, "packet")?.to_owned(),
                 section: required_str(arguments, "section")?.to_owned(),
             },
         ),
-        "knowledge.handoff_verify" => run_read(
+        ToolId::HandoffVerify => run_read_at(
             root,
+            today,
             Command::HandoffVerify {
                 id: required_str(arguments, "packet")?.to_owned(),
             },
         ),
-        "knowledge.handoff_reveal" => run_coordination(
+        ToolId::HandoffReveal => run_coordination(
             root,
             Command::HandoffReveal {
                 id: required_str(arguments, "packet")?.to_owned(),
             },
         ),
-        "knowledge.handoff_result" => handoff_result(root, arguments),
-        "knowledge.handoff_results" => run_read(
+        ToolId::HandoffResult => handoff_result(root, arguments),
+        ToolId::HandoffResults => run_read_at(
             root,
+            today,
             Command::HandoffResults {
                 packet: optional_str(arguments, "packet"),
             },
         ),
-        "knowledge.handoff_coverage" => run_read(root, Command::HandoffCoverage),
-        "knowledge.handoff_discard" => run_coordination(
+        ToolId::HandoffCoverage => run_read_at(root, today, Command::HandoffCoverage),
+        ToolId::HandoffDiscard => run_coordination(
             root,
             Command::HandoffDiscard {
                 id: required_str(arguments, "packet")?.to_owned(),
             },
         ),
-        "knowledge.papercut" => papercut(root, arguments),
-        other => Err(ToolError::new(
-            "AKR-X041",
-            format!("unknown tool {other:?}; the catalogue is closed for 0.1"),
-        )),
+        ToolId::Papercut => papercut(root, arguments),
     }
 }
 
@@ -719,7 +759,11 @@ fn source_finalize(root: &Path, arguments: &Value) -> Result<ToolResult, ToolErr
     )
 }
 
-fn impact(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
+fn impact_at(
+    root: &Path,
+    arguments: &Value,
+    today: Option<akr_core::model::Date>,
+) -> Result<ToolResult, ToolError> {
     let reference = arguments.get("ref").and_then(Value::as_str);
     let git_diff = arguments.get("git_diff").and_then(Value::as_str);
     match (reference, git_diff) {
@@ -736,7 +780,7 @@ fn impact(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
                 reference: reference.map(ToOwned::to_owned),
                 git_diff: git_diff.map(ToOwned::to_owned),
             };
-            run_read(root, command)
+            run_read_at(root, today, command)
         }
     }
 }
@@ -746,8 +790,12 @@ fn impact(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
 /// The one read tool whose payload is not the command's `result` verbatim: `akr check`
 /// reports the pipeline's stage counts, and an agent wants a verdict. Both are computed
 /// from the same [`Output`], so they cannot disagree.
-fn validate(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
-    let mut session = open(root, false)?;
+fn validate_at(
+    root: &Path,
+    arguments: &Value,
+    today: Option<akr_core::model::Date>,
+) -> Result<ToolResult, ToolError> {
+    let mut session = open_at(root, false, today)?;
     let command = Command::Check {
         scratch_clean: flag(arguments, "scratch_clean"),
         review_clean: flag(arguments, "review_clean"),
@@ -1331,10 +1379,19 @@ fn papercut(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
 
 /// Opens the workspace, exactly as the command line opens it.
 fn open(root: &Path, writing: bool) -> Result<Session, ToolError> {
+    open_at(root, writing, None)
+}
+
+fn open_at(
+    root: &Path,
+    writing: bool,
+    today: Option<akr_core::model::Date>,
+) -> Result<Session, ToolError> {
     let global = Global {
         dir: PathBuf::from(root),
         profile: Profile::Strict,
         format: Format::Json,
+        today,
         ..Global::default()
     };
     let mut session = Session::open_ledger(&global).map_err(environment)?;
@@ -1349,7 +1406,15 @@ fn open(root: &Path, writing: bool) -> Result<Session, ToolError> {
 /// Verbatim is the point. §1's invariant is that a tool and its command produce the same
 /// answer, and the cheapest way to keep that true is for the tool to add nothing.
 fn run_read(root: &Path, command: Command) -> Result<ToolResult, ToolError> {
-    let mut session = open(root, false)?;
+    run_read_at(root, None, command)
+}
+
+fn run_read_at(
+    root: &Path,
+    today: Option<akr_core::model::Date>,
+    command: Command,
+) -> Result<ToolResult, ToolError> {
+    let mut session = open_at(root, false, today)?;
     let output = commands::run(&mut session, &command).map_err(environment)?;
     let text = output.text.clone();
     let structured = finish(&session.sources, output)?;
@@ -1399,7 +1464,15 @@ fn handoff_result(root: &Path, arguments: &Value) -> Result<ToolResult, ToolErro
 }
 
 fn run_write(root: &Path, command: Command) -> Result<ToolResult, ToolError> {
-    let mut session = open(root, true)?;
+    run_write_at(root, None, command)
+}
+
+fn run_write_at(
+    root: &Path,
+    today: Option<akr_core::model::Date>,
+    command: Command,
+) -> Result<ToolResult, ToolError> {
+    let mut session = open_at(root, true, today)?;
     let output = commands::run(&mut session, &command).map_err(environment)?;
     Ok(ToolResult::Structured(finish(&session.sources, output)?))
 }

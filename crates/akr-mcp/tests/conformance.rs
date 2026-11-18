@@ -16,10 +16,16 @@
 //! differential tests, for the same reason.
 
 mod support;
+#[path = "transport.rs"]
+mod transport;
+#[path = "workspace_argument.rs"]
+mod workspace_argument;
 
-use akr_core::json::{Value, parse};
+use std::path::Path;
+
+use akr_core::json::Value;
 use akr_mcp::schema::TOOLS;
-use support::{Example, mcp_binary};
+use support::{Example, mcp_rpc};
 
 /// Every `resultType` MCP defines.
 ///
@@ -59,36 +65,9 @@ const DISCOVER_REQUIRED_KEYS: &[&str] = &[
 ];
 const DISCOVER_OPTIONAL_KEYS: &[&str] = &["instructions", "_meta"];
 
-/// Sends newline-delimited requests to one fresh server and returns the responses.
-fn rpc(example: &Example, requests: &str) -> Vec<Value> {
-    use std::io::Write as _;
-    use std::process::{Command, Stdio};
-
-    let mut child = Command::new(mcp_binary())
-        .arg("--dir")
-        .arg(example.root())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("akr-mcp runs");
-    child
-        .stdin
-        .as_mut()
-        .expect("stdin")
-        .write_all(requests.as_bytes())
-        .expect("write");
-    let output = child.wait_with_output().expect("akr-mcp exits");
-    assert!(
-        output.status.success(),
-        "akr-mcp failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| parse(line).expect("a JSON-RPC response"))
-        .collect()
+/// Sends newline-delimited requests to one fresh in-process server and returns the responses.
+fn rpc(root: &Path, requests: &str) -> Vec<Value> {
+    mcp_rpc(root, requests)
 }
 
 /// Asserts a `tools/call` result is one a client can deserialise.
@@ -169,7 +148,7 @@ fn every_tool_refusal_is_an_envelope_a_client_can_type() {
         })
         .collect();
 
-    let responses = rpc(&example, &requests);
+    let responses = rpc(example.root(), &requests);
     assert_eq!(
         responses.len(),
         TOOLS.len(),
@@ -192,7 +171,7 @@ fn a_successful_tool_result_is_an_envelope_a_client_can_type() {
     let example = Example::materialise("conformance-success");
 
     let responses = rpc(
-        &example,
+        example.root(),
         "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":\
          {\"name\":\"knowledge.start\",\"arguments\":{\"task\":\"conformance\"}}}\n",
     );
@@ -214,10 +193,8 @@ fn a_successful_tool_result_is_an_envelope_a_client_can_type() {
 /// because a client only retreats to the legacy handshake on a `-32601`.
 #[test]
 fn the_discovery_result_is_a_discovery_result() {
-    let example = Example::materialise("conformance-discover");
-
     let responses = rpc(
-        &example,
+        Path::new("/workspace-not-opened-by-this-test"),
         "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"server/discover\",\"params\":{}}\n",
     );
     let result = responses[0].get("result").expect("a discovery result");
@@ -264,10 +241,9 @@ fn the_discovery_result_is_a_discovery_result() {
 /// session a generation behind what both ends could speak.
 #[test]
 fn the_protocol_versions_offered_are_versions_mcp_published() {
-    let example = Example::materialise("conformance-versions");
-
+    let root = Path::new("/workspace-not-opened-by-this-test");
     let responses = rpc(
-        &example,
+        root,
         "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"server/discover\",\"params\":{}}\n",
     );
     let offered: Vec<&str> = responses[0]
@@ -296,9 +272,8 @@ fn the_protocol_versions_offered_are_versions_mcp_published() {
 
     // And an `initialize` naming one of them is answered with that one, not a fallback.
     for version in MCP_PROTOCOL_VERSIONS {
-        let example = Example::materialise("conformance-negotiate");
         let responses = rpc(
-            &example,
+            root,
             &format!(
                 "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\
                  \"params\":{{\"protocolVersion\":\"{version}\"}}}}\n"

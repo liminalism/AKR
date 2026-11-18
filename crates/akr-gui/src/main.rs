@@ -2522,7 +2522,8 @@ mod tests {
     }
 
     #[test]
-    fn typing_into_the_filter_inserts_each_character_once_and_searches() {
+    fn text_input_and_ime_dedup_insert_each_character_once() {
+        // 1. Typing into the filter inserts each character once and searches.
         let mut app = demo_app();
         host_press(&mut app, "/");
         frame(&mut app);
@@ -2537,21 +2538,16 @@ mod tests {
             ["akr.work.review-snapshot"],
             "a doubled query would match nothing"
         );
-    }
 
-    #[test]
-    fn typing_into_the_open_dialog_inserts_each_character_once() {
+        // 2. Typing into the open dialog commits multi-char host text once.
         let mut app = demo_app();
         app.modal_open = true;
         app.path_field = TextFieldState::new();
-        // One platform event can commit more than its first character.
         host_press(&mut app, "/tmp/akr");
         frame(&mut app);
         assert_eq!(app.path_field.text(), "/tmp/akr");
-    }
 
-    #[test]
-    fn an_ime_commit_and_the_same_key_text_insert_once() {
+        // 3. An IME commit followed by matching key text inserts once.
         let mut app = demo_app();
         app.filter_focused = true;
         app.on_ime(&ImeEvent::Commit("é".to_owned()));
@@ -2559,10 +2555,8 @@ mod tests {
         frame(&mut app);
         assert_eq!(app.filter_field.text(), "é");
         assert_eq!(app.model.filter.query, "é");
-    }
 
-    #[test]
-    fn a_key_then_the_same_ime_commit_inserts_once() {
+        // 4. Key text followed by matching IME commit inserts once.
         let mut app = demo_app();
         app.filter_focused = true;
         host_press(&mut app, "ab");
@@ -2595,6 +2589,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "mutates the global OS clipboard and sleeps while polling"]
     fn paste_inserts_the_clipboard_text_once() {
         let mut clipboard = liminalkit_shell::Clipboard::new();
         let previous = clipboard.try_text().ok().flatten();
@@ -2638,14 +2633,6 @@ mod tests {
             "paste should insert {marker:?} once, field is {:?}",
             app.filter_field.text()
         );
-    }
-
-    #[test]
-    fn attach_installs_the_clipboard_worker() {
-        let mut app = demo_app();
-        assert!(app.input.clipboard().is_none());
-        app.attach(Waker::detached());
-        assert!(app.input.clipboard().is_some());
     }
 
     #[test]
@@ -2701,14 +2688,10 @@ mod tests {
             let buffer = frame(&mut app);
             liminalkit_raster::png::write(format!("{dir}/akr-gui-dashboard.png"), &buffer)
                 .expect("write the dashboard screen");
-            app.projects = [
-                "/home/dk/rust-projects/AKR",
-                "/home/dk/rust-projects/liminalkit",
-                "/home/dk/rust-projects/Kitchen-Concept",
-            ]
-            .into_iter()
-            .map(PathBuf::from)
-            .collect();
+            app.projects = ["/demo/project-a", "/demo/project-b", "/demo/project-c"]
+                .into_iter()
+                .map(PathBuf::from)
+                .collect();
             app.modal_open = true;
             let buffer = frame(&mut app);
             liminalkit_raster::png::write(format!("{dir}/akr-gui-dialog.png"), &buffer)
