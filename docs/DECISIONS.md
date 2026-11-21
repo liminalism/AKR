@@ -2206,3 +2206,96 @@ hooks that would notice a commit made outside the protocol are installed by nobo
 `crates/akr-cli/src/change.rs`, `crates/akr-cli/src/handoff/session_head.rs`,
 `crates/akr-mcp/src/protocol.rs`, `crates/akr-mcp/src/schema.rs`,
 `crates/akr-core/src/ops`, `docs/08-mcp.md` §8, `docs/16-change-protocol.md`.
+
+---
+
+## D-050 — Ledger history is a DAG, and `.akr` files merge by record
+
+*Amendment, 2026-11-22. Amends D-032 (the change protocol) and D-048 (`passed_at`).*
+
+**Question.** Ancestry, a record's definitional history and freshness all walked first-parent
+history. Two worktrees that each completed work and were then joined with a merge commit
+produced a ledger AKR refused: a `passed_at` stamped on the second parent was "a commit this
+repository does not have" (`AKR-R022`/`AKR-G011`), observations went stale against a merge
+whose tree matched what they observed, and the only way through was to rebase into a line.
+Git's textual merge of the record files fared no better: two branches appending records to
+the same file align on a shared closing brace, so keep-both or `merge=union` yields a file
+that does not parse. Agents were seen rebasing branches and hand-repairing braces to get a
+merge past the ledger.
+
+**Resolution.**
+
+1. **Ancestry is the commit DAG.** `Ancestry` holds every parent of every commit, and
+   "descends from" means reachable through any parent. A record's last definitional change,
+   its timeline and `touches_in` follow the file's history through merges; staleness
+   compares against the merge base of incomparable commits, and a merge whose result leaves
+   a watched path as one parent had it does not stale an observation made on that parent.
+2. **A semantic merge driver for record files.** `.akr/records/**/*.akr merge=akr` runs
+   `akr git merge-driver`, which parses base, ours and theirs and merges *records*, not
+   lines: disjoint records merge in canonical order; concurrent `trace` appends to one
+   revision concatenate (base, ours, theirs, deduplicated); concurrent different bodies for
+   one `(key, revision)` keep ours and **renumber theirs to the next free revision**,
+   superseding ours, so the result keeps one live head per key. Every renumbering is printed.
+   A side that does not parse exits non-zero and git falls back to a textual conflict.
+3. **Build outputs are rebuilt, not merged.** `.akr/akr.lock` and `docs/generated/*.md` take
+   `merge=akr-rebuild`, which keeps ours without conflict markers; `akr build` regenerates
+   them over the merged ledger.
+4. **Registration.** `akr init` writes the attributes (and `sources/** -text`, so a checkout
+   never rewrites registered bytes); installing the hooks — `akr git install-hooks`, which
+   `akr init` runs unless `--no-hooks` — registers both drivers in the repository's local
+   git config. Attributes are committed; driver definitions are not, so a fresh clone
+   needs the hooks installed before its first merge.
+5. **A merge commit is not a change.** With `MERGE_HEAD` present and no transaction open,
+   the `pre-commit` hook passes: a merge joins histories whose changes were already
+   governed. `akr git merge <branch> [--no-ff] [--no-commit] [-m <msg>]` runs the merge,
+   rebuilds lock and views, stages them, runs `akr check`, and commits.
+6. **The commit message goes on stdin.** `akr git commit` passes the message as
+   `git commit -F -`; a message with hundreds of `AKR-Why` trailers exceeded Windows' 32 KB
+   command line.
+
+**Limits.** A renumbering rewrites the revision of theirs, not every pin to it elsewhere: a
+pinned reference to `key/n` written on the incoming branch now names ours' `key/n`. The
+driver reports each renumbering so the person merging can re-pin; the common case, appended
+records and traces, renumbers nothing.
+
+**Honored by.** `crates/akr-core/src/model/ledger.rs`, `crates/akr-core/src/git`,
+`crates/akr-core/src/freshness`, `crates/akr-core/src/merge`, `crates/akr-cli/src/change.rs`,
+`crates/akr-cli/src/init.rs`, `.gitattributes`, `docs/16-change-protocol.md` §11.
+
+---
+
+## D-051 — An undersized context budget delivers the minimum instead of failing
+
+*Amendment, 2026-11-22. Amends V-123 (`docs/09-context-assembly.md` §6).*
+
+**Question.** Twenty-odd papercuts across nine collated batches report one failure: the
+first `knowledge.context` call fails with `AKR-X021` because the mandatory sections need
+8,000–16,000 tokens and the caller cannot know the floor in advance, and a call that does
+fit returns 50–60 KB, mostly staleness entries three hops from the goal and acceptance
+checks of other records. The mandatory set had grown to include things the goal does not
+need first.
+
+**Resolution.**
+
+1. **The mandatory set is narrower.** What never reduces: the goal in full, its immediate
+   containing milestone or track (depth 1), the goal's own acceptance checks, contradictions,
+   and the key and revision of every selected record. The plan of record, deeper ancestors
+   and other records' acceptance checks become reducible, in that order after dependencies.
+2. **Distant staleness collapses first.** The first reduction folds at-risk entries at depth
+   two or more into one summary line (`omitted_deeper_staleness`), keeping depth-1 entries.
+3. **Too small is not an error.** When even the minimum exceeds the budget, the minimum is
+   delivered with `budget_exceeded: true` and `required_tokens`, and the caller knows the
+   floor from the first call. `AKR-X021` is no longer raised.
+4. **One section on request.** `akr context --section <name>` / `section` renders and
+   budgets one section.
+5. **The MCP default budget is 6,000 tokens**, and the MCP transport measures a result as
+   the larger of its text and JSON forms rather than their sum.
+
+**Why this is not weaker.** V-123's promise was that nothing is hidden: every reduction is
+named, and every selected record is listed by key. That stands; what changed is which
+sections are spent first, and a refusal became a flagged delivery of the part no budget
+may remove.
+
+**Honored by.** `crates/akr-core/src/context`, `crates/akr-cli/src/commands.rs`,
+`crates/akr-mcp/src/budget.rs`, `crates/akr-mcp/src/tools.rs`,
+`docs/09-context-assembly.md` §3, §6, §9, `spec/diagnostics/codes-runtime.md`.

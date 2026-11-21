@@ -248,6 +248,46 @@ cannot decide whether the acceptance criteria were met, whether the output quali
 acceptable, or whether a benchmark is meaningful. The transaction consumes AKR state
 transitions; it never invents them.
 
+## 11. Merging branches (D-050)
+
+Two worktrees that each advanced the ledger are joined with an ordinary merge commit; no
+rebase into a line is needed. History is read as the commit DAG, so a `passed_at` or an
+evidence commit on either parent is an ancestor of the merge, and an observation is not
+staled by a merge that leaves its watched paths as its own parent had them.
+
+```text
+.akr/records/**/*.akr   merge=akr           # akr git merge-driver %O %A %B --path %P
+.akr/akr.lock           merge=akr-rebuild   # keep ours; akr build regenerates it
+docs/generated/*.md     merge=akr-rebuild
+sources/**              -text               # registered bytes are never normalised
+```
+
+`akr init` writes these attributes. The driver definitions live in local git config, which
+is not cloned; `akr git install-hooks` (run by `akr init` unless `--no-hooks`) registers
+them alongside the hooks.
+
+The record driver merges records, not lines:
+
+| Both sides… | Result |
+| --- | --- |
+| add different records | both, in canonical order |
+| append `trace` entries to one revision | base, then ours, then theirs, deduplicated |
+| write different bodies for one `key/n` | ours keeps `key/n`; theirs becomes the next free revision and supersedes it; printed as `auto-renumbered` |
+| write the same body | one copy |
+
+A side that does not parse makes the driver exit non-zero, and git leaves a textual
+conflict. A renumbering does not re-pin references to theirs' old revision elsewhere in the
+ledger; re-pin them by hand when the driver reports one.
+
+```bash
+akr git merge <branch> [--no-ff] [--no-commit] [-m <message>]
+```
+
+runs `git merge --no-commit`, rebuilds lock and views, stages them, runs `akr check`, and
+commits unless `--no-commit` was given. A plain `git merge` works too; run `akr build`
+before committing it. With `MERGE_HEAD` present and no transaction open, the `pre-commit`
+hook passes: a merge joins changes that were governed on their own branches.
+
 ---
 
 Next: [`10-freshness-and-git.md`](10-freshness-and-git.md) for what git tells the ledger

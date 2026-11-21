@@ -839,11 +839,6 @@ fn supersede_into_refuses_what_it_cannot_create_and_writes_nothing() {
     )
     .expect_err("existing key");
     assert_eq!(refused.code.as_str(), "AKR-L041");
-    // The same key: that is a revise.
-    let refused =
-        ops::supersede_into(&context, &old_key, &old_key, successor(), &[]).expect_err("same key");
-    assert_eq!(refused.code.as_str(), "AKR-L041");
-    assert!(refused.help.is_some_and(|h| h.contains("akr revise")));
     // An absent replacement with nothing to create it from names the flags that would.
     let refused =
         ops::supersede_with(&context, &old_key, &key("lege.obs.absent"), &[]).expect_err("absent");
@@ -864,6 +859,16 @@ fn supersede_into_refuses_what_it_cannot_create_and_writes_nothing() {
     assert_eq!(refused.code.as_str(), "AKR-L031");
 
     assert_eq!(before, sandbox.snapshot());
+
+    // Same-key supersede with a successor title/body creates revision n+1 superseding n.
+    let applied =
+        ops::supersede_into(&context, &old_key, &old_key, successor(), &[]).expect("same key n+1");
+    assert!(
+        applied
+            .changes
+            .iter()
+            .any(|c| c.id.key == old_key && c.id.revision == 2)
+    );
 }
 
 // -------------------------------------------------------------------------------------

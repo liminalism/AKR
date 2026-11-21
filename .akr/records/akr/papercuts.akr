@@ -2467,6 +2467,240 @@ record akr.papercut.collated-35-papercuts-from-kitchen-concept-lege/1 : papercut
     created_at 2026-09-08
 }
 
+record akr.papercut.collated-55-papercuts-from-kitchen-concept-lege/1 : papercut {
+    title "Collated 55 papercuts from Kitchen-Concept, Lege-ecosystem, SYS, SinoRAG and 3 more"
+    state verified
+    statement """
+        Collated 55 papercuts from \\?\D:\projects on 2026-11-21 (D-030). Each source key is also in the collated slot, which is the dedup set for the next run; the sisters were read and never written.
+
+        ## Kitchen-Concept @kitchen.papercut.a-salon-handover-context-read-with-a-3000-token [about akr]
+        A salon handover context read with a 3000-token budget and a product-wide glob required 8064 tokens for mandatory sections. The diagnostic gave the needed budget, so the retry could use it.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.akr-check-0-6-2-raises-akr-g024-a-recorded [about akr]
+        `akr check` 0.6.2 raises AKR-G024 ("a recorded command names no test that exists") on 16 evidence records whose `command` is not a test filter at all: it takes fragments of file names and arguments as test names (`aubman_and_` from `Taubman_and_Marcellin.pdf`, `tructures_processed_2026` from an output path, `raw_3rd_batch`, `audit_provenance` from a script path) and it reports `print_cli` from `cargo test -p lege-pdf-agent --test print_cli` although lege-pdf/agent/tests/print_cli.rs is tracked (a `--test` target is a file name, not a function name). Under --strict these warnings fail the check, and the only way to clear them is to rewrite the recorded command of sealed evidence. Guess at a fix: only parse a filter out of commands whose program is `cargo test`/`cargo nextest`, resolve `--test <name>` against tests/<name>.rs, and exempt evidence records (which report what was run) as opposed to acceptance checks (which gate).
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.akr-check-0-6-2-raises-akr-g025-exit-status [about akr]
+        `akr check` 0.6.2 raises AKR-G025 ("exit status cannot be trusted", pipeline) on 10 evidence records where it either is not a pipeline or the last stage is the assertion: a `|` inside a regex alternation (`grep -rn lege-process|lege_process`, `rg -n 'A|B|C'`) or inside a prose bracket (`[40-80 | 40-240 | all]`) is read as a pipe, and `... | rg -q PATTERN`, `... | jq -e EXPR`, `... | sha256sum` are flagged although the final command's status or output is exactly what was observed. G024 and G025 are also absent from the report while the working tree has uncommitted watched paths (only AKR-G004 shows), so a ledger that looked like 19 diagnostics before a commit turns into 26 promoted errors after it. Guess at a fix: tokenise with shell quoting before looking for `|`, accept pipelines whose last stage is a known asserting filter, and report these rules regardless of G004.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.akr-explain-decision-lists-relation-names [about akr]
+        akr explain decision lists relation names (supported_by, supersedes, ...) but not the slot-list syntax for them in a --from fragment (supported_by [ @key/1, @key/2 ]). The agent read .akr/records/lege-ecosystem/decisions.akr directly to learn it, which the workflow forbids. Fix: one syntax line in explain_kind (crates/akr-cli/src/commands.rs, relations block); covers knowledge.explain too.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.akr-knowledge-papercut-rejected-a-call-with [about knowledge.papercut]
+        AKR knowledge.papercut rejected a call with `model` instead of the required `agent` field; corrected after inspecting its tool schema.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.akr-mcp-resolves-its-ledger-once-from-dir-or [about akr]
+        akr-mcp resolves its ledger once from --dir or the process cwd. A Claude Code session started in D:\projects (parent of ~21 AKR workspaces) gets AKR-C011 on every knowledge.* call, so the agent fell back to the akr CLI for the whole Lege session. Scoped fix (needs an AKR decision and docs/08-mcp.md edit): optional per-call workspace argument, advertised in tools/list only when the server root has no ledger; AKR-C011 help reworded for MCP callers.
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.akr-start-failed-with-akr-c031-working-tree [about akr]
+        akr start failed with AKR-C031 (working-tree ledger 10996 errors, HEAD 3) in the blissful-pascal worktree while orienting the pdf-render-cpu per-core text/vector task; no planning bundle could be read, so no records were written for the font-resource cache / sparse scanline row work. (Carried over from the blissful-pascal worktree, logged 2026-11-04, before deleting it.)
+
+        ## Lege-ecosystem @lege-ecosystem.papercut.the-mcp-validate-tool-accepts-a-diagnostic [about akr]
+        The MCP validate tool accepts a diagnostic limit, but the CLI equivalent check rejects --limit. The CLI help does not expose that pagination parameter; rerun check without it.
+
+        ## SYS @saveyourskin.papercut.akr-0-7-0-a-work-record-whose-superseded-parent [about akr]
+        akr 0.7.0: a work record whose superseded parent milestone (playable-court-day/2) holds a carried_forward disposition naming it cannot be completed, abandoned or have part_of dropped; every such write fails AKR-R016 'is not part_of playable-court-day/1'. Title- or note-only revisions pass. Hit on pcd-lead-engine-contracts and pcd-c-character-variety; a terminal child should satisfy or be exempt from a stale disposition.
+
+        ## SYS @saveyourskin.papercut.overlay-files-for-revise-from-are-rejected-with [about akr]
+        Overlay files for revise --from are rejected with 'unexpected character \u{feff}' when written with a UTF-8 BOM (PowerShell Out-File -Encoding utf8 on 5.1 adds one). Stripping a leading BOM would save a retry.
+
+        ## SYS @saveyourskin.papercut.scoping-the-text-stay-follow-up-a-6000-token [about akr]
+        Scoping the text-stay follow-up: a 6000-token context request failed because mandatory sections required 16650 tokens; a 22000-token retry still truncated most prose and withheld 86 normative entries. knowledge.get also previewed away a roughly 2100-token work record even with relations:false; focused reads or the CLI are required to recover actionable context.
+
+        ## SYS @saveyourskin.papercut.the-context-cli-rejects-json-even-though-json [about akr]
+        The context CLI rejects --json even though JSON is a routine MCP retrieval mode; retried the documented text context command into task scratch. No ledger/source files were inspected directly.
+
+        ## SYS @saveyourskin.papercut.the-targeted-followup-record-exceeds-mcp [about akr]
+        The targeted followup record exceeds MCP knowledge_get's preview ceiling even with relations:false, requiring CLI retrieval. Context for one text_play path also needed over 20k mandatory tokens; the first 14k request failed instead of supplying the goal and continuation.
+
+        ## SYS @saveyourskin.papercut.tool-knowledge-supersede-observed-supersede [about akr-mcp]
+        tool=knowledge.supersede; observed=supersede with old_key only (successor as revision n+1 of the same key, as the tool description promises) refused with AKR-L041 'already exists; a successor created by supersede needs a new key'; the response carried AKR-X043: akr-mcp.exe was replaced after this MCP process started, so the refusal may be the old binary's; fallback=new successor keys (screens-passage-jam-reworked-stair-safe-20261108, evening-entry-holder-yields-to-a-task-less-waiter-20261108) and a reconnect is due
+
+        ## SinoRAG @sinorag.papercut.three-consecutive-knowledge-revise-knowledge [about akr]
+        Three consecutive knowledge.revise / knowledge.propose writes each returned the note "the ledger still has N diagnostic(s) this write did not introduce (AKR-P003)" with N = 73, then 42, then 20, and a fourth write (revising a proposed decision in place) returned lock_stale false with the same 20. Nothing in the response says what the diagnostics are or why the count moves between writes that touch unrelated records, so it reads as either an alarm or noise; naming the top diagnostic code, or saying the count is of stale-lock findings that `akr build` clears, would settle it.
+
+        ## liminaldoc @docwrite.papercut.knowledge-validate-reports-akr-g024-that-cargo [about akr]
+        knowledge.validate reports AKR-G024 that `cargo test -p docwrite-model --test structure_undo` "names nothing in tracked source", but crates/docwrite-model/tests/structure_undo.rs is tracked and runs; the check seems to search file contents for a --test target name instead of matching test file stems.
+
+        ## nofurthercontact @nofurthercontact.papercut.a-completed-check-s-passed-at-commit-is-refused [about akr]
+        A completed check's passed_at commit is refused (AKR-R022 with G011, 'a commit this repository does not have') when the commit is reachable only through a merge's second parent, and again after a rebase or cherry-pick gives it a new id. So branches with completed checks cannot be merged with a merge commit, and after a rebase each such check must be run and passed again. A way to re-anchor checks across a rebase, or to accept second-parent ancestors, would have saved an hour.
+
+        ## nofurthercontact @nofurthercontact.papercut.after-a-no-ff-merge-of-soar-m5-into-an-old-main [about akr]
+        After a --no-ff merge of soar-m5 into an old main (main at the bootstrap commit), akr marked four observations stale "matched by <merge commit>" even though main's tree was identical to the observed branch (git diff soar-m5 main empty): watch matching appears to diff the merge commit against its first parent. Re-observing at the merge commit cleared it; matching against the observed commit's own tree (or all parents) would avoid the false staleness.
+
+        ## nofurthercontact @nofurthercontact.papercut.akr-git-commit-failed-on-windows-with-the [about akr]
+        akr git commit failed on Windows with "The filename or extension is too long (os error 206)": the generated message carried 351 AKR-Why trailers (85 kB) and was handed to git on the command line, past Windows' 32 kB limit. Worked around with akr git message > file and git commit -F file. akr could pass the message to git by file or stdin.
+
+        ## nofurthercontact @nofurthercontact.papercut.akr-propose-many-accepted-state-proposed-on [about akr]
+        akr propose-many accepted `state proposed` on three new observation records and wrote them as `verified` without a warning, so a brief that says 'leave every record proposed' cannot be met for observations and the agent only learns it from a later get. Either reject the state for the empirical class or say what it was mapped to.
+
+        ## nofurthercontact @nofurthercontact.papercut.akr-propose-many-printed-nothing-written-and [about akr]
+        akr propose-many printed 'nothing written' and then '55 records written in one pass' on a batch that was aborted by AKR-R002, so the last line contradicts the abort. Also: supersede of a proposed milestone silently re-parented its proposed child (part_of) onto the successor and refused an explicit carried_forward disposition with AKR-R016 'is not part_of', so a child cannot be sent to a different milestone in the same step.
+
+        ## nofurthercontact @nofurthercontact.papercut.an-exact-root-context-with-ui-paths-expanded-to [about akr]
+        An exact root context with UI paths expanded to over 66,000 tokens and the terminal truncated it. Querying the relay work key without broad paths returned the relevant rules and cautions.
+
+        ## nofurthercontact @nofurthercontact.papercut.an-isolated-checkout-inherited-four-registered [about akr]
+        An isolated checkout inherited four registered sources with LF bytes but CRLF hashes, causing AKR-S021 and cascading citation errors. Reinstating their verified original bytes restored source validation.
+
+        ## nofurthercontact @nofurthercontact.papercut.bringing-branches-together-two-branches-that [about akr]
+        Bringing branches together: two branches that each add records to the same .akr file conflict wherever the new records sort to the same place, and git aligns the two sides on a shared closing brace, so a plain keep-both (or merge=union) yields a file that does not parse (1,516 errors). There is no akr command to merge record files; I wrote a script that gives the first side its brace back.
+
+        ## nofurthercontact @nofurthercontact.papercut.broad-simulator-and-client-globs-yielded-a [about akr]
+        Broad simulator and client globs yielded a compact context preview for the aerodynamic work. Narrowing to its scope document and using the requested token floor returned the actionable bundle.
+
+        ## nofurthercontact @nofurthercontact.papercut.calling-knowledge-context-for-a-milestone-the [about akr]
+        Calling knowledge.context for a milestone: the agent instructions say "with that key", but the parameter is `goal`, so the first call failed. The retry then failed AKR-X021, because the default budget (and 6000) cannot hold the mandatory sections (12,406 tokens); it only succeeded with budget_tokens 14000. The docs could name `goal` and the default budget could cover the mandatory sections.
+
+        ## nofurthercontact @nofurthercontact.papercut.closing-out-i-needed-every-decision-whose [about akr]
+        Closing out, I needed every decision whose context quotes one of the user's answers of 2026-11-20 ("The user, 2026-11-20, answering question ..."). knowledge.search with those words ranked unrelated decisions first and none of the ones that hold the quotes, so I grepped the records file. A search restricted to a slot (context) or to an exact phrase would have found them.
+
+        ## nofurthercontact @nofurthercontact.papercut.knowledge-context-for-a-work-item-with-budget [about akr]
+        knowledge.context for a work item with budget_tokens 20000 returned about 51 KB (32k tokens), mostly a staleness section of 60+ records at depth 2-4 and a withheld list of 213 keys, so the client spilled it to a file and it had to be filtered with a script. A depth cap on the staleness section, or listing only depth-1 entries in full, would keep the bundle readable.
+
+        ## nofurthercontact @nofurthercontact.papercut.knowledge-context-for-one-work-item-formation [about akr]
+        knowledge.context for one work item (formation-diagnostic-maps, two path globs) returned 51 KB, mostly 90 staleness entries for unrelated records (tool records, manta decisions); the mandatory part alone overran a 20,000-token budget. Staleness could be limited to records the goal reaches.
+
+        ## nofurthercontact @nofurthercontact.papercut.knowledge-context-on-milestone-pilot-descent [about akr]
+        knowledge.context on milestone pilot-descent with the default budget failed: "budget of 2500 tokens cannot hold the mandatory sections (8374 tokens)". The default budget is below what this milestone's mandatory sections need, so the first call always misses; the tool could raise the budget to the mandatory minimum itself, or default higher.
+
+        ## nofurthercontact @nofurthercontact.papercut.knowledge-context-with-budget-tokens-20000 [about akr]
+        knowledge.context with budget_tokens 20000 returned 61,000 characters, over the MCP client's output limit, so it was saved to a file and had to be read back with a script; the goal's own acceptance list also came back empty while the bundle listed ninety unrelated milestone checks.
+
+        ## nofurthercontact @nofurthercontact.papercut.knowledge-context-with-budget-tokens-6000-for [about akr]
+        knowledge.context with budget_tokens 6000 for one work key was refused outright (mandatory sections need 14732 tokens) instead of returning the mandatory part; a caller cannot know the floor in advance, so the first call is always wasted.
+
+        ## nofurthercontact @nofurthercontact.papercut.knowledge-propose-for-a-follow-up-work-item [about akr]
+        knowledge.propose for a follow-up work item failed because the MCP schema exposes generic slots but does not list work's required intent slot. Inspect akr explain work before proposing; dependent context lookup then failed because the write was aborted.
+
+        ## nofurthercontact @nofurthercontact.papercut.knowledge-propose-lists-slots-as-an-untyped [about akr]
+        knowledge.propose lists slots as an untyped object, so using description for a work record was rejected; work requires intent/note. Retried with the schema-listed fields.
+
+        ## nofurthercontact @nofurthercontact.papercut.knowledge-propose-many-over-mcp-rejected-a-13 [about akr]
+        knowledge.propose_many over MCP rejected a 13-record batch (~32 KB of JSON) as unparseable before reaching akr; the CLI `akr propose-many --from` takes AKR syntax only, so citing by line meant writing a converter that computes byte offsets and excerpt hashes. A `--from` that accepts the MCP JSON shape (document plus lines) would remove the detour.
+
+        ## nofurthercontact @nofurthercontact.papercut.knowledge-propose-many-refused-a-nine-record [about akr]
+        knowledge.propose_many refused a nine-record batch with AKR-T001 "decision requires slot `scope`" twice over: the tool's schema lists a decision's slots as decision, context and consequences and describes `scope` as a separate optional top-level field, so nothing says a decision needs one. The error also does not name which records failed. Saying "decision: scope required" in the kind contract, and naming the key in the diagnostic, would have saved a resend of the whole batch.
+
+        ## nofurthercontact @nofurthercontact.papercut.knowledge-source-list-returned-2-of-20-sources [about akr]
+        knowledge.source_list returned 2 of 20 sources under a 500-token hard limit with continuation null and advice to narrow the arguments, but the tool's only argument is all_versions, so there is no way to page through the source ids over MCP; ids had to be guessed from sources/external file names.
+
+        ## nofurthercontact @nofurthercontact.papercut.knowledge-trace-wrote-seven-entries-onto-work [about akr]
+        knowledge.trace wrote seven entries onto work.impact-basin after a parallel planning agent had superseded it; the call succeeded and only the returned state showed "superseded". A warning (or refusal) when tracing a terminal record would have sent the lines to its successor.
+
+        ## nofurthercontact @nofurthercontact.papercut.on-powershell-set-content-on-a-multi-record [about akr]
+        On PowerShell, Set-Content on a multi-record here-string produced a CRLF parser error. Writing the fragment as LF UTF-8 resolved it.
+
+        ## nofurthercontact @nofurthercontact.papercut.opening-the-next-colony-integration-scope [about akr]
+        Opening the next colony integration scope required retrying the AKR start command with the plural --paths flag.
+
+        ## nofurthercontact @nofurthercontact.papercut.planning-context-rejected-a-5-200-token-budget [about akr]
+        Planning context rejected a 5,200-token budget because broad scoped paths made the mandatory graph and acceptance sections alone exceed 12,500 tokens. The retry worked from a focused goal with a larger budget; showing the minimum feasible budget during task orientation would make this easier to size.
+
+        ## nofurthercontact @nofurthercontact.papercut.proposing-an-active-atmosphere-priority [about akr]
+        Proposing an active atmosphere-priority decision with only decision/track relations was rejected by V-021; advisory-source attribution alone does not provide a typed normative/empirical basis. Retried with the existing physical foundation evidence as supported_by.
+
+        ## nofurthercontact @nofurthercontact.papercut.reading-scale-m2-with-knowledge-get-returned-a [about akr]
+        Reading scale-m2 with knowledge.get returned a truncated preview; retrying with relations:false as suggested still truncated the acceptance and slots. The CLI body view is necessary to obtain the complete record.
+
+        ## nofurthercontact @nofurthercontact.papercut.reading-the-68-kb-weather-advisor-source [about knowledge.source_get]
+        Reading the 68 KB weather advisor source repeatedly returned a compact preview whose suggested continuation (detail=snippet) returned the same truncated result. Narrower line ranges work; continuation should actually bypass the preview or suggest a smaller range.
+
+        ## nofurthercontact @nofurthercontact.papercut.recording-four-command-checks-seen-passing-on [about akr]
+        Recording four command checks seen passing on milestone planet-same-twice was refused (AKR-R022) because its manual check report-seen is open; complete is all-or-nothing, so passed checks on an unfinished milestone cannot be recorded without inventing evidence records.
+
+        ## nofurthercontact @nofurthercontact.papercut.refreshing-three-stale-verified-observations-in [about akr]
+        Refreshing three stale verified observations in place: knowledge.supersede's schema says new_key "defaults to old_key (revision n+1 replaces n)", but calling it with only old_key and new slots fails with AKR-L041 ("a successor created by supersede needs a new key"); knowledge.revise with state verified is what works. Also knowledge.validate returned ok:true with 0 diagnostics while `akr check` at the same commit reports 3 strict errors (G024/G025 on old Scale M2 evidence records), so the two disagree about whether the ledger is clean.
+
+        ## nofurthercontact @nofurthercontact.papercut.the-aerodynamics-context-call-rejected-a-5500 [about akr]
+        The aerodynamics context call rejected a 5500-token budget because mandatory sections needed 13424 tokens. Retried with a larger budget and narrower paths.
+
+        ## nofurthercontact @nofurthercontact.papercut.the-deploy-order-context-required-more-tokens [about akr]
+        The deploy-order context required more tokens than the initial request budget, so I narrowed the query to the new expedition order module.
+
+        ## nofurthercontact @nofurthercontact.papercut.the-manta-field-ship-context-with-a-9000-token [about akr]
+        The manta-field-ship context with a 9000-token budget failed because mandatory graph/acceptance sections need 13256 tokens even for narrow paths. Retried at 22000 and read the bundle in chunks.
+
+        ## nofurthercontact @nofurthercontact.papercut.the-orbital-command-context-rejected-a-6-000 [about akr]
+        The orbital command context rejected a 6,000-token budget because its mandatory sections alone required 8,970 tokens. A narrower path and larger budget returned the bundle.
+
+        ## nofurthercontact @nofurthercontact.papercut.the-region-reproduction-context-request-needed [about akr]
+        The region reproduction context request needed 17,642 tokens for mandatory sections when scoped to three exact paths. A narrower bundle or a compact mandatory-section view would make it easier to read in Codex without output truncation.
+
+        ## nofurthercontact @nofurthercontact.papercut.updating-active-parent-weather-work-progress [about knowledge.revise]
+        Updating active parent weather-work progress required dispositions for a pinned unfinished child, but dispositions for two new children using bare part_of references were rejected as not part_of the old revision. Clarifying in the help that dispositions apply only to revision-pinned children, while bare references follow the head automatically, would avoid failed retries.
+
+        ## nofurthercontact @nofurthercontact.papercut.while-adding-the-optical-archive-work-propose [about akr]
+        While adding the optical archive work, propose help supplied an intent example but no acceptance example. A plausible check statement placement failed with only a generic slot-list parser hint.
+
+        ## nofurthercontact @nofurthercontact.papercut.while-retrieving-the-latest-continuation [about akr]
+        While retrieving the latest continuation handoff, handoff list includes result IDs but handoff open rs-1b690c08eea8 rejects them with no recognised mode. Used handoff results to retrieve result packets.
+
+        ## orderflower @orderflower.papercut.akr-reports-not-a-repository-when-git-cannot-start [about akr]
+        knowledge.evidence_add and knowledge.papercut failed with AKR-G001 'no commit to record: not inside a git repository' while git.exe could not start at all (blocked by Windows Smart App Control); the repository was fine. The message points at the repository rather than at git. evidence_add accepts observed_at and worked once it was passed; knowledge.papercut has no such parameter, so papercuts could only be logged through knowledge.propose with an explicit observed_at.
+        """
+    observed_at git:3edf5a92ba01d73e7250cb70a5464b861d3eba36
+    about "akr"
+    collated [
+        "kitchen.papercut.a-salon-handover-context-read-with-a-3000-token",
+        "lege-ecosystem.papercut.akr-check-0-6-2-raises-akr-g024-a-recorded",
+        "lege-ecosystem.papercut.akr-check-0-6-2-raises-akr-g025-exit-status",
+        "lege-ecosystem.papercut.akr-explain-decision-lists-relation-names",
+        "lege-ecosystem.papercut.akr-knowledge-papercut-rejected-a-call-with",
+        "lege-ecosystem.papercut.akr-mcp-resolves-its-ledger-once-from-dir-or",
+        "lege-ecosystem.papercut.akr-start-failed-with-akr-c031-working-tree",
+        "lege-ecosystem.papercut.the-mcp-validate-tool-accepts-a-diagnostic",
+        "saveyourskin.papercut.akr-0-7-0-a-work-record-whose-superseded-parent",
+        "saveyourskin.papercut.overlay-files-for-revise-from-are-rejected-with",
+        "saveyourskin.papercut.scoping-the-text-stay-follow-up-a-6000-token",
+        "saveyourskin.papercut.the-context-cli-rejects-json-even-though-json",
+        "saveyourskin.papercut.the-targeted-followup-record-exceeds-mcp",
+        "saveyourskin.papercut.tool-knowledge-supersede-observed-supersede",
+        "sinorag.papercut.three-consecutive-knowledge-revise-knowledge",
+        "docwrite.papercut.knowledge-validate-reports-akr-g024-that-cargo",
+        "nofurthercontact.papercut.a-completed-check-s-passed-at-commit-is-refused",
+        "nofurthercontact.papercut.after-a-no-ff-merge-of-soar-m5-into-an-old-main",
+        "nofurthercontact.papercut.akr-git-commit-failed-on-windows-with-the",
+        "nofurthercontact.papercut.akr-propose-many-accepted-state-proposed-on",
+        "nofurthercontact.papercut.akr-propose-many-printed-nothing-written-and",
+        "nofurthercontact.papercut.an-exact-root-context-with-ui-paths-expanded-to",
+        "nofurthercontact.papercut.an-isolated-checkout-inherited-four-registered",
+        "nofurthercontact.papercut.bringing-branches-together-two-branches-that",
+        "nofurthercontact.papercut.broad-simulator-and-client-globs-yielded-a",
+        "nofurthercontact.papercut.calling-knowledge-context-for-a-milestone-the",
+        "nofurthercontact.papercut.closing-out-i-needed-every-decision-whose",
+        "nofurthercontact.papercut.knowledge-context-for-a-work-item-with-budget",
+        "nofurthercontact.papercut.knowledge-context-for-one-work-item-formation",
+        "nofurthercontact.papercut.knowledge-context-on-milestone-pilot-descent",
+        "nofurthercontact.papercut.knowledge-context-with-budget-tokens-20000",
+        "nofurthercontact.papercut.knowledge-context-with-budget-tokens-6000-for",
+        "nofurthercontact.papercut.knowledge-propose-for-a-follow-up-work-item",
+        "nofurthercontact.papercut.knowledge-propose-lists-slots-as-an-untyped",
+        "nofurthercontact.papercut.knowledge-propose-many-over-mcp-rejected-a-13",
+        "nofurthercontact.papercut.knowledge-propose-many-refused-a-nine-record",
+        "nofurthercontact.papercut.knowledge-source-list-returned-2-of-20-sources",
+        "nofurthercontact.papercut.knowledge-trace-wrote-seven-entries-onto-work",
+        "nofurthercontact.papercut.on-powershell-set-content-on-a-multi-record",
+        "nofurthercontact.papercut.opening-the-next-colony-integration-scope",
+        "nofurthercontact.papercut.planning-context-rejected-a-5-200-token-budget",
+        "nofurthercontact.papercut.proposing-an-active-atmosphere-priority",
+        "nofurthercontact.papercut.reading-scale-m2-with-knowledge-get-returned-a",
+        "nofurthercontact.papercut.reading-the-68-kb-weather-advisor-source",
+        "nofurthercontact.papercut.recording-four-command-checks-seen-passing-on",
+        "nofurthercontact.papercut.refreshing-three-stale-verified-observations-in",
+        "nofurthercontact.papercut.the-aerodynamics-context-call-rejected-a-5500",
+        "nofurthercontact.papercut.the-deploy-order-context-required-more-tokens",
+        "nofurthercontact.papercut.the-manta-field-ship-context-with-a-9000-token",
+        "nofurthercontact.papercut.the-orbital-command-context-rejected-a-6-000",
+        "nofurthercontact.papercut.the-region-reproduction-context-request-needed",
+        "nofurthercontact.papercut.updating-active-parent-weather-work-progress",
+        "nofurthercontact.papercut.while-adding-the-optical-archive-work-propose",
+        "nofurthercontact.papercut.while-retrieving-the-latest-continuation",
+        "orderflower.papercut.akr-reports-not-a-repository-when-git-cannot-start"
+    ]
+    author "dk"
+    created_at 2026-11-21
+}
+
 record akr.papercut.collated-7-papercuts-from-lege-ecosystem-jpegxl/1 : papercut {
     title "Collated 7 papercuts from Lege-ecosystem, jpegXL-rs and raw-autotune"
     state superseded

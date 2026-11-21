@@ -47,6 +47,7 @@ its own development and two more real projects (§8).
 | **P11** | The AKR ↔ git change protocol | `16-change-protocol.md`, D-032 |
 | **P12** | Handoff: capsules, packets, results, coverage | `17-handoff.md`, D-040, D-041 |
 | **P13** | Reasoning trace, retired kinds, self-recording checks, one brief | `19-ledger-usage-and-reasoning-audit.md`, `20-upgrading-to-0.7.md`, D-046..D-049 |
+| **P14** | DAG ancestry, semantic record merge, context that fits its first call | `16-change-protocol.md` §11, `09-context-assembly.md` §6, `21-upgrading-to-0.8.md`, D-050, D-051 |
 
 The order is a dependency order, not a priority order. P4 sits where it does because a
 rendered roadmap is the first artefact a person can *judge*, and judging it early is

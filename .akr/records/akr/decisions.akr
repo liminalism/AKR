@@ -617,6 +617,29 @@ record akr.decision.inherited-facts-not-conclusions/1 : decision {
     author "GitHub Uploader"
 }
 
+record akr.decision.ledger-history-is-a-dag-and-records-merge/1 : decision {
+    title "Ledger history is the commit DAG, and .akr files merge by record"
+    state active
+    scope [
+        path "crates/akr-cli/src/change.rs",
+        path "crates/akr-cli/src/init.rs",
+        path "crates/akr-core/src/freshness/**",
+        path "crates/akr-core/src/git/**",
+        path "crates/akr-core/src/merge/**"
+    ]
+    decision """
+        Ancestry, definitional history and freshness walk every parent of a merge, and a git merge driver merges .akr record files by record: disjoint records and concurrent trace appends join, and a concurrent body for one key/n renumbers theirs to the next revision superseding ours. Lock and views are rebuilt, not merged. Recorded as D-050.
+        """
+    context """
+        Merging worktrees failed on second-parent passed_at, false staleness at --no-ff merges and brace-aligned textual merges, so agents rebased. Rejected: merge=union (yields unparseable files), an akr-only merge command with no git driver (plain git merge stays broken), and refusing concurrent same-key revisions (stalls every merge on the common case of two branches revising one record).
+        """
+    consequences """
+        A renumbering does not re-pin references to theirs' old revision elsewhere; the driver prints each one. Driver definitions live in local git config, so a fresh clone needs akr git install-hooks before its first merge. A merge commit with no open transaction passes pre-commit.
+        """
+    supported_by [ @akr.observation.ledger-merges-forced-linear-history/1 ]
+    author "dk"
+}
+
 record akr.decision.lock-currency-accepts-committed-dirty-build/1 : decision {
     title "Committing identical dirty sources preserves lock currency"
     state active
@@ -1095,6 +1118,27 @@ record akr.decision.start-collates-session-head/1 : decision {
         projection, not a new record kind or committed generated file.
         """
     supported_by [ @akr.evidence.session-head-briefing-suite/1 ]
+}
+
+record akr.decision.undersized-context-delivers-the-minimum/1 : decision {
+    title "An undersized context budget delivers the minimum instead of failing"
+    state active
+    scope [
+        path "crates/akr-core/src/context/**",
+        path "crates/akr-mcp/src/budget.rs",
+        path "crates/akr-mcp/src/tools.rs"
+    ]
+    decision """
+        The never-reduced set is the goal, its depth-1 milestone or track, its own acceptance checks, contradictions and every selected key. Distant staleness collapses to a count first, other records' acceptance and the plan of record become reducible, and a budget below the minimum delivers it flagged budget_exceeded with required_tokens. AKR-X021 is retired. Recorded as D-051.
+        """
+    context """
+        The caller cannot know the mandatory floor before calling, so the first call always failed, and bundles that fit were mostly staleness three hops away. Rejected: only raising the default budget (the floor varies by goal), and scoring sections by relevance (a model-free fixed order by graph distance already removes the bulk, and stays deterministic).
+        """
+    consequences """
+        V-123 still names every reduction; what changed is the spending order and that refusal became flagged delivery. MCP context defaults to a 6,000-token transport ceiling and the transport measures the larger of text and JSON. --section renders one section.
+        """
+    supported_by [ @akr.observation.context-floor-is-unknowable-to-the-caller/1 ]
+    author "dk"
 }
 
 record akr.decision.validated-project-configuration-edits/1 : decision {

@@ -1187,6 +1187,13 @@ fn notes_text(notes: &WorkerNotes) -> String {
 /// # Errors
 /// [`EnvError`] when the packet is missing, or `--reveal` cannot record itself.
 pub fn open(session: &Session, id: &str, reveal_now: bool) -> Result<Output, EnvError> {
+    if id.starts_with("rs-") {
+        return Err(EnvError::new(
+            "AKR-C043",
+            format!("{id} is a handoff result id, not a packet id"),
+        )
+        .help("read handoff results with `akr handoff results` (MCP: knowledge.handoff_results)"));
+    }
     let mut stored = load_packet(session, id)?;
     let inherited = resolve(session, &stored);
     let workspace = described_workspace(session, &stored, &inherited);

@@ -9,3 +9,9 @@
 
 # Build outputs that happen to be committed. Never diffed, never normalised.
 *.exe binary
+
+# AKR semantic merge drivers and immutable sources.
+.akr/records/**/*.akr merge=akr
+.akr/akr.lock merge=akr-rebuild
+docs/generated/*.md merge=akr-rebuild
+sources/** -text

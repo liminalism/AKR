@@ -182,6 +182,10 @@ pub enum Command {
         review_clean: bool,
         /// Also compare the committed views against a fresh render.
         views_current: bool,
+        /// Maximum diagnostics to print.
+        limit: Option<usize>,
+        /// Zero-based diagnostic offset.
+        offset: usize,
     },
     /// Run stages A–F; `--check` renders in-memory without writing.
     Build {
@@ -243,6 +247,8 @@ pub enum Command {
         paths: Vec<Glob>,
         /// Token ceiling.
         budget: Option<usize>,
+        /// Optional single-section filter.
+        section: Option<String>,
     },
     /// Orient an ambiguous task to planning records before assembling context.
     Start {
@@ -253,7 +259,7 @@ pub enum Command {
         /// Token ceiling carried into the recommended context call.
         budget: Option<usize>,
     },
-    /// `akr search <query> [--kind ...] [--state ...] [--limit n]`.
+    /// `akr search <query> [--kind ...] [--state ...] [--slot <name>] [--limit n]`.
     Search {
         /// What to look for. Ordinary words unless [`Self::Search::raw_fts`] is set.
         query: String,
@@ -263,6 +269,8 @@ pub enum Command {
         kinds: Vec<String>,
         /// Restrict to these states. Applied before ranking.
         states: Vec<String>,
+        /// Optional slot filter (keep records whose named slot contains the query or is present).
+        slot: Option<String>,
         /// Maximum results.
         limit: Option<usize>,
     },
@@ -475,6 +483,39 @@ pub enum Command {
     },
     /// `akr git install-hooks`.
     GitInstallHooks,
+    /// `akr git merge <branch> [--no-ff] [--no-commit] [-m <msg>]`.
+    GitMerge {
+        /// The branch or ref to merge into HEAD.
+        branch: String,
+        /// Always create a merge commit even when fast-forward is possible.
+        no_ff: bool,
+        /// Perform the merge and rebuild/check without committing.
+        no_commit: bool,
+        /// Optional merge commit message.
+        message: Option<String>,
+    },
+    /// `akr git merge-driver <base> <ours> <theirs> [--path <path>]`.
+    GitMergeDriver {
+        /// Ancestor version (%O).
+        base: PathBuf,
+        /// Current branch version (%A, overwritten in place).
+        ours: PathBuf,
+        /// Incoming branch version (%B).
+        theirs: PathBuf,
+        /// Repo-relative path (%P), for diagnostics.
+        path: Option<String>,
+    },
+    /// `akr git merge-rebuild <base> <ours> <theirs> [--path <path>]`.
+    GitMergeRebuild {
+        /// Ancestor version (%O).
+        base: PathBuf,
+        /// Current branch version (%A).
+        ours: PathBuf,
+        /// Incoming branch version (%B).
+        theirs: PathBuf,
+        /// Repo-relative path (%P), for diagnostics.
+        path: Option<String>,
+    },
     /// `akr git-hook <name>` — what an installed hook calls.
     GitHook {
         /// The hook name.
@@ -533,6 +574,8 @@ pub enum Command {
         checks: Vec<String>,
         /// `check[=commit]`: command checks that record their own pass (D-048).
         passes: Vec<String>,
+        /// Stamp passed checks onto the head without transitioning to `completed`.
+        partial: bool,
     },
     /// `akr trace <work> "<text>"...` (D-047).
     Trace {
@@ -756,7 +799,10 @@ impl Command {
             Self::GitMessage
             | Self::GitCommit { .. }
             | Self::GitLog { .. }
-            | Self::GitInstallHooks => "git".to_owned(),
+            | Self::GitInstallHooks
+            | Self::GitMerge { .. }
+            | Self::GitMergeDriver { .. }
+            | Self::GitMergeRebuild { .. } => "git".to_owned(),
             Self::GitHook { .. } => "git-hook".to_owned(),
             Self::SourceAdd { .. }
             | Self::SourceList { .. }
@@ -949,6 +995,9 @@ pub fn parse(argv: &[String]) -> Result<Invocation, UsageError> {
                         ));
                     }
                 };
+            }
+            "--json" => {
+                global.format = Format::Json;
             }
             "--at" => {
                 at_seen = true;
@@ -1145,11 +1194,37 @@ fn parse_command(
         // behaviour is the rule the workspace keeps; this is one behaviour that already
         // had two names, in two places, and only one of them worked.
         "check" | "validate" => {
-            known_flags(&["--review-clean", "--views-current", "--scratch-clean"])?;
+            known_flags(&[
+                "--review-clean",
+                "--views-current",
+                "--scratch-clean",
+                "--limit",
+                "--offset",
+            ])?;
+            let limit = match option_value(tail, "--limit") {
+                Some(text) => Some(text.parse().map_err(|_| {
+                    UsageError::new(
+                        "AKR-C004",
+                        format!("--limit: {text:?} is not a non-negative integer"),
+                    )
+                })?),
+                None => None,
+            };
+            let offset = match option_value(tail, "--offset") {
+                Some(text) => text.parse().map_err(|_| {
+                    UsageError::new(
+                        "AKR-C004",
+                        format!("--offset: {text:?} is not a non-negative integer"),
+                    )
+                })?,
+                None => 0,
+            };
             Command::Check {
                 scratch_clean: flag_set("--scratch-clean"),
                 review_clean: flag_set("--review-clean"),
                 views_current: flag_set("--views-current"),
+                limit,
+                offset,
             }
         }
         "scratch" => {
@@ -1269,10 +1344,10 @@ fn parse_command(
             }
         }
         "context" => {
-            known_flags(&["--goal", "--paths", "--budget"])?;
+            known_flags(&["--goal", "--paths", "--budget", "--section"])?;
             // `akr context <key>` is what every other record command looks like, and
             // agents reach for it first; the bare key is the goal, as `--goal` is.
-            let bare = values_skipped(tail, &["--goal", "--paths", "--budget"]);
+            let bare = values_skipped(tail, &["--goal", "--paths", "--budget", "--section"]);
             refuse_stray_paths(&bare)?;
             let goal = match (
                 option_value(tail, "--goal"),
@@ -1287,7 +1362,7 @@ fn parse_command(
                 (Some(goal), None) | (None, Some(goal)) => goal,
                 (None, None) => {
                     return Err(UsageError::new("AKR-C003", "context requires a goal key")
-                        .with_help("akr context <key> [--paths <glob>]... [--budget <tokens>]"));
+                        .with_help("akr context <key> [--paths <glob>]... [--budget <tokens>] [--section <name>]"));
                 }
             };
             let budget = match option_value(tail, "--budget") {
@@ -1303,6 +1378,7 @@ fn parse_command(
                 goal,
                 paths: path_globs(tail).iter().map(|p| Glob::new(p)).collect(),
                 budget,
+                section: option_value(tail, "--section"),
             }
         }
         "start" => {
@@ -1350,7 +1426,7 @@ fn parse_command(
             }
         }
         "search" => {
-            known_flags(&["--query", "--kind", "--state", "--limit", "--fts"])?;
+            known_flags(&["--query", "--kind", "--state", "--slot", "--limit", "--fts"])?;
             let limit = match option_value(tail, "--limit") {
                 Some(text) => Some(text.parse().map_err(|_| {
                     UsageError::new(
@@ -1366,7 +1442,7 @@ fn parse_command(
                 let argument = &tail[index];
                 if matches!(
                     argument.as_str(),
-                    "--query" | "--kind" | "--state" | "--limit"
+                    "--query" | "--kind" | "--state" | "--slot" | "--limit"
                 ) {
                     index += 2;
                     continue;
@@ -1386,12 +1462,19 @@ fn parse_command(
                     "search takes either positional <query> or --query <query>, not both",
                 ));
             }
+            let kinds = repeated(tail, "--kind");
+            let states = repeated(tail, "--state");
+            let slot = option_value(tail, "--slot");
+            let query = match flagged_query.or(positional_query) {
+                Some(q) => q,
+                None if !kinds.is_empty() || !states.is_empty() || slot.is_some() => String::new(),
+                None => return Err(UsageError::new("AKR-C003", "search requires a query")),
+            };
             Command::Search {
-                query: flagged_query
-                    .or(positional_query)
-                    .ok_or_else(|| UsageError::new("AKR-C003", "search requires a query"))?,
-                kinds: repeated(tail, "--kind"),
-                states: repeated(tail, "--state"),
+                query,
+                kinds,
+                states,
+                slot,
                 limit,
                 raw_fts: tail.iter().any(|a| a == "--fts"),
             }
@@ -1488,11 +1571,12 @@ fn parse_command(
             }
         }
         "complete" => {
-            known_flags(&["--check", "--pass"])?;
+            known_flags(&["--check", "--pass", "--partial"])?;
             Command::Complete {
                 key: need(0, "a key")?,
                 checks: repeated(tail, "--check"),
                 passes: repeated(tail, "--pass"),
+                partial: flag_set("--partial"),
             }
         }
         "trace" => {
@@ -2574,6 +2658,66 @@ fn parse_git(name: &str, positional: &[&String], tail: &[String]) -> Result<Comm
             }
         }
         "install-hooks" => Command::GitInstallHooks,
+        "merge" => {
+            for arg in tail.iter().filter(|arg| arg.starts_with('-')) {
+                let base = arg.split('=').next().unwrap_or(arg);
+                if !matches!(base, "--no-ff" | "--no-commit" | "-m" | "--message") {
+                    return Err(UsageError::new(
+                        "AKR-C002",
+                        format!("unknown flag {base:?} for command \"git merge\""),
+                    ));
+                }
+            }
+            let bare = values_skipped(&tail[1..], &["-m", "--message"]);
+            let branch = bare
+                .first()
+                .map(|s| (*s).clone())
+                .ok_or_else(|| UsageError::new("AKR-C003", "git merge requires a branch name"))?;
+            let message = option_value(tail, "-m").or_else(|| option_value(tail, "--message"));
+            Command::GitMerge {
+                branch,
+                no_ff: tail.iter().any(|a| a == "--no-ff"),
+                no_commit: tail.iter().any(|a| a == "--no-commit"),
+                message,
+            }
+        }
+        "merge-driver" | "merge-rebuild" => {
+            let bare = values_skipped(&tail[1..], &["--path"]);
+            let base = bare.first().map(|s| PathBuf::from(*s)).ok_or_else(|| {
+                UsageError::new(
+                    "AKR-C003",
+                    format!("git {sub} requires <base> <ours> <theirs>"),
+                )
+            })?;
+            let ours = bare.get(1).map(|s| PathBuf::from(*s)).ok_or_else(|| {
+                UsageError::new(
+                    "AKR-C003",
+                    format!("git {sub} requires <base> <ours> <theirs>"),
+                )
+            })?;
+            let theirs = bare.get(2).map(|s| PathBuf::from(*s)).ok_or_else(|| {
+                UsageError::new(
+                    "AKR-C003",
+                    format!("git {sub} requires <base> <ours> <theirs>"),
+                )
+            })?;
+            let path = option_value(tail, "--path");
+            if sub == "merge-driver" {
+                Command::GitMergeDriver {
+                    base,
+                    ours,
+                    theirs,
+                    path,
+                }
+            } else {
+                Command::GitMergeRebuild {
+                    base,
+                    ours,
+                    theirs,
+                    path,
+                }
+            }
+        }
         "log" => Command::GitLog {
             reference: positional
                 .get(1)
@@ -2585,7 +2729,9 @@ fn parse_git(name: &str, positional: &[&String], tail: &[String]) -> Result<Comm
                 "AKR-C001",
                 format!("unknown subcommand {other:?} for command \"git\""),
             )
-            .with_help("supported subcommands: message, commit, log, install-hooks"));
+            .with_help(
+                "supported subcommands: message, commit, log, install-hooks, merge, merge-driver, merge-rebuild",
+            ));
         }
     })
 }

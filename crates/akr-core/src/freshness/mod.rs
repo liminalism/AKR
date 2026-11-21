@@ -165,18 +165,29 @@ pub fn derive(
         .extend(validate_inputs(ledger, repository, head, &watched)?);
 
     // 3. One bulk query over the widest range any record cares about.
+    //    When observations come from incomparable merged branches, lower the bound to
+    //    their merge-base so commits on every merged side are included.
     let mut oldest: Option<Commit> = None;
+    let mut unbounded = false;
     for candidate in watched.iter().filter_map(|r| observed_at(r)) {
         if !repository.contains(candidate) {
             continue;
         }
+        if unbounded {
+            continue;
+        }
         oldest = match oldest {
-            // Keep whichever is the ancestor of the other, so the single bulk query below
-            // spans every range any record cares about.
             Some(current) if repository.is_descendant(&current, candidate)? => {
                 Some(candidate.clone())
             }
-            Some(current) => Some(current),
+            Some(current) if repository.is_descendant(candidate, &current)? => Some(current),
+            Some(current) => match repository.merge_base(&current, candidate)? {
+                Some(base) => Some(base),
+                None => {
+                    unbounded = true;
+                    None
+                }
+            },
             None => Some(candidate.clone()),
         };
     }
@@ -262,6 +273,9 @@ fn watch_cause(
             };
             if contained {
                 continue; // the observation already accounts for this commit
+            }
+            if !repository.merge_changed_since(&touch.commit, observed, &touch.path)? {
+                continue; // merge commit preserved the observed branch's exact file
             }
             return Ok(Some(StaleCause::Watch {
                 glob: glob.clone(),

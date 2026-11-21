@@ -195,17 +195,18 @@ fn hands_script_to_shell(words: &[String]) -> bool {
 
 /// Identifier-shaped tokens in a command, keeping only those that could name a test.
 ///
-/// A token is `[a-z0-9_]+` optionally joined by `::`. Only tokens carrying a `_` or a
-/// `::` are kept, which is what separates `a_focused_test` and `module::tests` from
-/// `cargo`, `test` and `workspace`. A command with no such token — `just check`,
-/// `cargo check --workspace` — yields nothing and is never reported, so a gate that runs
-/// a whole suite stays silent instead of becoming noise on every ledger.
-///
-/// Tokens come from [`ShellText::filterable`], so a multi-word quoted argument (a jq
-/// program, say) is never mined for filters, while a `bash -c` script is.
+/// Only segments that invoke a test runner (`cargo test`, `cargo nextest`, `pytest`,
+/// `go test`, `jest`, `vitest`, `ctest`, `dotnet test`, `npm/pnpm/yarn/bun test`,
+/// `python -m pytest|unittest`, `rspec`, `phpunit`) are mined for filter tokens, so
+/// non-test commands (`cargo clippy`, `cargo run`, `pwsh scripts/...`) do not draw
+/// phantom-test false positives.
 fn command_tokens(command: &str) -> Vec<String> {
     fn collect(shell: &ShellText, out: &mut Vec<String>) {
-        scan_tokens(&shell.filterable, out);
+        for segment in split_command_segments(&shell.filterable) {
+            if is_test_runner_segment(segment) {
+                scan_tokens(segment, out);
+            }
+        }
         for script in &shell.scripts {
             collect(script, out);
         }
@@ -215,6 +216,86 @@ fn command_tokens(command: &str) -> Vec<String> {
     out.sort();
     out.dedup();
     out
+}
+
+/// Splits a shell command line into simple command segments on control operators.
+fn split_command_segments(text: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let bytes = text.as_bytes();
+    let mut start = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        let sep_len = match bytes[i] {
+            b';' | b'\n' => 1,
+            b'|' => {
+                if bytes.get(i + 1) == Some(&b'|') {
+                    2
+                } else {
+                    1
+                }
+            }
+            b'&' if bytes.get(i + 1) == Some(&b'&') => 2,
+            _ => 0,
+        };
+        if sep_len > 0 {
+            let seg = text[start..i].trim();
+            if !seg.is_empty() {
+                out.push(seg);
+            }
+            i += sep_len;
+            start = i;
+        } else {
+            i += 1;
+        }
+    }
+    let tail = text[start..].trim();
+    if !tail.is_empty() {
+        out.push(tail);
+    }
+    out
+}
+
+/// Normalises an executable token to its lowercase basename without `.exe`.
+fn command_basename(word: &str) -> String {
+    let base = word.rsplit(['/', '\\']).next().unwrap_or(word);
+    let base = base.strip_suffix(".exe").unwrap_or(base);
+    base.to_ascii_lowercase()
+}
+
+/// Whether a command segment invokes a known test runner whose positional/filter arguments
+/// select test names.
+fn is_test_runner_segment(segment: &str) -> bool {
+    let mut words = segment.split_whitespace().peekable();
+    // Skip leading `env` and `VAR=value` assignments.
+    while let Some(&word) = words.peek() {
+        if word == "env" || (word.contains('=') && !word.starts_with('-')) {
+            words.next();
+        } else {
+            break;
+        }
+    }
+    let Some(first) = words.next() else {
+        return false;
+    };
+    let bin = command_basename(first);
+    let rest: Vec<&str> = words.collect();
+    match bin.as_str() {
+        "cargo" => {
+            // Skip `+toolchain` or global flags before the subcommand.
+            let sub = rest
+                .iter()
+                .find(|w| !w.starts_with('+') && !w.starts_with('-'))
+                .copied();
+            matches!(sub, Some("test" | "nextest"))
+        }
+        "pytest" | "py.test" | "jest" | "vitest" | "ctest" | "rspec" | "phpunit" => true,
+        "go" | "dotnet" | "npm" | "pnpm" | "yarn" | "bun" => rest.first().copied() == Some("test"),
+        "npx" => matches!(rest.first().copied(), Some("jest" | "vitest")),
+        "python" | "python3" | "py" => rest
+            .windows(2)
+            .any(|w| w[0] == "-m" && matches!(w[1], "pytest" | "unittest")),
+        _ => false,
+    }
 }
 
 fn scan_tokens(text: &str, out: &mut Vec<String>) {
@@ -318,9 +399,8 @@ fn status_defect(shell: &ShellText, pipe_aware: bool) -> Option<&'static str> {
             "it contains an HTML-escaped `&amp;`, so it is not the command it appears to be",
         );
     }
-    // `||` is an alternation, not a pipe; check it first so it is not miscounted.
-    let piped = text.replace("||", "").contains('|');
-    if piped && !pipe_aware {
+    // `||` is an alternation, not a pipe; check each non-alternation pipeline.
+    if !pipe_aware && has_untrustworthy_pipe(text) {
         return Some(
             "a shell pipeline reports only its LAST stage's status, so this exits 0 \
              whenever the final command succeeds regardless of what the real one did",
@@ -335,11 +415,84 @@ fn status_defect(shell: &ShellText, pipe_aware: bool) -> Option<&'static str> {
         .find_map(|script| status_defect(script, pipe_aware))
 }
 
+/// Whether `unquoted` contains a shell pipeline whose final stage is not an asserting
+/// filter (`rg -q`, `grep -q`, `jq -e`, `test`, `[`, `diff -q`, `cmp -s`).
+fn has_untrustworthy_pipe(unquoted: &str) -> bool {
+    // Split on `;`, `\n`, `&&`, `||` first so each pipeline is judged on its own last stage.
+    let mut lists = Vec::new();
+    let bytes = unquoted.as_bytes();
+    let mut start = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        let sep = match bytes[i] {
+            b';' | b'\n' => 1,
+            b'&' if bytes.get(i + 1) == Some(&b'&') => 2,
+            b'|' if bytes.get(i + 1) == Some(&b'|') => 2,
+            _ => 0,
+        };
+        if sep > 0 {
+            lists.push(&unquoted[start..i]);
+            i += sep;
+            start = i;
+        } else {
+            i += 1;
+        }
+    }
+    lists.push(&unquoted[start..]);
+
+    for list in lists {
+        if !list.contains('|') {
+            continue;
+        }
+        let last_stage = list.rsplit('|').next().unwrap_or_default().trim();
+        if !is_asserting_stage(last_stage) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Whether a pipeline's final stage asserts a predicate via its exit code rather than
+/// discarding upstream failures like `tail`, `head`, `tee`, or `cat`.
+fn is_asserting_stage(stage: &str) -> bool {
+    let mut words = stage.split_whitespace().peekable();
+    while let Some(&w) = words.peek() {
+        if w == "!" || w == "env" || (w.contains('=') && !w.starts_with('-')) {
+            words.next();
+        } else {
+            break;
+        }
+    }
+    let Some(first) = words.next() else {
+        return false;
+    };
+    let bin = command_basename(first);
+    let flags: Vec<&str> = words.collect();
+    let has_short = |ch: char| {
+        flags
+            .iter()
+            .any(|f| f.starts_with('-') && !f.starts_with("--") && f[1..].chars().any(|c| c == ch))
+    };
+    match bin.as_str() {
+        "test" | "[" => true,
+        "rg" | "grep" | "egrep" | "fgrep" => {
+            has_short('q') || flags.iter().any(|&f| f == "--quiet" || f == "--silent")
+        }
+        "jq" => has_short('e') || flags.contains(&"--exit-status"),
+        "diff" => has_short('q') || flags.contains(&"--brief"),
+        "cmp" => has_short('s') || flags.iter().any(|&f| f == "--silent" || f == "--quiet"),
+        _ => false,
+    }
+}
+
 /// One recorded command, and enough to point a reader at it.
 struct Recorded {
     id: RevisionId,
     where_: String,
     command: String,
+    /// Whether to mine test-filter tokens for `AKR-G024`. True for planning acceptance
+    /// checks; false for historical `evidence` records (which still get `AKR-G025`).
+    check_tokens: bool,
 }
 
 fn recorded_commands(ledger: &Ledger) -> Vec<Recorded> {
@@ -362,22 +515,48 @@ fn recorded_commands(ledger: &Ledger) -> Vec<Recorded> {
                         id: record.id.clone(),
                         where_: format!("check `{}`", check.id.as_str()),
                         command: command.clone(),
+                        check_tokens: true,
                     });
                 }
             }
         }
-        // Evidence `command` slots are the bigger half and nobody was watching them: the
-        // same census found 1547 of them, 14 phantom, and 12 of those carrying
-        // `result pass` — records that have actively misled a reader.
+        // Evidence `command` slots record historical invocations (which may legitimately
+        // run ad-hoc tools or tests that were later refactored). Keep `AKR-G025` on them
+        // so fabricated-pass pipelines are still caught, while exempting them from
+        // `AKR-G024` phantom-test mining.
         if let Some(ContentValue::Text(command)) = record.content.get(&ContentSlot::Command) {
             out.push(Recorded {
                 id: record.id.clone(),
                 where_: "command".to_owned(),
                 command: command.clone(),
+                check_tokens: false,
             });
         }
     }
     out
+}
+
+/// Integration test stems from tracked `tests/<stem>.rs` (or `*/tests/<stem>.rs`) files.
+fn tracked_test_stems(tracked_paths: &BTreeSet<String>) -> BTreeSet<String> {
+    let mut stems = BTreeSet::new();
+    for path in tracked_paths {
+        let Some(rest) = path
+            .strip_prefix("tests/")
+            .or_else(|| path.rsplit_once("/tests/").map(|(_, after)| after))
+        else {
+            continue;
+        };
+        if let Some(stem) = rest.strip_suffix(".rs")
+            && !stem.contains('/')
+        {
+            stems.insert(stem.to_owned());
+        } else if let Some((dir, tail)) = rest.split_once('/')
+            && tail == "main.rs"
+        {
+            stems.insert(dir.to_owned());
+        }
+    }
+    stems
 }
 
 /// Every recorded command whose test-name tokens name nothing in tracked source.
@@ -398,7 +577,13 @@ pub fn phantom_command_tokens(
     let recorded = recorded_commands(ledger);
     let tokenised: Vec<Vec<String>> = recorded
         .iter()
-        .map(|entry| command_tokens(&entry.command))
+        .map(|entry| {
+            if entry.check_tokens {
+                command_tokens(&entry.command)
+            } else {
+                Vec::new()
+            }
+        })
         .collect();
 
     // One `git grep` for every part of every token at once, for the same reason
@@ -409,7 +594,16 @@ pub fn phantom_command_tokens(
             parts.extend(token_parts(token));
         }
     }
-    let present = repository.tracked_source_hits(head, parts.iter().copied(), cache)?;
+    let mut present = repository.tracked_source_hits(head, parts.iter().copied(), cache)?;
+    if !parts.is_empty()
+        && let Ok(tracked) = repository.run_ls_tree(head)
+    {
+        for stem in tracked_test_stems(&tracked) {
+            if parts.contains(stem.as_str()) {
+                present.insert(stem);
+            }
+        }
+    }
 
     let mut out = Vec::new();
     for (entry, tokens) in recorded.iter().zip(tokenised.iter()) {
@@ -551,20 +745,23 @@ mod tests {
     }
 
     #[test]
-    fn windows_paths_tokenise_as_before() {
-        assert_eq!(
-            command_tokens(r"pwsh .\scripts\run_gate_tests.ps1"),
-            vec!["run_gate_tests".to_owned()]
-        );
+    fn non_test_commands_are_not_mined_for_test_filters() {
+        assert!(command_tokens(r"pwsh .\scripts\run_gate_tests.ps1").is_empty());
+        assert!(command_tokens("cargo clippy --workspace --all-targets -- -D warnings").is_empty());
+        assert!(command_tokens("SYS_WALK_PERMILLE=1250 cargo run -p sys_headless").is_empty());
+    }
+
+    #[test]
+    fn asserting_final_pipe_stages_are_allowed() {
+        assert!(untrustworthy_status("akr check | rg -q 'ok'").is_none());
+        assert!(untrustworthy_status("cargo test -- --list | grep -q some_test").is_none());
+        assert!(untrustworthy_status("akr get @x --format json | jq -e '.ok'").is_none());
+        assert!(untrustworthy_status("cargo test foo | tail -5").is_some());
     }
 
     #[test]
     fn env_var_underscores_are_not_test_tokens() {
         assert!(command_tokens("SYS_WORLD=greyhaven cargo run --release").is_empty());
-        assert!(
-            command_tokens("SYS_WALK_PERMILLE=1250 cargo run -p sys_headless")
-                .contains(&"sys_headless".to_owned())
-        );
         assert_eq!(
             command_tokens("SYS_WORLD=greyhaven cargo test -p sys_present a_real_leaf_test"),
             vec!["a_real_leaf_test".to_owned(), "sys_present".to_owned()]

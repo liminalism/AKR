@@ -43,9 +43,11 @@ pub const fn budget_for_id(tool: ToolId) -> Budget {
     match tool {
         ToolId::Start => Budget::new(1_500, 2_000),
         ToolId::Search | ToolId::SourceSearch => Budget::new(600, 1_000),
-        ToolId::Get | ToolId::ConfigGet => Budget::new(1_000, 1_500),
+        ToolId::Get => Budget::new(2_500, 4_000),
+        ToolId::ConfigGet => Budget::new(1_000, 1_500),
         ToolId::SourceGet => Budget::new(1_500, 2_500),
-        ToolId::Context => Budget::new(3_000, 4_000),
+        ToolId::SourceList => Budget::new(1_000, 2_000),
+        ToolId::Context => Budget::new(4_500, 6_000),
         ToolId::Impact | ToolId::Explain => Budget::new(800, 1_500),
         ToolId::Validate => Budget::new(500, 3_000),
         // An advisor packet is the one deliberately large read on this surface: the point
@@ -66,7 +68,6 @@ pub const fn budget_for_id(tool: ToolId) -> Budget {
         | ToolId::SecretGet
         | ToolId::SecretResolve
         | ToolId::ConfigEdit
-        | ToolId::SourceList
         | ToolId::SourceAdd
         | ToolId::SourceVerify
         | ToolId::SourceSupersede
@@ -191,18 +192,12 @@ fn enforce_with_budget(
     // structured halves.
     let hard_tokens = internally_budgeted.map_or(budget.hard_tokens, |_| usize::MAX);
     let rendered = structured.to_pretty();
-    // Both halves, because both reach the model: a client that shows `content` and a
-    // client that parses `structuredContent` are each paying for their own half. The one
-    // exception is a structured `briefing` that IS the text (`knowledge.handoff_open`):
-    // it is there so a structured-only host can read the packet at all, and counting it
-    // twice would withhold exactly the packets long enough to need it.
+    // Measure the larger of the text half and the structured half rather than summing
+    // both: MCP carries the same semantic payload in `content` (for text hosts) and
+    // `structuredContent` (for structured hosts), so summing them double-counted every
+    // read response against its ceiling.
     let text_tokens = estimate_tokens(text.unwrap_or_default());
-    let duplicated = text.is_some() && structured.get("briefing").and_then(Value::as_str) == text;
-    let estimated = if duplicated {
-        text_tokens.max(estimate_tokens(&rendered))
-    } else {
-        text_tokens + estimate_tokens(&rendered)
-    };
+    let estimated = text_tokens.max(estimate_tokens(&rendered));
 
     if estimated <= hard_tokens {
         return Enforced {
@@ -258,8 +253,15 @@ fn narrowing_advice(tool: &str, arguments: &Value) -> String {
             _ => "Call again with `detail: \"summary\"`, or with `relations: false`.",
         },
         "knowledge.source_get" => {
-            "Call again with `detail: \"snippet\"`, or name a `chunk` instead of a \
-             document `id`."
+            if arguments.get("id").is_some() {
+                "Call again with a line range such as `lines: \"1:80\"`, or search for a \
+                 specific passage with `knowledge.source_search` and fetch its `chunk`."
+            } else {
+                "Call again with `detail: \"snippet\"`, or pass `id` with `lines: \"1:80\"`."
+            }
+        }
+        "knowledge.source_list" => {
+            "Call again with a smaller `limit` (e.g. `limit: 25`) and page with `offset`."
         }
         "knowledge.context" => {
             "Call again with `budget_tokens` at least 5000, or with `paths` narrowed to \
@@ -289,7 +291,16 @@ fn narrowing_arguments(tool: &str, original: &Value) -> Value {
                 ("relations", Value::bool(false)),
             ],
         },
-        "knowledge.source_get" => vec![("detail", Value::string("snippet"))],
+        "knowledge.source_get" => {
+            if original.get("id").is_some() {
+                vec![("lines", Value::string("1:80"))]
+            } else {
+                vec![("detail", Value::string("snippet"))]
+            }
+        }
+        "knowledge.source_list" => {
+            vec![("limit", Value::integer(25)), ("offset", Value::integer(0))]
+        }
         "knowledge.search" | "knowledge.source_search" => vec![("limit", Value::integer(5))],
         "knowledge.start" => vec![("budget_tokens", Value::integer(1_500))],
         // Context has irreducible graph and acceptance sections. 2,000 was advertised as
@@ -714,7 +725,7 @@ mod tests {
         let enforced = enforce(
             "knowledge.get",
             None,
-            &big(400),
+            &big(1_000),
             None,
             &Value::object(vec![("ref", Value::string("@sys.term.example/1"))]),
         );
@@ -750,7 +761,7 @@ mod tests {
         let enforced = enforce(
             "knowledge.get",
             None,
-            &big(400),
+            &big(1_000),
             None,
             &Value::object(vec![
                 ("ref", Value::string("@sys.term.example/1")),
@@ -781,7 +792,7 @@ mod tests {
         let enforced = enforce(
             "knowledge.get",
             None,
-            &big(400),
+            &big(1_000),
             None,
             &Value::object(vec![
                 ("ref", Value::string("@sys.work.example/1")),
@@ -848,21 +859,19 @@ mod tests {
     }
 
     #[test]
-    fn both_halves_count_towards_the_budget() {
-        // The duplication the design set warns about: a client that shows text and parses
-        // structure pays for both, so the guard has to measure both.
+    fn the_larger_half_counts_towards_the_budget() {
         let structured = big(200);
-        let text = structured.to_pretty();
+        let longer_text = format!("{}\n{}", structured.to_pretty(), structured.to_pretty());
         let arguments = Value::object(vec![("query", Value::string("example"))]);
-        let with_text = enforce(
+        let with_longer_text = enforce(
             "knowledge.search",
-            Some(&text),
+            Some(&longer_text),
             &structured,
             None,
             &arguments,
         );
         let without = enforce("knowledge.search", None, &structured, None, &arguments);
-        assert!(with_text.estimated_tokens > without.estimated_tokens);
+        assert!(with_longer_text.estimated_tokens > without.estimated_tokens);
     }
 
     #[test]
@@ -875,7 +884,7 @@ mod tests {
 
     #[test]
     fn explicit_assembly_budgets_replace_default_transport_ceilings() {
-        let structured = big(1_000);
+        let structured = big(1_500);
         let estimated = estimate_tokens(&structured.to_pretty());
         assert!(estimated > budget_for("knowledge.context").hard_tokens);
         for tool in ["knowledge.start", "knowledge.context"] {

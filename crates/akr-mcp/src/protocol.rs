@@ -355,12 +355,10 @@ impl Server {
                         }
                         fields.extend([
                             ("inputSchema", {
-                                let schema = input_schema_for(tool.id);
-                                if self.rootless {
-                                    with_workspace_argument(schema)
-                                } else {
-                                    schema
-                                }
+                                // Always advertise optional `workspace` so agents working in
+                                // sibling git worktrees or multi-root checkouts can target
+                                // their worktree without failing client-side schema checks.
+                                with_workspace_argument(input_schema_for(tool.id))
                             }),
                             ("outputSchema", output_schema_for(tool.id)),
                             (

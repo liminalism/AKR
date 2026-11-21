@@ -80,6 +80,36 @@ record akr.observation.concurrent-writes-are-silently-lost/2 : observation {
     verified_by [ @akr.evidence.one-writer-at-a-time-holds-20260908/1 ]
 }
 
+record akr.observation.context-floor-is-unknowable-to-the-caller/1 : observation {
+    title "The first knowledge.context call fails on budget, and a call that fits returns 50-60 KB of distant staleness"
+    state verified
+    scope [ path "crates/akr-core/src/context/**", path "crates/akr-mcp/src/budget.rs" ]
+    statement """
+        Collated papercuts from nofurthercontact, SYS and Kitchen-Concept report mandatory sections of 8,374, 12,406, 14,732 and 16,650 tokens against default or first-guess budgets of 2,500-6,000, so the first call always failed with AKR-X021; one at 20,000 tokens returned 51-61 KB, mostly 60-90 staleness entries at depth 2-4 and other records' acceptance checks, which the client spilled to a file. The mandatory set had grown to include the plan of record, every acceptance check and every staleness warning. A higher default alone does not fix it: the floor varies by goal and the caller cannot know it before the call.
+        """
+    observed_at git:3edf5a92ba01d73e7250cb70a5464b861d3eba36
+    method observation
+    derived_from [ @akr.papercut.collated-55-papercuts-from-kitchen-concept-lege/1 ]
+    author "dk"
+}
+
+record akr.observation.ledger-merges-forced-linear-history/1 : observation {
+    title "Joining two worktrees' ledgers with a merge commit failed four ways, so agents rebased"
+    state verified
+    scope [
+        path "crates/akr-cli/src/change.rs",
+        path "crates/akr-core/src/freshness/**",
+        path "crates/akr-core/src/git/**"
+    ]
+    statement """
+        In the 2026-11-21 collation (nofurthercontact, SYS): a passed_at reachable only through a merge's second parent was refused as a commit the repository does not have (AKR-R022 with AKR-G011), and again after any rebase; four observations went stale against a --no-ff merge whose tree equalled the observed branch, because watch matching diffed the merge against its first parent; two branches adding records to one .akr file aligned on a shared closing brace, so keep-both and merge=union produced 1,516 parse errors; and a commit message with 351 AKR-Why trailers (85 kB) exceeded the Windows 32 kB command line. Each pushed the agent toward rebasing into one line, which is what the user saw. The obvious fix, a merge=union attribute, is the one that produced the unparseable file.
+        """
+    observed_at git:3edf5a92ba01d73e7250cb70a5464b861d3eba36
+    method observation
+    derived_from [ @akr.papercut.collated-55-papercuts-from-kitchen-concept-lege/1 ]
+    author "dk"
+}
+
 record akr.observation.ledgers-restate-diffs-not-reasons/1 : observation {
     title "Three months of ledgers restate diffs, mint an evidence record per test run, and are not linked to commits"
     state verified

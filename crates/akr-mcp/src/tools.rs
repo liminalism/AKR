@@ -48,6 +48,11 @@ fn missing_commit(session: &Session, suggest_observed_at: bool) -> ToolError {
              is anchored to a commit and there is none — `git commit --allow-empty -m root` \
              makes one, then retry",
         )
+    } else if let Some(reason) = &session.git_unavailable {
+        ToolError::new(
+            "AKR-G002",
+            format!("no commit to record: git could not be used ({reason}){hint}"),
+        )
     } else {
         ToolError::new(
             "AKR-G001",
@@ -266,12 +271,64 @@ fn secret_reveal(arguments: &Value) -> Result<bool, ToolError> {
 }
 
 fn source_list(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
-    run_read(
-        root,
-        Command::SourceList {
-            all: flag(arguments, "all_versions"),
-        },
-    )
+    let offset = arguments
+        .get("offset")
+        .and_then(Value::as_integer)
+        .and_then(|n| usize::try_from(n).ok())
+        .unwrap_or(0);
+    let limit = arguments
+        .get("limit")
+        .and_then(Value::as_integer)
+        .and_then(|n| usize::try_from(n).ok())
+        .unwrap_or(50)
+        .clamp(1, 200);
+    let mut session = open(root, false)?;
+    let command = Command::SourceList {
+        all: flag(arguments, "all_versions"),
+    };
+    let mut output = commands::run(&mut session, &command).map_err(environment)?;
+    if let Value::Object(fields) = &mut output.result
+        && let Some((_, Value::Array(sources))) = fields.iter_mut().find(|(k, _)| k == "sources")
+    {
+        let total = sources.len();
+        let page: Vec<Value> = sources.iter().skip(offset).take(limit).cloned().collect();
+        let returned = page.len();
+        let next_offset = offset.saturating_add(returned);
+        let has_more = next_offset < total;
+        *sources = page;
+        fields.push(("total".to_owned(), Value::integer(total as i64)));
+        fields.push(("offset".to_owned(), Value::integer(offset as i64)));
+        fields.push(("has_more".to_owned(), Value::bool(has_more)));
+        fields.push((
+            "next_offset".to_owned(),
+            if has_more {
+                Value::integer(next_offset as i64)
+            } else {
+                Value::Null
+            },
+        ));
+        if offset > 0 || has_more {
+            let lines: Vec<&str> = output.text.lines().collect();
+            let mut paged_text: String = lines
+                .into_iter()
+                .skip(offset)
+                .take(limit)
+                .map(|l| format!("{l}\n"))
+                .collect();
+            paged_text.push_str(&format!(
+                "showing {returned} of {total} source(s) from offset {offset}{}\n",
+                if has_more {
+                    format!(" (continue at offset {next_offset})")
+                } else {
+                    String::new()
+                }
+            ));
+            output.text = paged_text;
+        }
+    }
+    let text = output.text.clone();
+    let structured = finish(&session.sources, output)?;
+    Ok(ToolResult::Read { text, structured })
 }
 
 fn source_add(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
@@ -289,7 +346,19 @@ fn source_add(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
 }
 
 fn search(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
-    let query = required_str(arguments, "query")?;
+    let query = arguments
+        .get("query")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let slot = optional_str(arguments, "slot");
+    let kinds = string_list(arguments, "kinds");
+    let states = string_list(arguments, "states");
+    if query.is_empty() && kinds.is_empty() && states.is_empty() && slot.is_none() {
+        return Err(ToolError::new(
+            "AKR-C003",
+            "knowledge.search requires `query` (or a `kinds`, `states` or `slot` filter)",
+        ));
+    }
     let offset = arguments
         .get("offset")
         .and_then(Value::as_integer)
@@ -311,8 +380,9 @@ fn search(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
         // comma is an operator, and the failure mode was measured: it gave up and grepped
         // `.akr/records`.
         raw_fts: false,
-        kinds: string_list(arguments, "kinds"),
-        states: string_list(arguments, "states"),
+        kinds,
+        states,
+        slot,
         limit: Some(fetch_limit),
     };
     let mut session = open(root, false)?;
@@ -539,12 +609,14 @@ fn context(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
         .get("budget_tokens")
         .and_then(Value::as_integer)
         .and_then(|n| usize::try_from(n).ok());
-    // The same `Command::Context` the binary builds from `--goal`, `--paths` and
-    // `--budget`, so §1's invariant holds by construction rather than by agreement.
+    let section = optional_str(arguments, "section");
+    // The same `Command::Context` the binary builds from `--goal`, `--paths`,
+    // `--budget` and `--section`, so §1's invariant holds by construction.
     let command = Command::Context {
         goal: goal.to_owned(),
         paths,
         budget,
+        section,
     };
     let mut session = open(root, false)?;
     let output = match commands::run(&mut session, &command) {
@@ -800,6 +872,8 @@ fn validate_at(
         scratch_clean: flag(arguments, "scratch_clean"),
         review_clean: flag(arguments, "review_clean"),
         views_current: false,
+        limit: None,
+        offset: 0,
     };
     let output = commands::run(&mut session, &command).map_err(environment)?;
     let diagnostics = commands::diagnostics_json(
@@ -1192,11 +1266,12 @@ fn complete(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
     let commits: Vec<akr_core::model::Commit> =
         passes.iter().map(|(_, commit)| commit.clone()).collect();
     akr_cli::write::ensure_commits_exist(&session, &commits).map_err(environment)?;
+    let partial = flag(arguments, "partial");
     let context = write_context(&session);
     Ok(ToolResult::Structured(write_result(
         &session,
         &parsed,
-        akr_core::ops::complete_with(&context, &parsed, &checks, &passes),
+        akr_core::ops::complete_with_options(&context, &parsed, &checks, &passes, partial),
     )?))
 }
 
@@ -1341,10 +1416,24 @@ fn papercut(root: &Path, arguments: &Value) -> Result<ToolResult, ToolError> {
     let agent = required_str(arguments, "agent")?;
     let namespace = arguments.get("namespace").and_then(Value::as_str);
 
-    let commit = session
-        .commit
-        .clone()
-        .ok_or_else(|| missing_commit(&session, false))?;
+    let commit = match optional_str(arguments, "observed_at") {
+        Some(raw) => {
+            let hex = raw.strip_prefix("git:").unwrap_or(&raw);
+            let commit = akr_core::model::Commit::new(hex).map_err(|_| {
+                ToolError::new(
+                    "AKR-C004",
+                    format!("`observed_at`: {raw:?} is not 40 lowercase hex digits"),
+                )
+            })?;
+            akr_cli::write::ensure_commits_exist(&session, std::slice::from_ref(&commit))
+                .map_err(environment)?;
+            commit
+        }
+        None => session
+            .commit
+            .clone()
+            .ok_or_else(|| missing_commit(&session, true))?,
+    };
     let key = akr_core::papercut::allocate_key(&session.ledger, namespace, message)
         .map_err(|e| ToolError::new("AKR-C004", e.to_string()))?;
     let request = akr_core::papercut::LogPapercut {
@@ -1484,7 +1573,7 @@ fn run_write_at(
 /// has no arm in `commands::dispatch`, which is why routing it through [`run_read`] reached
 /// an `unreachable!` and the server reported `AKR-X099` instead of the schema.
 fn run_vocabulary(command: Command) -> Result<ToolResult, ToolError> {
-    let Some(result) = commands::run_standalone(&command) else {
+    let Some(result) = commands::run_standalone(&command, std::path::Path::new(".")) else {
         return Err(ToolError {
             class: Class::Internal,
             summary: format!(

@@ -703,6 +703,79 @@ record akr.work.context-import-provenance-hardening/1 : work {
     }
 }
 
+record akr.work.dag-merge-and-0-8-release/1 : work {
+    title "AKR 0.8: ledgers merge across worktrees and context fits its first call (D-050, D-051)"
+    state completed
+    scope [
+        path ".gitattributes",
+        path "crates/**",
+        path "docs/**",
+        path "spec/diagnostics/**"
+    ]
+    intent """
+        Let two worktrees that each advanced the ledger be joined with an ordinary merge commit instead of a rebase, make the first knowledge.context call succeed whatever its budget, and clear the 2026-11-21 collated papercuts that shared a cause with either, without changing any sealed record in an existing ledger.
+        """
+    trace [
+        "renumber theirs rather than refuse: two branches revising one record is the common case, and a refusing driver stalls every such merge on a hand edit",
+        "lock and views take merge=akr-rebuild: they are pure build output, so keeping ours and rebuilding beats merging generated text",
+        "MERGE_HEAD with no open transaction passes pre-commit: a merge joins changes governed on their own branches, and refusing it taught --no-verify",
+        "AKR-G024 exempts evidence: evidence reports what was run and is sealed, so the only fix was rewriting history; acceptance checks gate and keep it",
+        "MCP context leaves budget unset when budget_tokens is omitted; the 6,000 default is the transport ceiling, so knowledge.context and akr context stay byte-identical",
+        "akr explain matched any registry row mentioning the code; AKR-E015's cause names G004 and G023, so it answered with E015's row. It now matches the code column",
+        "complete --partial instead of evidence records: complete was all-or-nothing, so passes seen while a manual check stayed open were simply lost",
+        "trace refuses superseded and abandoned records and names the live successor; completed stays traceable because reasons are often written after the work ends",
+        "spec amended with the code: docs/09 still promised AKR-X021; the registry retires it instead of deleting it, because codes are never reused",
+        "merge_no_commit spawned git directly; moved to git::command() so a Windows host sees no console window, per the single-spawn-path invariant"
+    ]
+    acceptance {
+        check design-set {
+            statement """
+                The design-set coherence checker passes over docs, spec and fixtures.
+                """
+            method command
+            command "python tools/check-design.py"
+            passed_at git:3edf5a92ba01d73e7250cb70a5464b861d3eba36
+        }
+        check lint {
+            statement """
+                Clippy reports nothing with warnings denied.
+                """
+            method command
+            command "cargo clippy --workspace --all-targets -- -D warnings"
+            passed_at git:3edf5a92ba01d73e7250cb70a5464b861d3eba36
+        }
+        check merge-end-to-end {
+            statement """
+                Two branches completing work in one record file merge through the driver and the merged ledger validates.
+                """
+            method command
+            command "cargo test -p akr-cli --test writes divergent_branches_completing_work_in_the_same_file_merge_and_validate_cleanly"
+            passed_at git:3edf5a92ba01d73e7250cb70a5464b861d3eba36
+        }
+        check suite {
+            statement """
+                The workspace test suite passes.
+                """
+            method command
+            command "cargo test --workspace --no-fail-fast"
+            passed_at git:3edf5a92ba01d73e7250cb70a5464b861d3eba36
+        }
+        check surfaces-agree {
+            statement """
+                knowledge.context and akr context produce the same bundle, and the other MCP writes match the CLI byte for byte.
+                """
+            method command
+            command "cargo test -p akr-mcp --test differential"
+            passed_at git:3edf5a92ba01d73e7250cb70a5464b861d3eba36
+        }
+    }
+    implements [
+        @akr.decision.ledger-history-is-a-dag-and-records-merge/1,
+        @akr.decision.undersized-context-delivers-the-minimum/1
+    ]
+    author "dk"
+}
+
 record akr.work.default-check-does-not-validate-the-views/1 : work {
     title "The default check does not validate the artifact the whole ledger exists to produce"
     state proposed
@@ -805,6 +878,9 @@ record akr.work.diagnostic-text-sweep/1 : work {
         did-you-mean (--path/--paths); git log names no branch scope; empty search
         returns 0 rather than an error; no evidence-add alias. Land together.
         """
+    trace [
+        "0.8 covered explain acceptance, empty-query listing and the --path hint; still open: an evidence-add alias, the cite-evidence line, a copyable start command, git log branch scope"
+    ]
     derived_from [
         @akr.papercut.collated-17-papercuts-from-legeos,
         @akr.papercut.collated-35-papercuts-from-kitchen-concept-lege
@@ -891,7 +967,7 @@ record akr.work.errors-that-withhold-what-akr-already-knows/1 : work {
 
 record akr.work.explain-registry-acceptance-parity/1 : work {
     title "Reconcile akr explain with the registry and acceptance blocks"
-    state proposed
+    state completed
     intent """
         Reconcile akr explain with the diagnostic registry and extend it to acceptance
         blocks. akr explain AKR-G023 prints the V-112 stale-view text (AKR-E015's) while
@@ -900,6 +976,9 @@ record akr.work.explain-registry-acceptance-parity/1 : work {
         the missing explain route for acceptance-block grammar. From the 2026-10-06
         collated triage.
         """
+    trace [
+        "explain matched any row mentioning the code, so E015's row answered for G004 and G023; it now matches the code column. explain acceptance and claim routes added"
+    ]
     derived_from [
         @akr.papercut.collated-15-papercuts-from-evidence-intake,
         @akr.papercut.collated-17-papercuts-from-legeos
@@ -2873,7 +2952,7 @@ record akr.work.release-0-5-2/1 : work {
 
 record akr.work.relevance-based-context-budget/1 : work {
     title "Relevance-based context section dropping and continuation"
-    state proposed
+    state completed
     intent """
         Drop context sections by relevance and add per-section and acceptance-only
         continuation. Twenty-plus duplicate papercuts across nine collated masters report
@@ -2883,6 +2962,9 @@ record akr.work.relevance-based-context-budget/1 : work {
         that already works. One work item for the whole cluster, not twenty fixes. From
         the 2026-10-06 collated triage.
         """
+    trace [
+        "done as D-051: relevance is graph distance from the goal, a fixed order rather than a score, so the bundle stays deterministic; --section gives per-section and acceptance-only reads"
+    ]
     derived_from [
         @akr.papercut.collated-15-papercuts-from-evidence-intake,
         @akr.papercut.collated-17-papercuts-from-legeos,
@@ -3502,13 +3584,16 @@ record akr.work.supersede-onto-sealed-successor/1 : work {
 
 record akr.work.t002-names-valid-slots/1 : work {
     title "AKR-T002 names the kind's valid slots"
-    state proposed
+    state completed
     intent """
         AKR-T002 should name the kind's valid slots inline. It currently rejects an unknown
         slot without listing what the kind accepts (crates/akr-core/src/syntax/lower.rs),
         so the author must guess or go read the schema instead of fixing the write from the
         diagnostic alone. From the 2026-10-06 collated triage.
         """
+    trace [
+        "lowering now attaches the kind's slots with their types as help, matching what V-007 already did; the --from overlay path reuses the same text"
+    ]
     derived_from [ @akr.papercut.collated-18-papercuts-from-evidence-intake ]
 }
 
