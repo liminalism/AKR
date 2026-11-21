@@ -76,7 +76,7 @@ pub fn execute(argv: &[String]) -> Execution {
             init::run_in(&global.dir, project.as_deref(), namespaces, !*no_hooks),
             Vec::new(),
         ),
-        _ => match commands::run_standalone(&command) {
+        _ => match commands::run_standalone(&command, &global.dir) {
             Some(outcome) => (outcome, Vec::new()),
             None => match session::Session::open_ledger(&global) {
                 Ok(mut session) => {

@@ -290,7 +290,7 @@ impl Verdict {
     /// Whether the check is satisfied.
     #[must_use]
     pub fn is_satisfied(&self) -> bool {
-        matches!(self, Self::Satisfied { .. })
+        matches!(self, Self::Satisfied { .. } | Self::Passed { .. })
     }
 }
 

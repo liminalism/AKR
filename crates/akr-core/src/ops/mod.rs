@@ -336,9 +336,6 @@ pub fn propose(
     if record.author.is_none() {
         record.author.clone_from(&context.author);
     }
-    if !kind.class().states().contains(&record.state) {
-        record.state = kind.class().initial()[0];
-    }
 
     let file = conventional_file(key, kind);
     apply(
@@ -411,9 +408,6 @@ pub fn propose_many(context: &WriteContext, templates: &[Record]) -> WriteResult
         }
         if record.author.is_none() {
             record.author.clone_from(&context.author);
-        }
-        if !record.kind.class().states().contains(&record.state) {
-            record.state = record.kind.class().initial()[0];
         }
         edits.push((
             conventional_file(key, record.kind),
@@ -1146,6 +1140,46 @@ pub fn supersede_into(
 
     let (mut staged, _write_lock) = load_locked(context, operation)?;
     let old = head_of(&staged, old_key, operation)?.clone();
+    // Same-key supersede with a successor body/title creates revision n+1 of `old_key`
+    // superseding `old_key/n` in one write (matching `knowledge.supersede`'s schema).
+    if old_key == new_key
+        && let Some(successor) = successor
+    {
+        let next_id = RevisionId::new(old_key.clone(), old.id.revision + 1);
+        let mut record = match successor.template {
+            Some(mut template) => {
+                if !Relation::Supersedes
+                    .range()
+                    .accepts(template.kind, old.kind)
+                {
+                    return Err(Refused::new(
+                        operation,
+                        codes::L031,
+                        format!(
+                            "{} is a {}, but replacement {} is a {}; `supersedes` replaces like with like",
+                            old.id, old.kind, next_id, template.kind
+                        ),
+                    ));
+                }
+                template.id = next_id;
+                template
+            }
+            None => {
+                let mut cloned = old.clone();
+                cloned.id = next_id;
+                cloned.state = old.kind.class().initial()[0];
+                cloned
+            }
+        };
+        if !successor.title.is_empty() {
+            record.title = successor.title;
+        }
+        if record.title.is_empty() {
+            record.title.clone_from(&old.title);
+        }
+        record.dispositions.clear();
+        return retire_and_replace(context, &mut staged, operation, &old, record, dispositions);
+    }
     let exists = !staged.ledger.revisions_of(new_key).is_empty();
     let like_with_like = |other: &RevisionId, kind: Kind| {
         Refused::new(
@@ -1214,9 +1248,6 @@ pub fn supersede_into(
             }
             if record.title.is_empty() {
                 record.title = new_key.to_string();
-            }
-            if !record.kind.class().states().contains(&record.state) {
-                record.state = record.kind.class().initial()[0];
             }
             record.dispositions.clear();
             created_file = Some(conventional_file(new_key, record.kind));
@@ -1465,6 +1496,21 @@ pub fn complete_with(
     check_evidence: &[(String, Reference)],
     passes: &[(String, crate::model::Commit)],
 ) -> WriteResult {
+    complete_with_options(context, key, check_evidence, passes, false)
+}
+
+/// [`complete_with`], with an optional `partial` mode that stamps `--pass` and `--check`
+/// entries onto the head record in place without transitioning its state to `completed`.
+///
+/// # Errors
+/// As [`complete_with`]; also refuses `partial: true` when no passes or checks were given.
+pub fn complete_with_options(
+    context: &WriteContext,
+    key: &LogicalKey,
+    check_evidence: &[(String, Reference)],
+    passes: &[(String, crate::model::Commit)],
+    partial: bool,
+) -> WriteResult {
     let (mut staged, _write_lock) = load_locked(context, Operation::Complete)?;
     let head = head_of(&staged, key, Operation::Complete)?.clone();
     let file = file_of(&staged, &head.id, Operation::Complete)?;
@@ -1479,16 +1525,41 @@ pub fn complete_with(
             ),
         ));
     }
+    if partial && check_evidence.is_empty() && passes.is_empty() {
+        return Err(Refused::new(
+            Operation::Complete,
+            cli::C031,
+            "--partial requires at least one --pass or --check to record",
+        )
+        .with_help(format!(
+            "stamp a passing command check with `akr complete {key} --partial --pass <check-id>`"
+        )));
+    }
 
     let mut record = head.clone();
     if let Some(acceptance) = &mut record.acceptance {
         for (id, reference) in check_evidence {
-            if let Some(check) = acceptance.checks.iter_mut().find(|c| c.id.as_str() == id)
-                && !check.verified_by.contains(reference)
-            {
+            let Some(check) = acceptance.checks.iter_mut().find(|c| c.id.as_str() == id) else {
+                return Err(Refused::new(
+                    Operation::Complete,
+                    codes::L012,
+                    format!("{} has no acceptance check `{id}`", head.id),
+                )
+                .with_help(format!(
+                    "`akr get {key}` lists its checks; --check names one of them"
+                )));
+            };
+            if !check.verified_by.contains(reference) {
                 check.verified_by.push(reference.clone());
             }
         }
+    } else if !check_evidence.is_empty() {
+        let (id, _) = &check_evidence[0];
+        return Err(Refused::new(
+            Operation::Complete,
+            codes::L012,
+            format!("{} has no acceptance check `{id}`", head.id),
+        ));
     }
     for (id, commit) in passes {
         let check = record
@@ -1521,6 +1592,18 @@ pub fn complete_with(
         }
         check.passed_at = Some(commit.clone());
     }
+
+    if partial {
+        return apply(
+            context,
+            staged_mut(&mut staged),
+            Operation::Complete,
+            &file,
+            &record,
+            ChangeKind::Edited,
+        );
+    }
+
     record.state = State::Completed;
 
     // Ask V-020 directly, so the refusal can name the checks rather than echo a
@@ -1641,6 +1724,46 @@ pub fn trace_append(context: &WriteContext, key: &LogicalKey, entries: &[String]
             "reasoning for a choice that binds the project belongs in a decision's `context`; \
              a finding belongs in an observation",
         ));
+    }
+    if matches!(head.state, State::Superseded | State::Abandoned) {
+        let successor = if head.state == State::Superseded {
+            staged
+                .ledger
+                .records()
+                .iter()
+                .find(|candidate| {
+                    candidate.is_live()
+                        && candidate
+                            .targets(Relation::Supersedes)
+                            .iter()
+                            .any(|target| {
+                                target.key == head.id.key
+                                    && target.revision.is_none_or(|rev| rev == head.id.revision)
+                            })
+                })
+                .map(|candidate| candidate.id.key.to_string())
+        } else {
+            None
+        };
+        let help = match successor {
+            Some(next) => format!(
+                "{} was superseded by {next}; append the trace to `{next}` instead",
+                head.id
+            ),
+            None => format!(
+                "{} is in terminal state `{}`; append traces only to active or completed work",
+                head.id, head.state
+            ),
+        };
+        return Err(Refused::new(
+            operation,
+            cli::C032,
+            format!(
+                "{} is {}; cannot append a trace to a {} record",
+                head.id, head.state, head.state
+            ),
+        )
+        .with_help(help));
     }
     let cleaned: Vec<String> = entries
         .iter()
@@ -2295,6 +2418,21 @@ fn finish_staged(
             "write aborted: this write would introduce {} diagnostic(s); nothing was written",
             introduced.len()
         );
+        if edits.len() > 1
+            && let Some(first) = introduced.first()
+        {
+            match &first.primary.subject {
+                Subject::Revision(id) | Subject::Slot(id, _) => {
+                    message.push_str(&format!(" (first: {} on {})", first.code, id));
+                }
+                Subject::Key(key) => {
+                    message.push_str(&format!(" (first: {} on {})", first.code, key));
+                }
+                _ => {
+                    message.push_str(&format!(" (first: {})", first.code));
+                }
+            }
+        }
         if !inherited.is_empty() {
             message.push_str(&format!(
                 " ({} the ledger already had are not counted)",
@@ -2332,10 +2470,12 @@ fn finish_staged(
         .map_err(|error| write_refusal(operation, error))?;
 
     changes.sort_by(|a, b| a.id.cmp(&b.id));
-    let lock_stale = matches!(operation, Operation::Configure | Operation::Trace)
-        || changes
-            .iter()
-            .any(|c| !matches!(c.kind, ChangeKind::Edited));
+    let lock_stale = matches!(
+        operation,
+        Operation::Configure | Operation::Trace | Operation::Complete
+    ) || changes
+        .iter()
+        .any(|c| !matches!(c.kind, ChangeKind::Edited));
     let mut notes = Vec::new();
     if !inherited.is_empty() {
         notes.push(inherited_note(&inherited));
@@ -2585,9 +2725,13 @@ fn inherited_note(inherited: &[Diagnostic]) -> String {
         .into_iter()
         .collect();
     codes.sort();
+    let sample = inherited
+        .first()
+        .map(|d| format!(" — e.g. {}: {}", d.code, d.message))
+        .unwrap_or_default();
     format!(
-        "the ledger still has {} diagnostic(s) this write did not introduce ({}) \u{2014} \
-         `akr validate` lists them",
+        "the ledger has {} diagnostic(s) this write did not introduce ({}){sample}; \
+         `akr validate` lists all",
         inherited.len(),
         codes.join(", ")
     )

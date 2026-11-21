@@ -280,6 +280,12 @@ struct Memo {
     range: Option<RangeGraph>,
     /// Path -> its touching commits, newest first.
     touching: BTreeMap<String, Vec<Commit>>,
+    /// Path -> its touching commit DAG `(commit, rewritten_parents)`, newest first.
+    touching_dag: BTreeMap<String, Vec<(Commit, Vec<Commit>)>>,
+    /// Commit -> its direct parents (lazy, for merge-commit checks).
+    commit_parents: BTreeMap<String, Vec<Commit>>,
+    /// (merge_commit, parent_commit) -> paths where merge differs from that parent.
+    merge_parent_diffs: BTreeMap<(String, String), BTreeSet<String>>,
     /// (commit, path) -> the file's content there, or `None` when it did not exist.
     blobs: BTreeMap<(String, String), Option<String>>,
     /// (from, to) -> the paths every commit in that range touched.
@@ -846,6 +852,134 @@ impl Repository {
         Ok(verdict)
     }
 
+    /// The merge-base of two commits, or `None` for unrelated histories.
+    ///
+    /// # Errors
+    /// [`GitError::CommandFailed`] when git cannot run `merge-base`.
+    pub fn merge_base(&self, a: &Commit, b: &Commit) -> Result<Option<Commit>, GitError> {
+        let a = self.canonical_commit(a);
+        let b = self.canonical_commit(b);
+        if a == b {
+            return Ok(Some(a));
+        }
+        match self.run(&["merge-base", a.as_str(), b.as_str()]) {
+            Ok(text) => {
+                let first = text.lines().next().map(str::trim).unwrap_or_default();
+                if first.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(Commit::new(first).map_err(GitError::from)?))
+                }
+            }
+            // Exit 1 means unrelated histories (no common ancestor).
+            Err(GitError::CommandFailed { .. }) => Ok(None),
+            Err(other) => Err(other),
+        }
+    }
+
+    /// Direct parents of `commit`, memoised.
+    fn parents_of(&self, commit: &Commit) -> Result<Vec<Commit>, GitError> {
+        let canonical = self.canonical_commit(commit);
+        if let Some(known) = self.memo(|memo| memo.commit_parents.get(canonical.as_str()).cloned())
+        {
+            return Ok(known);
+        }
+        if let Some(from_range) = self.memo(|memo| {
+            memo.range
+                .as_ref()
+                .and_then(|graph| graph.parents.get(canonical.as_str()))
+                .cloned()
+        }) {
+            let parsed: Vec<Commit> = from_range
+                .iter()
+                .filter_map(|p| Commit::new(p).ok())
+                .collect();
+            self.memo(|memo| {
+                memo.commit_parents
+                    .insert(canonical.as_str().to_owned(), parsed.clone())
+            });
+            return Ok(parsed);
+        }
+        let text = self.run(&["rev-list", "-1", "--parents", canonical.as_str()])?;
+        let parsed: Vec<Commit> = text
+            .split_whitespace()
+            .skip(1)
+            .filter_map(|p| Commit::new(p).ok())
+            .collect();
+        self.memo(|memo| {
+            memo.commit_parents
+                .insert(canonical.as_str().to_owned(), parsed.clone())
+        });
+        Ok(parsed)
+    }
+
+    /// Whether `commit` genuinely changed `path` relative to an observation at `observed`.
+    ///
+    /// For ordinary single-parent commits this is always `true`. For a merge commit `M`,
+    /// `git log -m` reports paths differing from *any* parent — so a `--no-ff` merge of a
+    /// branch into an older `main` flags files that did not change relative to the branch
+    /// `observed` came from. If at least one parent `P` of `M` descends from `observed`
+    /// and `M` did not change `path` relative to `P`, then `M` preserved `observed`'s
+    /// branch's version of `path` and does not invalidate `observed`.
+    ///
+    /// # Errors
+    /// Propagates any git failure.
+    pub fn merge_changed_since(
+        &self,
+        commit: &Commit,
+        observed: &Commit,
+        path: &str,
+    ) -> Result<bool, GitError> {
+        let parents = self.parents_of(commit)?;
+        if parents.len() <= 1 {
+            return Ok(true);
+        }
+        let canonical_commit = self.canonical_commit(commit);
+        for parent in &parents {
+            if !self.is_descendant(parent, observed)? {
+                continue;
+            }
+            let canonical_parent = self.canonical_commit(parent);
+            let key = (
+                canonical_commit.as_str().to_owned(),
+                canonical_parent.as_str().to_owned(),
+            );
+            let changed_paths =
+                if let Some(known) = self.memo(|memo| memo.merge_parent_diffs.get(&key).cloned()) {
+                    known
+                } else {
+                    let text = self.run(&[
+                        "diff-tree",
+                        "--no-commit-id",
+                        "--name-status",
+                        "-r",
+                        "-M",
+                        canonical_parent.as_str(),
+                        canonical_commit.as_str(),
+                    ])?;
+                    let mut paths = BTreeSet::new();
+                    for line in text.lines() {
+                        let mut fields = line.split('\t');
+                        let Some(status) = fields.next() else {
+                            continue;
+                        };
+                        if status.trim().is_empty() {
+                            continue;
+                        }
+                        for p in fields.filter(|p| !p.trim().is_empty()) {
+                            paths.insert(p.trim().to_owned());
+                        }
+                    }
+                    self.memo(|memo| memo.merge_parent_diffs.insert(key, paths.clone()));
+                    paths
+                };
+            if !changed_paths.contains(path) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     /// Reads the parent graph of `(from, to]` in one `rev-list`, so that every ancestry
     /// question between two commits of that range is answered without a process.
     ///
@@ -1140,6 +1274,125 @@ impl Repository {
         let out = Self::parse_status(&text);
         self.memo(|memo| memo.worktree = Some(out.clone()));
         Ok(out)
+    }
+
+    /// The commits that touched one path, with parent links rewritten to that file's DAG,
+    /// newest first.
+    ///
+    /// Unlike `git log --follow`, `--parents --full-history` preserves merge-parent links
+    /// rewritten to the commits that touched `path`, so walking a record's history follows
+    /// the branch that introduced it instead of stopping at an interleaved commit from the
+    /// other side of a merge.
+    ///
+    /// # Errors
+    /// [`GitError::CommandFailed`] if git cannot walk the history.
+    pub fn commits_touching_dag(&self, path: &str) -> Result<Vec<(Commit, Vec<Commit>)>, GitError> {
+        if let Some(known) = self.memo(|memo| memo.touching_dag.get(path).cloned()) {
+            return Ok(known);
+        }
+        let text = self.run(&[
+            "log",
+            "--format=%H %P",
+            "--parents",
+            "--full-history",
+            "--",
+            path,
+        ])?;
+        let mut out = Vec::new();
+        for line in text.lines().filter(|l| !l.trim().is_empty()) {
+            let mut parts = line.split_whitespace();
+            let Some(oid) = parts.next() else { continue };
+            let commit = Commit::new(oid).map_err(GitError::from)?;
+            let parents: Vec<Commit> = parts
+                .map(|p| Commit::new(p).map_err(GitError::from))
+                .collect::<Result<_, _>>()?;
+            out.push((commit, parents));
+        }
+        self.memo(|memo| memo.touching_dag.insert(path.to_owned(), out.clone()));
+        Ok(out)
+    }
+
+    /// Primes [`Self::commits_touching_dag`] for many paths in parallel, backed by the fact
+    /// cache keyed on `HEAD`.
+    pub fn prime_commits_touching_dag<'a>(&self, paths: impl IntoIterator<Item = &'a str>) {
+        const ENTRY: &str = "touching-dag";
+        let requested: Vec<&str> = paths.into_iter().collect();
+        let head = self
+            .facts
+            .as_ref()
+            .and_then(|_| self.head().ok())
+            .map(|head| format!("head {}", head.as_str()));
+        if let (Some(cache), Some(head)) = (&self.facts, &head)
+            && let Some(body) = cache.read(ENTRY)
+            && let Some((first, rest)) = body.split_once('\n')
+            && first == head
+        {
+            type CommitDag = Vec<(Commit, Vec<Commit>)>;
+            let mut current: Option<(String, CommitDag)> = None;
+            let mut cached: Vec<(String, CommitDag)> = Vec::new();
+            for line in rest.lines() {
+                if let Some(path) = line.strip_prefix("path ") {
+                    cached.extend(current.take());
+                    current = Some((path.to_owned(), Vec::new()));
+                } else if let Some((_, entries)) = &mut current {
+                    let mut parts = line.split_whitespace();
+                    if let Some(oid) = parts.next()
+                        && let Ok(commit) = Commit::new(oid)
+                    {
+                        let parents = parts.filter_map(|p| Commit::new(p).ok()).collect();
+                        entries.push((commit, parents));
+                    }
+                }
+            }
+            cached.extend(current);
+            self.memo(|memo| {
+                for (path, entries) in cached {
+                    memo.touching_dag.entry(path).or_insert(entries);
+                }
+            });
+        }
+        let wanted: Vec<&str> = requested
+            .iter()
+            .copied()
+            .filter(|path| self.memo(|memo| !memo.touching_dag.contains_key(*path)))
+            .collect();
+        let workers = std::thread::available_parallelism()
+            .map_or(1, std::num::NonZeroUsize::get)
+            .min(8)
+            .min(wanted.len());
+        if workers >= 2 {
+            let next = std::sync::atomic::AtomicUsize::new(0);
+            std::thread::scope(|scope| {
+                for _ in 0..workers {
+                    scope.spawn(|| {
+                        while let Some(path) =
+                            wanted.get(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+                        {
+                            let _ = self.commits_touching_dag(path);
+                        }
+                    });
+                }
+            });
+        }
+        if let (Some(cache), Some(head)) = (&self.facts, &head)
+            && !wanted.is_empty()
+        {
+            let mut body = format!("{head}\n");
+            self.memo(|memo| {
+                for (path, entries) in &memo.touching_dag {
+                    body.push_str(&format!("path {path}\n"));
+                    for (commit, parents) in entries {
+                        body.push_str(commit.as_str());
+                        for parent in parents {
+                            body.push(' ');
+                            body.push_str(parent.as_str());
+                        }
+                        body.push('\n');
+                    }
+                }
+            });
+            cache.write(ENTRY, &body);
+        }
     }
 
     /// The commits that touched one path, newest first.
@@ -1803,7 +2056,92 @@ impl Repository {
     /// [`GitError::CommandFailed`] when the commit is refused — an empty index, a failing
     /// hook, or an unconfigured identity.
     pub fn commit(&self, message: &str) -> Result<Commit, GitError> {
-        self.run(&["commit", "-m", message])?;
+        // Pass the message over stdin (`-F -`) rather than `-m` on the command line: a
+        // change with many `AKR-Why` trailers can exceed Windows' 32 KB command-line
+        // limit (`os error 206`).
+        self.run_bytes_with_stdin(&["commit", "-F", "-"], message)?;
+        self.memo(|memo| {
+            memo.revisions.remove("HEAD");
+            memo.session = None;
+            memo.worktree = None;
+        });
+        self.head()
+    }
+
+    /// Sets a local git configuration key in this repository.
+    ///
+    /// # Errors
+    /// [`GitError::CommandFailed`] when `git config --local` fails.
+    pub fn set_config(&self, key: &str, value: &str) -> Result<(), GitError> {
+        self.run(&["config", "--local", key, value])?;
+        Ok(())
+    }
+
+    /// Whether a git merge is currently in progress in this worktree (`MERGE_HEAD` exists).
+    #[must_use]
+    pub fn is_merging(&self) -> bool {
+        self.git_path("MERGE_HEAD").is_ok_and(|path| path.is_file())
+    }
+
+    /// Stages the given repo-relative paths (`git add -- <paths...>`).
+    ///
+    /// # Errors
+    /// [`GitError::CommandFailed`] when `git add` fails.
+    pub fn stage_paths(&self, paths: &[&str]) -> Result<(), GitError> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let mut args = vec!["add", "--"];
+        args.extend(paths.iter().copied());
+        self.run(&args)?;
+        Ok(())
+    }
+
+    /// Runs `git merge --no-commit [--no-ff] <branch>`, returning the raw process output
+    /// so callers can distinguish a clean merge from conflicts.
+    ///
+    /// # Errors
+    /// [`GitError::CommandFailed`] when `git` itself cannot be spawned.
+    pub fn merge_no_commit(
+        &self,
+        branch: &str,
+        no_ff: bool,
+    ) -> Result<std::process::Output, GitError> {
+        // Through `command()`, like every other spawn: no console window on Windows.
+        let mut cmd = command();
+        cmd.arg("-C")
+            .arg(&self.root)
+            .arg("merge")
+            .arg("--no-commit");
+        if no_ff {
+            cmd.arg("--no-ff");
+        }
+        cmd.arg(branch);
+        let output = cmd.output().map_err(|e| GitError::CommandFailed {
+            subcommand: format!("merge --no-commit {branch}"),
+            stderr: e.to_string(),
+        })?;
+        self.memo(|memo| {
+            memo.revisions.remove("HEAD");
+            memo.session = None;
+            memo.worktree = None;
+        });
+        Ok(output)
+    }
+
+    /// Completes an in-progress merge commit (`git commit --no-edit` or `-F -`).
+    ///
+    /// # Errors
+    /// [`GitError::CommandFailed`] when git refuses the commit.
+    pub fn commit_merge(&self, message: Option<&str>) -> Result<Commit, GitError> {
+        match message {
+            Some(msg) => {
+                self.run_bytes_with_stdin(&["commit", "-F", "-"], msg)?;
+            }
+            None => {
+                self.run(&["commit", "--no-edit"])?;
+            }
+        }
         self.memo(|memo| {
             memo.revisions.remove("HEAD");
             memo.session = None;
@@ -2272,24 +2610,12 @@ fn run_in<S: AsRef<OsStr>>(dir: &Path, args: &[S]) -> Result<String, GitError> {
 // Ancestry for LedgerFacts
 // -------------------------------------------------------------------------------------
 
-/// Builds the [`Ancestry`](crate::model::Ancestry) that V-020 reads, over the commits a
-/// ledger actually references.
+/// Builds the [`Ancestry`](crate::model::Ancestry) DAG that V-020 reads, over the commits
+/// a ledger actually references.
 ///
-/// The commits are sorted oldest-first by asking git, then chained parent-to-child, so
-/// that `is_descendant` over any pair of them returns what git would have returned.
-///
-/// # Precision
-///
-/// [`Ancestry`](crate::model::Ancestry) holds one parent per commit, so it represents a
-/// chain rather than a DAG. That is exact whenever the referenced commits are totally
-/// ordered by ancestry — linear history, and any history where the commits AKR cites sit
-/// on one line of development, which is the normal case for `observed_at` values. Where
-/// two referenced commits are on genuinely divergent branches, the chain reports the pair
-/// as unrelated, which is the conservative answer: an acceptance check reads as *not*
-/// satisfied rather than falsely satisfied.
-///
-/// Prefer [`Repository::is_descendant`] wherever a repository is in hand; this exists to
-/// fill the facts for rules that have only the ledger.
+/// Uses a single `git rev-list --parents` walk over the present commits so merge commits
+/// retain all of their parents and sibling branches are never collapsed into a fake linear
+/// chain.
 ///
 /// # Errors
 /// Propagates any git failure.
@@ -2308,36 +2634,47 @@ pub fn ancestry_over(
         .into_iter()
         .filter(|commit| present.contains(commit))
         .collect();
-
-    // One history walk rather than a comparison sort whose comparator forks git.
-    //
-    // The old shape was O(n log n) `merge-base --is-ancestor` processes, and on a ledger
-    // with a few hundred evidence citations over a few hundred commits that dominated
-    // `akr check`, `akr build` and `akr lock --update` alike — two minutes each, reported
-    // from a real port session. `rev-list --topo-order` answers the whole question once.
-    let mut ordered = repository.topological_order(&known)?;
-    ordered.reverse(); // oldest first: `a` before `b` when `b` descends from `a`.
-
-    // Anything git would not place — it should place everything, but a corrupt or grafted
-    // history is not this function's problem to diagnose — keeps a deterministic position
-    // rather than an invented ancestry.
-    if ordered.len() != known.len() {
-        let placed: BTreeSet<&Commit> = ordered.iter().collect();
-        let mut missing: Vec<Commit> = known
-            .iter()
-            .filter(|commit| !placed.contains(commit))
-            .cloned()
-            .collect();
-        missing.sort();
-        missing.extend(ordered);
-        ordered = missing;
+    if known.is_empty() {
+        return Ok(crate::model::Ancestry::default());
     }
 
-    let pairs: Vec<(Commit, Commit)> = ordered
-        .windows(2)
-        .map(|pair| (pair[1].clone(), pair[0].clone()))
-        .collect();
-    Ok(crate::model::Ancestry::from_pairs(pairs))
+    let mut canonical_set = BTreeSet::new();
+    let mut rewrite_aliases: Vec<(Commit, Commit)> = Vec::new();
+    for commit in &known {
+        let canonical = repository.canonical_commit(commit);
+        if canonical != *commit {
+            rewrite_aliases.push((commit.clone(), canonical.clone()));
+        }
+        canonical_set.insert(canonical);
+    }
+
+    let mut args: Vec<String> = vec!["rev-list".to_owned(), "--parents".to_owned()];
+    args.extend(canonical_set.iter().map(|c| c.as_str().to_owned()));
+    let text = repository.run(&args)?;
+
+    let mut dag: BTreeMap<Commit, Vec<Commit>> = BTreeMap::new();
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        let mut parts = line.split_whitespace();
+        let Some(oid) = parts.next() else { continue };
+        let Ok(commit) = Commit::new(oid) else {
+            continue;
+        };
+        let parents: Vec<Commit> = parts.filter_map(|p| Commit::new(p).ok()).collect();
+        dag.entry(commit).or_default().extend(parents);
+    }
+    // Ensure every present commit is recorded even if git returned no parents for it, and
+    // connect any `.akr-commit-map` pre-rewrite commit bidirectionally with its canonical
+    // replacement so ancestry checks treat them as equivalent.
+    for commit in &canonical_set {
+        dag.entry(commit.clone()).or_default();
+    }
+    for (original, canonical) in rewrite_aliases {
+        dag.entry(original.clone())
+            .or_default()
+            .push(canonical.clone());
+        dag.entry(canonical).or_default().push(original);
+    }
+    Ok(crate::model::Ancestry::from_dag(dag))
 }
 
 /// The commit that introduced each entry of a work record's trace (D-047).
@@ -2437,13 +2774,77 @@ pub fn trace_introductions(
 ///
 /// # Errors
 /// Propagates any git failure.
+/// Turns a `(commit, parent_commits)` DAG into parallel `commits` and parent-index lists.
+fn index_dag(dag: Vec<(Commit, Vec<Commit>)>) -> (Vec<Commit>, Vec<Vec<usize>>) {
+    let mut positions: BTreeMap<String, usize> = BTreeMap::new();
+    let commits: Vec<Commit> = dag
+        .iter()
+        .enumerate()
+        .map(|(idx, (commit, _))| {
+            positions.insert(commit.as_str().to_owned(), idx);
+            commit.clone()
+        })
+        .collect();
+    let parents: Vec<Vec<usize>> = dag
+        .into_iter()
+        .map(|(_, ps)| {
+            ps.into_iter()
+                .filter_map(|p| positions.get(p.as_str()).copied())
+                .collect()
+        })
+        .collect();
+    (commits, parents)
+}
+
+/// Walks a file's commit DAG backwards from index 0 (newest commit) along parents that
+/// still satisfy `matches`, returning the oldest introducing commit (a matching commit
+/// with no matching parent).
+///
+/// On a linear history this reduces to stepping `0 -> 1 -> ... -> k` until `k+1` stops
+/// matching. On a merge commit combining two branches, the walk follows whichever parent
+/// branch held the record's definition instead of stopping at an unrelated commit from the
+/// other branch.
+fn walk_dag_introduction(
+    parents: &[Vec<usize>],
+    mut matches: impl FnMut(usize) -> bool,
+) -> Option<usize> {
+    if parents.is_empty() || !matches(0) {
+        return None;
+    }
+    let mut visited = BTreeSet::new();
+    let mut stack = vec![0usize];
+    visited.insert(0usize);
+    let mut introducing: Vec<usize> = Vec::new();
+    while let Some(current) = stack.pop() {
+        let mut any_matching_parent = false;
+        for &parent in &parents[current] {
+            if matches(parent) {
+                any_matching_parent = true;
+                if visited.insert(parent) {
+                    stack.push(parent);
+                }
+            }
+        }
+        if !any_matching_parent {
+            introducing.push(current);
+        }
+    }
+    // Largest index in newest-first topological order is the oldest introduction.
+    introducing.into_iter().max()
+}
+
+/// The earliest commit in the file's DAG that introduced the current definitional hash of
+/// `(key, revision)` at `path`.
+///
+/// # Errors
+/// Propagates any git error while reading history or blobs.
 pub fn last_change_of(
     repository: &Repository,
     path: &str,
     key: &crate::model::LogicalKey,
     revision: u32,
 ) -> Result<Option<Commit>, GitError> {
-    let commits = repository.commits_touching(path)?;
+    let (commits, parents) = index_dag(repository.commits_touching_dag(path)?);
     let Some(newest) = commits.first() else {
         return Ok(None);
     };
@@ -2451,17 +2852,36 @@ pub fn last_change_of(
         return Ok(None);
     };
 
-    let mut answer = newest.clone();
-    for commit in commits.iter().skip(1) {
-        // At or below the revision, so that the walk crosses the commit that introduced
-        // it into the history of the revision it was revised from, whenever the two have
-        // the same definition (D-038).
-        match definition_at_or_below_in(repository, commit, path, key, revision)? {
-            Some(hash) if hash == current => answer = commit.clone(),
-            _ => break,
+    let mut checked: BTreeMap<usize, bool> = BTreeMap::new();
+    checked.insert(0, true);
+    let mut git_err: Option<GitError> = None;
+    let found = walk_dag_introduction(&parents, |idx| {
+        if let Some(&known) = checked.get(&idx) {
+            return known;
         }
+        if git_err.is_some() {
+            return false;
+        }
+        match definition_at_or_below_in(repository, &commits[idx], path, key, revision) {
+            Ok(Some(hash)) => {
+                let matched = hash == current;
+                checked.insert(idx, matched);
+                matched
+            }
+            Ok(None) => {
+                checked.insert(idx, false);
+                false
+            }
+            Err(error) => {
+                git_err = Some(error);
+                false
+            }
+        }
+    });
+    if let Some(error) = git_err {
+        return Err(error);
     }
-    Ok(Some(answer))
+    Ok(found.map(|idx| commits[idx].clone()))
 }
 
 /// The definitional hash of the newest revision of `key` at or below `revision`, at one
@@ -2534,7 +2954,7 @@ pub fn last_changes(
     // Records are conventionally grouped into a handful of ledger files. Walking the
     // same file history once per record made session startup O(records × file history)
     // and spawned hundreds of git processes in medium-sized projects. Read and parse
-    // each historical file version once, then advance every record in that file together.
+    // each historical file version once, then walk the file's commit DAG per record.
     let mut by_file: BTreeMap<String, BTreeSet<crate::model::RevisionId>> = BTreeMap::new();
     for record in crate::graph::sorted_records(ledger) {
         let Some(path) = &record.file else { continue };
@@ -2546,7 +2966,7 @@ pub fn last_changes(
 
     let mut out = BTreeMap::new();
     for (path, wanted) in by_file {
-        let commits = repository.commits_touching(&path)?;
+        let (commits, parents) = index_dag(repository.commits_touching_dag(&path)?);
         let Some(newest) = commits.first() else {
             continue;
         };
@@ -2555,33 +2975,23 @@ pub fn last_changes(
             .get(newest)
             .and_then(Option::as_deref)
             .map_or_else(BTreeMap::new, |text| definitional_hashes(text, &wanted));
-        let mut unresolved: BTreeSet<crate::model::RevisionId> = current.keys().cloned().collect();
-        let mut answers: BTreeMap<crate::model::RevisionId, Commit> = unresolved
-            .iter()
-            .cloned()
-            .map(|id| (id, newest.clone()))
-            .collect();
-
-        for commit in commits.iter().skip(1) {
-            if unresolved.is_empty() {
-                break;
+        let all_hashes: Vec<BTreeMap<crate::model::RevisionId, crate::model::ContentHash>> =
+            commits
+                .iter()
+                .map(|commit| {
+                    versions
+                        .get(commit)
+                        .and_then(Option::as_deref)
+                        .map_or_else(BTreeMap::new, |text| definitional_hashes(text, &wanted))
+                })
+                .collect();
+        for (id, hash) in &current {
+            if let Some(idx) = walk_dag_introduction(&parents, |at| {
+                definition_at_or_below(&all_hashes[at], id).as_ref() == Some(hash)
+            }) {
+                out.insert(id.clone(), commits[idx].clone());
             }
-            let older = versions
-                .get(commit)
-                .and_then(Option::as_deref)
-                .map_or_else(BTreeMap::new, |text| definitional_hashes(text, &unresolved));
-            unresolved.retain(|id| {
-                // D-038: at or below, so the walk crosses the commit that introduced this
-                // revision into the identical definition it was revised from.
-                if definition_at_or_below(&older, id).as_ref() == current.get(id) {
-                    answers.insert(id.clone(), commit.clone());
-                    true
-                } else {
-                    false
-                }
-            });
         }
-        out.extend(answers);
     }
     Ok(out)
 }
@@ -2593,8 +3003,8 @@ pub fn last_changes(
 /// growing with file size times history. Its answer is a function of the commits that
 /// touched the file and the bytes the file held at each, both immutable, so this keeps
 /// what the walk needs from them: per logical key, the indices in the file's history at
-/// which that key's revision -> definitional-hash map changes. Usually one or two
-/// entries per key, against one parsed copy per commit.
+/// which that key's revision -> definitional-hash map changes, alongside the file's
+/// commit-parent DAG.
 ///
 /// A file whose history is unchanged is answered without fetching or parsing anything.
 /// One that gained commits on top of the cached history fetches and parses only those.
@@ -2610,9 +3020,10 @@ pub fn last_changes_cached(
     cache: &crate::cache::FactCache,
 ) -> Result<BTreeMap<crate::model::RevisionId, Commit>, GitError> {
     let by_file = keys_by_file(ledger);
-    // One `log --follow` per file is unavoidable — it is what says whether the cached
-    // history still holds — but the files are independent, so ask about them together.
-    repository.prime_commits_touching(by_file.keys().map(String::as_str));
+    // One `log --parents --full-history` per file is unavoidable — it is what says
+    // whether the cached history still holds — but the files are independent, so ask
+    // about them together.
+    repository.prime_commits_touching_dag(by_file.keys().map(String::as_str));
 
     let mut out = BTreeMap::new();
     for (path, keys) in by_file {
@@ -2630,27 +3041,27 @@ fn timeline_of(
     path: &str,
     cache: &crate::cache::FactCache,
 ) -> Result<Option<Timeline>, GitError> {
-    let commits = repository.commits_touching(path)?;
+    let (commits, parents) = index_dag(repository.commits_touching_dag(path)?);
     if commits.is_empty() {
         return Ok(None);
     }
     let name = format!(
-        "history-{}",
+        "history-dag-{}",
         &crate::hash::sha256_hex(path.as_bytes())[..16]
     );
     let cached = cache
         .read(&name)
         .and_then(|text| Timeline::parse(&text, path));
     let timeline = match cached {
-        Some(timeline) if timeline.commits == commits => timeline,
-        Some(timeline) if timeline.is_suffix_of(&commits) => {
+        Some(timeline) if timeline.commits == commits && timeline.parents == parents => timeline,
+        Some(timeline) if timeline.is_suffix_of(&commits, &parents) => {
             let added = &commits[..commits.len() - timeline.commits.len()];
             let versions = repository.file_versions(added, path)?;
             let maps = added
                 .iter()
                 .map(|commit| version_maps(versions.get(commit)))
                 .collect::<Vec<_>>();
-            let timeline = timeline.extended(path, commits.clone(), &maps);
+            let timeline = timeline.extended(path, commits, parents, &maps);
             cache.write(&name, &timeline.render());
             timeline
         }
@@ -2660,7 +3071,7 @@ fn timeline_of(
                 .iter()
                 .map(|commit| version_maps(versions.get(commit)))
                 .collect::<Vec<_>>();
-            let timeline = Timeline::build(path, commits.clone(), &maps);
+            let timeline = Timeline::build(path, commits, parents, &maps);
             cache.write(&name, &timeline.render());
             timeline
         }
@@ -2704,7 +3115,7 @@ pub fn definition_facts_cached(
     cache: &crate::cache::FactCache,
 ) -> Result<DefinitionFacts, GitError> {
     let by_file = keys_by_file(ledger);
-    repository.prime_commits_touching(by_file.keys().map(String::as_str));
+    repository.prime_commits_touching_dag(by_file.keys().map(String::as_str));
     let mut out = DefinitionFacts::default();
     for (path, keys) in by_file {
         let timeline = timeline_of(repository, &path, cache)?;
@@ -2797,7 +3208,7 @@ pub fn definition_facts(
             );
             continue;
         };
-        let commits = repository.commits_touching(&path)?;
+        let (commits, parents) = index_dag(repository.commits_touching_dag(&path)?);
         let versions = repository.file_versions(&commits, &path)?;
         let wanted: BTreeSet<crate::model::RevisionId> = working_maps(text, &keys)
             .into_iter()
@@ -2825,20 +3236,16 @@ pub fn definition_facts(
         };
         for id in wanted {
             let hash = current.get(&id);
-            let mut answer = None;
-            for (commit, version) in commits.iter().zip(&older) {
-                if hash.is_some() && definition_at_or_below(version, &id).as_ref() == hash {
-                    answer = Some(commit.clone());
-                } else {
-                    break;
-                }
-            }
+            let answer = hash.and_then(|hash| {
+                walk_dag_introduction(&parents, |at| {
+                    definition_at_or_below(&older[at], &id).as_ref() == Some(hash)
+                })
+                .map(|idx| commits[idx].clone())
+            });
             match answer {
                 Some(commit) => {
                     out.last_change.insert(id, commit);
                 }
-                // Held at `HEAD` but not by any commit `log --follow` lists: a merge
-                // introduced it. See [`head_maps`].
                 None if hash.is_some()
                     && definition_at_or_below(&at_head, &id).as_ref() == hash => {}
                 None => {
@@ -2928,6 +3335,8 @@ struct Timeline {
     path: String,
     /// The commits that touched the file, newest first: index 0 is the newest version.
     commits: Vec<Commit>,
+    /// Rewritten parent indices within `commits`, parallel to `commits`.
+    parents: Vec<Vec<usize>>,
     /// Logical key -> `(first index, map)` runs in index order. The first run starts at
     /// 0, and each holds until the next run starts; a key absent from a version has an
     /// empty map there. A key absent from every version has no entry.
@@ -2936,7 +3345,12 @@ struct Timeline {
 
 impl Timeline {
     /// The timeline of `commits`, from each version's maps in the same order.
-    fn build(path: &str, commits: Vec<Commit>, maps: &[BTreeMap<String, KeyMap>]) -> Self {
+    fn build(
+        path: &str,
+        commits: Vec<Commit>,
+        parents: Vec<Vec<usize>>,
+        maps: &[BTreeMap<String, KeyMap>],
+    ) -> Self {
         let mut keys: BTreeMap<String, Vec<(usize, KeyMap)>> = BTreeMap::new();
         let present: BTreeSet<&String> = maps.iter().flat_map(BTreeMap::keys).collect();
         for key in present {
@@ -2948,20 +3362,43 @@ impl Timeline {
         Self {
             path: path.to_owned(),
             commits,
+            parents,
             keys,
         }
     }
 
-    /// Whether this timeline's history is the older end of `commits`.
-    fn is_suffix_of(&self, commits: &[Commit]) -> bool {
-        commits.len() > self.commits.len()
-            && commits[commits.len() - self.commits.len()..] == self.commits[..]
+    /// Whether this timeline's history is the older end of `commits` with identical
+    /// parent links (shifted by the newly prepended commits).
+    fn is_suffix_of(&self, commits: &[Commit], parents: &[Vec<usize>]) -> bool {
+        if commits.len() <= self.commits.len() || parents.len() != commits.len() {
+            return false;
+        }
+        let shift = commits.len() - self.commits.len();
+        if commits[shift..] != self.commits[..] {
+            return false;
+        }
+        self.parents
+            .iter()
+            .zip(&parents[shift..])
+            .all(|(old, new)| {
+                old.len() == new.len()
+                    && old
+                        .iter()
+                        .zip(new)
+                        .all(|(old_p, new_p)| old_p + shift == *new_p)
+            })
     }
 
     /// This timeline with newer versions in front: `commits` is the full new history and
     /// `maps` the versions it adds, newest first. Equal to [`Self::build`] over the whole
     /// history, because the old runs are re-laid with the same merging rule.
-    fn extended(self, path: &str, commits: Vec<Commit>, maps: &[BTreeMap<String, KeyMap>]) -> Self {
+    fn extended(
+        self,
+        path: &str,
+        commits: Vec<Commit>,
+        parents: Vec<Vec<usize>>,
+        maps: &[BTreeMap<String, KeyMap>],
+    ) -> Self {
         let shift = maps.len();
         let present: BTreeSet<String> = self
             .keys
@@ -2992,6 +3429,7 @@ impl Timeline {
         Self {
             path: path.to_owned(),
             commits,
+            parents,
             keys,
         }
     }
@@ -3022,8 +3460,8 @@ impl Timeline {
     }
 
     /// The oldest commit from which `key` has held `hash` at or below `revision` without
-    /// a break, walking back from the newest version; `None` when the newest version does
-    /// not hold it at all, so the definition is newer than every commit.
+    /// a break along a DAG parent path, walking back from the newest version; `None` when
+    /// the newest version does not hold it at all.
     fn introduced(
         &self,
         key: &crate::model::LogicalKey,
@@ -3038,35 +3476,35 @@ impl Timeline {
             .map(|last| self.commits[last].clone())
     }
 
-    /// The index of the oldest version in the unbroken stretch, from the newest, that
-    /// holds `hash` at or below `revision`.
+    /// The key's map at commit index `at`, looked up in the run-length encoded `runs`.
+    fn map_at(runs: &[(usize, KeyMap)], at: usize) -> Option<&KeyMap> {
+        let pos = runs.partition_point(|(start, _)| *start <= at);
+        pos.checked_sub(1).map(|idx| &runs[idx].1)
+    }
+
+    /// The index of the oldest introducing commit along the file's commit DAG that holds
+    /// `hash` at or below `revision`.
     fn walk(
         &self,
         runs: &[(usize, KeyMap)],
         revision: u32,
         hash: &crate::model::ContentHash,
     ) -> Option<usize> {
-        // The walk keeps going while each older version still holds this definition at or
-        // below this revision; a run is one stretch of identical versions, so it either
-        // holds throughout or not at all.
-        let mut last = None;
-        for (position, (_, map)) in runs.iter().enumerate() {
-            if run_definition_at_or_below(map, revision) != Some(hash) {
-                break;
-            }
-            last = Some(
-                runs.get(position + 1)
-                    .map_or(self.commits.len() - 1, |(next, _)| next - 1),
-            );
-        }
-        last
+        walk_dag_introduction(&self.parents, |at| {
+            Self::map_at(runs, at).and_then(|map| run_definition_at_or_below(map, revision))
+                == Some(hash)
+        })
     }
 
     /// The cache entry's body.
     fn render(&self) -> String {
         let mut out = format!("path {}\n", self.path);
-        for commit in &self.commits {
-            out.push_str(&format!("commit {}\n", commit.as_str()));
+        for (commit, parents) in self.commits.iter().zip(&self.parents) {
+            out.push_str(&format!("commit {}", commit.as_str()));
+            for parent in parents {
+                out.push_str(&format!(" {parent}"));
+            }
+            out.push('\n');
         }
         for (key, runs) in &self.keys {
             out.push_str(&format!("key {key}\n"));
@@ -3088,14 +3526,22 @@ impl Timeline {
             return None;
         }
         let mut commits = Vec::new();
+        let mut parents = Vec::new();
         let mut keys: BTreeMap<String, Vec<(usize, KeyMap)>> = BTreeMap::new();
         let mut current: Option<String> = None;
         for line in lines {
-            if let Some(hash) = line.strip_prefix("commit ") {
+            if let Some(rest) = line.strip_prefix("commit ") {
                 if current.is_some() {
                     return None;
                 }
+                let mut fields = rest.split_whitespace();
+                let hash = fields.next()?;
                 commits.push(Commit::new(hash).ok()?);
+                let mut ps = Vec::new();
+                for idx in fields {
+                    ps.push(idx.parse::<usize>().ok()?);
+                }
+                parents.push(ps);
             } else if let Some(key) = line.strip_prefix("key ") {
                 keys.entry(key.to_owned()).or_default();
                 current = Some(key.to_owned());
@@ -3121,12 +3567,19 @@ impl Timeline {
                 runs.push((start, map));
             }
         }
-        if commits.is_empty() || keys.values().any(Vec::is_empty) {
+        if commits.is_empty()
+            || parents.len() != commits.len()
+            || parents
+                .iter()
+                .any(|ps| ps.iter().any(|&p| p >= commits.len()))
+            || keys.values().any(Vec::is_empty)
+        {
             return None;
         }
         Some(Self {
             path: path.to_owned(),
             commits,
+            parents,
             keys,
         })
     }

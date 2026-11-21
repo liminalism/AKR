@@ -5,6 +5,11 @@ humans and AI agents. It gives project decisions, requirements, observations,
 evidence, questions, and work items stable identities, lifecycle states,
 scope, typed relations, freshness, and Git provenance.
 
+Version 0.8.0 lets ledgers from separate worktrees join with an ordinary merge commit —
+history is read as the commit DAG and a git merge driver merges `.akr` files by record —
+and makes the first `knowledge.context` call succeed whatever its budget. Run
+`akr git install-hooks` once per checkout; see [upgrading to 0.8](docs/21-upgrading-to-0.8.md).
+
 Version 0.7.0 makes the ledger say *why* rather than restate a diff: a work record
 carries a short reasoning `trace`, a passing command check records itself instead of
 minting an evidence record, five little-used kinds are retired, and one agent brief is

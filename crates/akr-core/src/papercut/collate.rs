@@ -160,6 +160,9 @@ pub fn collect(
     let mut entries = Vec::new();
     let mut filtered_out = 0usize;
     let mut subjects: BTreeMap<Option<String>, (usize, usize)> = BTreeMap::new();
+    // Deduplicate across sibling directories so multiple linked worktrees of the same
+    // repository do not double-count or emit duplicate collated entries.
+    let mut seen_keys: BTreeSet<String> = BTreeSet::new();
 
     let Ok(read) = std::fs::read_dir(scan_dir) else {
         return Collate {
@@ -209,7 +212,8 @@ pub fn collect(
             .collect();
         keys.sort();
         for key in keys {
-            if already.contains(&key.to_string()) {
+            let key_text = key.to_string();
+            if already.contains(&key_text) || !seen_keys.insert(key_text) {
                 continue;
             }
             let head = workspace.ledger.head(&key).ok();

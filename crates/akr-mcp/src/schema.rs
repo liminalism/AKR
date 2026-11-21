@@ -643,12 +643,18 @@ pub fn input_schema_for(id: ToolId) -> Value {
                 (
                     "query",
                     string(
-                        "Natural-language terms to search for. Ordinary multi-word \
-                         queries match any term and rank records matching more first.",
+                        "Natural-language terms to search for (or empty / `*` to list with filters). \
+                         Ordinary multi-word queries match any term and rank records matching more first.",
                     ),
                 ),
                 ("kinds", string_array("Restrict to these record kinds.")),
                 ("states", string_array("Restrict to these states.")),
+                (
+                    "slot",
+                    string(
+                        "Optional slot name to restrict matching to (e.g. `intent`, `trace`, `acceptance`).",
+                    ),
+                ),
                 (
                     "limit",
                     integer("Maximum results. Default 20, maximum 100."),
@@ -658,7 +664,7 @@ pub fn input_schema_for(id: ToolId) -> Value {
                     integer("Zero-based ranked-result offset. Use `next_offset` to continue."),
                 ),
             ],
-            &["query"],
+            &[],
         ),
         ToolId::Start => object(
             vec![
@@ -711,15 +717,33 @@ pub fn input_schema_for(id: ToolId) -> Value {
                     ),
                 ),
                 ("paths", string_array("Path globs the work will touch.")),
-                ("budget_tokens", integer("Approximate token budget.")),
+                (
+                    "budget_tokens",
+                    integer("Approximate token budget. Defaults to 6000."),
+                ),
+                (
+                    "section",
+                    string(
+                        "Optional single section to return: goal, milestone, work-items, \
+                         plan-of-record, normative, dependencies, acceptance, observations, \
+                         questions, contradictions, or staleness.",
+                    ),
+                ),
             ],
             &["goal"],
         ),
         ToolId::SourceList => object(
-            vec![(
-                "all_versions",
-                boolean("Include superseded source registrations."),
-            )],
+            vec![
+                (
+                    "all_versions",
+                    boolean("Include superseded source registrations."),
+                ),
+                (
+                    "limit",
+                    integer("Maximum sources to return. Default 50, maximum 200."),
+                ),
+                ("offset", integer("Zero-based source offset. Default 0.")),
+            ],
             &[],
         ),
         ToolId::SourceAdd => object(
@@ -850,7 +874,7 @@ pub fn input_schema_for(id: ToolId) -> Value {
             ],
             &[],
         ),
-        ToolId::Propose => propose_record_schema(),
+        ToolId::Propose => propose_record_schema(true),
         ToolId::ProposeMany => object(
             vec![(
                 "records",
@@ -863,7 +887,7 @@ pub fn input_schema_for(id: ToolId) -> Value {
                              this array may reference each other.",
                         ),
                     ),
-                    ("items", propose_record_schema()),
+                    ("items", propose_record_schema(false)),
                     ("minItems", Value::integer(1)),
                     ("maxItems", Value::integer(100)),
                 ]),
@@ -883,13 +907,13 @@ pub fn input_schema_for(id: ToolId) -> Value {
                          keep the head's.",
                     ),
                 ),
-                ("slots", slots_schema()),
+                ("slots", compact_slots_schema()),
                 ("claims", claims_schema()),
                 (
                     "retired_claims",
                     string_array("Anchors this revision drops (D-011)."),
                 ),
-                ("relations", relations_schema()),
+                ("relations", compact_relations_schema()),
                 ("dispositions", dispositions_schema()),
                 (
                     "acceptance",
@@ -939,9 +963,9 @@ pub fn input_schema_for(id: ToolId) -> Value {
                          may be old_key's topic: the old head is retired in the same write.",
                     ),
                 ),
-                ("slots", slots_schema()),
+                ("slots", compact_slots_schema()),
                 ("claims", claims_schema()),
-                ("relations", relations_schema()),
+                ("relations", compact_relations_schema()),
                 (
                     "acceptance",
                     acceptance_schema("The new successor's acceptance block."),
@@ -986,6 +1010,13 @@ pub fn input_schema_for(id: ToolId) -> Value {
                             )]),
                         ),
                     ]),
+                ),
+                (
+                    "partial",
+                    boolean(
+                        "Stamp passing checks onto the head in place without moving the \
+                         record's state to `completed`. Default false.",
+                    ),
                 ),
             ],
             &["key"],
@@ -1292,6 +1323,12 @@ pub fn input_schema_for(id: ToolId) -> Value {
                          that is how the report reaches whoever maintains the tool.",
                     ),
                 ),
+                (
+                    "observed_at",
+                    string(
+                        "Optional 40-hex commit hash the friction was observed at. Defaults to HEAD.",
+                    ),
+                ),
             ],
             &["message", "agent"],
         ),
@@ -1312,7 +1349,7 @@ pub fn output_schema_for(_id: ToolId) -> Value {
     Value::object(vec![("type", Value::string("object"))])
 }
 
-fn propose_record_schema() -> Value {
+fn propose_record_schema(full_docs: bool) -> Value {
     object(
         vec![
             (
@@ -1322,7 +1359,14 @@ fn propose_record_schema() -> Value {
                      first segment must be a namespace declared in .akr/project.akr.",
                 ),
             ),
-            ("kind", kind_schema()),
+            (
+                "kind",
+                if full_docs {
+                    kind_schema()
+                } else {
+                    compact_kind_schema()
+                },
+            ),
             ("title", string("The one-line label.")),
             ("state", string("Override the class's initial state.")),
             ("scope", scope_schema()),
@@ -1334,9 +1378,23 @@ fn propose_record_schema() -> Value {
                      hyphens; it is not a dot-delimited key.",
                 ),
             ),
-            ("slots", slots_schema()),
+            (
+                "slots",
+                if full_docs {
+                    slots_schema()
+                } else {
+                    compact_slots_schema()
+                },
+            ),
             ("claims", claims_schema()),
-            ("relations", relations_schema()),
+            (
+                "relations",
+                if full_docs {
+                    relations_schema()
+                } else {
+                    compact_relations_schema()
+                },
+            ),
             (
                 "acceptance",
                 acceptance_schema("Required to propose a milestone (V-008)."),
@@ -1346,6 +1404,65 @@ fn propose_record_schema() -> Value {
         ],
         &["key", "kind", "title"],
     )
+}
+
+fn compact_kind_schema() -> Value {
+    let written = akr_core::model::Kind::written();
+    Value::object(vec![
+        ("type", Value::string("string")),
+        (
+            "description",
+            Value::string(
+                "Record kind (see knowledge.propose or knowledge.explain for per-kind slot contracts).",
+            ),
+        ),
+        (
+            "enum",
+            Value::array(
+                written
+                    .iter()
+                    .map(|kind| Value::string(kind.name()))
+                    .collect(),
+            ),
+        ),
+    ])
+}
+
+fn compact_slots_schema() -> Value {
+    Value::object(vec![
+        ("type", Value::string("object")),
+        (
+            "description",
+            Value::string(format!(
+                "Content slots for the record's kind ({}). Use `knowledge.explain` for slot guidance.",
+                slot_contract_summary()
+            )),
+        ),
+        ("additionalProperties", Value::bool(true)),
+    ])
+}
+
+fn compact_relations_schema() -> Value {
+    let properties = akr_core::model::Relation::ALL
+        .iter()
+        .map(|relation| {
+            (
+                relation.name().to_owned(),
+                string_array("Record references."),
+            )
+        })
+        .collect();
+    Value::object(vec![
+        ("type", Value::string("object")),
+        (
+            "description",
+            Value::string(
+                "relation name -> array of references (see knowledge.propose or knowledge.explain for domain/range rules).",
+            ),
+        ),
+        ("properties", Value::Object(properties)),
+        ("additionalProperties", Value::bool(false)),
+    ])
 }
 
 fn evidence_schema() -> Value {

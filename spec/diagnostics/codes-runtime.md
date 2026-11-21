@@ -33,7 +33,7 @@ The `V-101`–`V-149` range belongs to the freshness, emission and context docum
 | --- | --- | --- |
 | `V-101`–`V-104` | [`../../docs/10-freshness-and-git.md`](../../docs/10-freshness-and-git.md) §9 | `AKR-G011`, `G012`, `G021`, `G022`, `G023`, `G026`, `G027`, `G031`, `G041` |
 | `V-111`–`V-115` | [`../../docs/11-projections.md`](../../docs/11-projections.md) §11 | `AKR-E011`, `E012`, `E013`, `E014`, `E015`, `E021`, `E022` |
-| `V-121`–`V-123` | [`../../docs/09-context-assembly.md`](../../docs/09-context-assembly.md) §9 | `AKR-X021`, `X022`, `X051`, `X052` |
+| `V-121`–`V-123` | [`../../docs/09-context-assembly.md`](../../docs/09-context-assembly.md) §9 | `X022`, `X051`, `X052` (`X021` retired) |
 
 `V-105`–`V-110`, `V-116`–`V-120` and `V-124`–`V-149` are unallocated. Codes with `—` in
 the Rule column implement no rule: they report a fault in the invocation or the
@@ -116,7 +116,7 @@ Reserved groups: `X001`–`X009` the bundle anchor; `X011`–`X019` path filters
 | `AKR-X011` | path filter is malformed | error | — | `--paths {glob}: {reason}` | A glob outside the D-008 subset — brace expansion, `!` negation, an unterminated `[` class, a partial `**`. Backslashes and an absolute in-repo path no longer reach this: they are normalized before validation. |
 | `AKR-X012` | path filter matches nothing | warning | — | `--paths {glob} matches no path at {commit}` | Usually a typo. The bundle is still assembled without a path-derived section. |
 | `AKR-X013` | path filter is outside the repository | error | — | `--paths {path}: outside the repository (root {root})` | An absolute path given to `--paths`/`paths` that, once native separators are normalized, does not lie inside the repository root. A path inside the root is converted to a repo-root-relative glob automatically; one outside it is rejected rather than silently mangled. |
-| `AKR-X021` | context budget too small | error | V-123 | `budget of {budget} tokens cannot hold the mandatory sections ({required} tokens)` | The goal, the plan of record, acceptance verdicts and contradictions are never reduced, so a budget below their size is unsatisfiable. Everything else can be truncated or withheld by name (`docs/09-context-assembly.md` §6). |
+| `AKR-X021` | context budget too small | — | V-123 | *(retired in 0.8, D-051)* | Not raised. An undersized budget now delivers the minimal mandatory bundle flagged `budget_exceeded` with `required_tokens`. Kept so the code is never reused. |
 | `AKR-X022` | context budget exhausted | warning | V-123 | `prose truncated in {n} records to fit a budget of {budget} tokens` | Normal operation on a large bundle; reported so that a reader knows what was dropped. Records withheld whole are listed under `withheld` in their section. |
 | `AKR-X031` | search query is malformed | error | — | `search query: {reason}` | An unbalanced quote or an unsupported operator in the FTS query. |
 | `AKR-X032` | search backend unavailable | error | — | `search backend {name} is unavailable: {reason}` | A configured ranker could not be reached. |
@@ -242,5 +242,8 @@ Reserved groups: `S021`–`S029` catalog and immutable-source checks.
 
 ## Retired codes
 
-None. Codes are never renumbered and never reused; retired entries would be listed here
-with a pointer to their replacement.
+Codes are never renumbered and never reused.
+
+| Code | Retired | Replacement |
+| --- | --- | --- |
+| `AKR-X021` | 0.8.0, D-051 | none: the context bundle reports `budget_exceeded` and `required_tokens` instead of refusing |

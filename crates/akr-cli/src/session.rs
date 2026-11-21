@@ -363,6 +363,14 @@ impl Session {
                         .filter_map(akr_core::freshness::observed_at)
                         .cloned(),
                 )
+                .chain(
+                    self.ledger
+                        .records()
+                        .iter()
+                        .filter_map(|record| record.acceptance.as_ref())
+                        .flat_map(|acceptance| acceptance.checks.iter())
+                        .filter_map(|check| check.passed_at.clone()),
+                )
                 .chain(commit.clone())
                 .collect();
             if let Some(head) = &commit

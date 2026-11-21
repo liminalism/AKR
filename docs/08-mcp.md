@@ -27,10 +27,10 @@ no ledger and every call would answer `AKR-C011`. Every tool therefore accepts a
 optional `workspace` argument: a directory inside a workspace, absolute or relative to
 the server's directory. It is the MCP spelling of the command line's `--dir`, so a call
 that uses it is reproduced by `akr --dir <workspace> <command>`, and it reaches nothing
-`--dir` could not. The argument is honoured on every call, but advertised in
-`tools/list` — and named in the handshake instructions — only when the server's own
-directory has no ledger, so a server started inside a workspace publishes exactly the
-schemas it always did and pays no schema cost for a parameter it never needs (D-034). A
+`--dir` could not. The argument is honoured and advertised in `tools/list` on every
+call. Until 0.8 it was advertised only when the server's own directory had no ledger
+(D-034); a subagent working in a separate worktree of the same repository then had no way
+to see that it could name its own checkout, and wrote to the parent's ledger. A
 non-string or empty `workspace` is `AKR-C004`. The tool never sees the argument.
 
 **Tool names.** The catalogue names in §2 (`knowledge.search`, …) are the contract.
@@ -222,9 +222,9 @@ one recorded act, while an MCP flag would make a tool declared read-only write. 
 one-implementation invariant holds either way: `akr handoff open <id>` reproduces
 `knowledge.handoff_open` exactly.
 
-`knowledge.handoff_open` carries the largest budget on this surface (2,000 target, 3,500
-hard). It is the one read whose whole point is that a second agent arrives knowing the
-workspace, and because a packet is addressable the overflow path names a real continuation
+`knowledge.handoff_open` carries a large budget (2,000 target, 3,500 hard; only
+`knowledge.get` at 4,000 and `knowledge.context` at 6,000 are larger, since 0.8). It is
+the one read whose whole point is that a second agent arrives knowing the workspace, and because a packet is addressable the overflow path names a real continuation
 — `knowledge.handoff_expand`, one section at a time — rather than truncating everything.
 
 ## 3. Read tools
@@ -305,6 +305,7 @@ the ledger's own syntax reads that, not a file.
 { "goal": "sys.milestone.m3-playable-day",   // required; milestone|work|track
   "paths": ["sim/src/project/**"],           // optional
   "budget_tokens": 8000,                     // optional
+  "section": "acceptance",                   // optional; one section only
   "format": "json" }                         // "json" | "text"
 // output
 {
@@ -334,8 +335,9 @@ the ledger's own syntax reads that, not a file.
 `budget_tokens` controls context assembly and disables the MCP adapter’s separate fixed
 ceiling for this call. The same rule applies to `knowledge.start` and its handoff
 assembly. The server does not assemble an 8,000-token bundle and then discard it behind
-a smaller transport limit. When the argument is omitted, the normal per-tool ceiling
-applies; an oversized result retains a compact preview and an actionable continuation
+a smaller transport limit. When the argument is omitted, the per-tool ceiling applies
+(6,000 tokens for `knowledge.context` since 0.8, measured as the larger of the text and
+JSON forms); an oversized result retains a compact preview and an actionable continuation
 instead of withholding all content.
 
 The budget is a promise about the **delivered** result — both halves, the readable text
@@ -359,9 +361,12 @@ Every budgeted bundle reports what happened, as `budget`:
 ```
 
 `withheld_records`, `truncated_records` and `continue` appear when anything was reduced.
-A `note` appears when the request could not be met even so: the goal, plan, acceptance
-verdicts, contradictions, staleness warnings and the key of every selected record are
-never reduced, and narrowing `paths` is what shrinks them.
+When the request could not be met even so, the minimum is delivered with
+`budget_exceeded: true` and `required_tokens` (D-051) — the goal, its immediate milestone,
+its own acceptance verdicts, contradictions and the key of every selected record are never
+reduced, and narrowing `paths` is what shrinks them. A first call with too small a budget
+therefore returns the floor instead of `AKR-X021`. `withheld_acceptance` and
+`omitted_deeper_staleness` count what the first reductions folded away.
 
 Sections appear in the fixed order above, always, whether or not they are empty. The
 membership of each is computed by the algorithm of `09-context-assembly.md` §4 — a pure
@@ -597,7 +602,9 @@ answering easy and skipping impossible.
 ```
 
 Fails with `AKR-R022` naming each unsatisfied check, including whether the failure was
-"no passing evidence" or "evidence predates the last content change" (D-016).
+"no passing evidence" or "evidence predates the last content change" (D-016). With
+`"partial": true` the given checks are recorded on the head and the record keeps its state,
+so passes seen on an unfinished milestone are not lost while another check is open.
 
 ### `knowledge.evidence_add`
 
@@ -643,6 +650,8 @@ the way, and — as a bonus — a guess at the cause or fix. The message is the 
 ceremony: the key, the commit, the author and the date are filled in by the tool. Not
 idempotent, deliberately: a log never refuses an entry, so the same message twice is two
 records with distinct keys. The aggregate renders to `PAPERCUTS.md` on the next build.
+An optional `observed_at` names the commit the friction was seen at, for a papercut logged
+after the fact; it defaults to `HEAD`.
 
 ### Local-only secret tools (0.6.5)
 

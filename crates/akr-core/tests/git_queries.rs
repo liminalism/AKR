@@ -625,3 +625,88 @@ fn tracked_source_hits_cost_does_not_grow_with_needles() {
         "2000 needles took {elapsed:?}"
     );
 }
+
+#[test]
+fn dag_ancestry_over_preserves_both_branch_parents_across_a_merge() {
+    let mut repo = TempRepo::new("dag-ancestry-merge");
+    let base = commit(&repo.commit_file("shared.txt", "base\n", "base"));
+
+    repo.branch("right");
+    let r1 = commit(&repo.commit_file("right.txt", "r1\n", "r1"));
+    let r2 = commit(&repo.commit_file("right.txt", "r2\n", "r2"));
+
+    repo.checkout("main");
+    let l1 = commit(&repo.commit_file("left.txt", "l1\n", "l1"));
+    let l2 = commit(&repo.commit_file("left.txt", "l2\n", "l2"));
+
+    let head = commit(&repo.merge("right"));
+
+    let git = Repository::open(repo.root()).expect("opens");
+    let ancestry = ancestry_over(
+        &git,
+        [
+            base.clone(),
+            l1.clone(),
+            l2.clone(),
+            r1.clone(),
+            r2.clone(),
+            head.clone(),
+        ],
+    )
+    .expect("ancestry_over");
+
+    // Both branch chains and the merge commit descend from their respective ancestors.
+    assert_eq!(ancestry.is_descendant(&l2, &l1), Some(true));
+    assert_eq!(ancestry.is_descendant(&r2, &r1), Some(true));
+    assert_eq!(ancestry.is_descendant(&head, &l2), Some(true));
+    assert_eq!(ancestry.is_descendant(&head, &r2), Some(true));
+    assert_eq!(ancestry.is_descendant(&head, &l1), Some(true));
+    assert_eq!(ancestry.is_descendant(&head, &r1), Some(true));
+    assert_eq!(ancestry.is_descendant(&head, &base), Some(true));
+
+    // Sibling branch commits do NOT descend from each other (unlike a linearised topo list).
+    assert_eq!(ancestry.is_descendant(&l2, &r1), Some(false));
+    assert_eq!(ancestry.is_descendant(&r2, &l1), Some(false));
+}
+
+#[test]
+fn no_ff_merge_into_older_main_does_not_falsely_stale_branch_observation() {
+    use akr_core::model::{ContentSlot, ContentValue, Date, Glob, Kind, Ledger, RecordBuilder};
+
+    let mut repo = TempRepo::new("no-ff-merge-freshness");
+    let _base = commit(&repo.commit_file("src/engine.rs", "v1\n", "base"));
+
+    repo.branch("feature");
+    let f1 = commit(&repo.commit_file("src/engine.rs", "v2\n", "update engine on feature"));
+
+    repo.checkout("main");
+    let _m1 = commit(&repo.commit_file("README.md", "docs\n", "unrelated main commit"));
+    let merge_head = commit(&repo.merge("feature"));
+
+    let mut ledger = Ledger::new(Project::new("sys", &["sys"]));
+    let obs = RecordBuilder::new("sys.obs.engine", 1, Kind::Observation)
+        .title("Engine state")
+        .content(ContentSlot::Statement, ContentValue::prose("Observed v2."))
+        .content(ContentSlot::ObservedAt, ContentValue::Commit(f1.clone()))
+        .content(
+            ContentSlot::Watches,
+            ContentValue::Globs(vec![Glob::new("src/engine.rs")]),
+        )
+        .build();
+    ledger.insert(obs);
+
+    let git = Repository::open(repo.root()).expect("opens");
+    let today = Date::parse("2026-11-22").unwrap();
+    let queue = akr_core::freshness::derive(&ledger, &git, &merge_head, today).expect("derive");
+    assert!(
+        queue.stale.is_empty(),
+        "merge commit preserved feature's src/engine.rs, so observation at f1 must stay fresh: {:?}",
+        queue.stale
+    );
+
+    // A genuine post-merge modification to src/engine.rs DOES mark the observation stale.
+    let after = commit(&repo.commit_file("src/engine.rs", "v3\n", "post-merge edit"));
+    let git2 = Repository::open(repo.root()).expect("opens");
+    let queue2 = akr_core::freshness::derive(&ledger, &git2, &after, today).expect("derive");
+    assert_eq!(queue2.stale.len(), 1);
+}

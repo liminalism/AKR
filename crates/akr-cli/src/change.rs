@@ -290,6 +290,16 @@ pub fn begin(
     // refusal — an unknown key, a record that is not work, an entry over the limit —
     // opens no transaction.
     let mut traced = String::new();
+    for reference in intent.work_refs() {
+        if let Some(record) = referenced(&session.ledger, &reference)
+            && record.kind != akr_core::model::Kind::Work
+        {
+            traced.push_str(&format!(
+                "warning: {reference} is a {}, not a work record; `akr change prepare --staged` will refuse it\n",
+                record.kind.name()
+            ));
+        }
+    }
     if !why.is_empty() {
         let reference = intent.primary_work.clone().unwrap_or_default();
         let key = akr_core::model::Reference::parse(&reference)
@@ -568,12 +578,48 @@ pub fn install_hooks(session: &Session) -> Result<Output, EnvError> {
     let repository = repository(session)?;
     let written = write_hooks(repository, true)?.written;
     Ok(Output::plain(
-        format!("installed {} hooks\n", written.len()),
-        Value::object(vec![(
-            "hooks",
-            Value::array(written.iter().map(|h| Value::string(h.clone())).collect()),
-        )]),
+        format!(
+            "installed {} hooks and registered AKR merge drivers\n",
+            written.len()
+        ),
+        Value::object(vec![
+            (
+                "hooks",
+                Value::array(written.iter().map(|h| Value::string(h.clone())).collect()),
+            ),
+            ("merge_drivers", Value::bool(true)),
+        ]),
     ))
+}
+
+/// Configures local git merge drivers (`merge=akr` and `merge=akr-rebuild`) so `git merge`
+/// invokes AKR's semantic merger for `.akr/records/**/*.akr` and keeps rebuildable outputs
+/// (`akr.lock`, `docs/generated/*.md`) free of conflict markers.
+///
+/// # Errors
+/// `AKR-G001` when `git config --local` fails.
+pub fn install_merge_drivers(repository: &Repository) -> Result<(), EnvError> {
+    let entries = [
+        ("merge.akr.name", "AKR semantic record merger"),
+        (
+            "merge.akr.driver",
+            "akr git merge-driver %O %A %B --path %P",
+        ),
+        (
+            "merge.akr-rebuild.name",
+            "AKR rebuildable output merger (regenerate with `akr build`)",
+        ),
+        (
+            "merge.akr-rebuild.driver",
+            "akr git merge-rebuild %O %A %B --path %P",
+        ),
+    ];
+    for (key, value) in entries {
+        repository
+            .set_config(key, value)
+            .map_err(|e| EnvError::new("AKR-G001", e.to_string()))?;
+    }
+    Ok(())
 }
 
 /// The hooks AKR installs.
@@ -625,6 +671,7 @@ pub fn write_hooks(repository: &Repository, overwrite: bool) -> Result<HookRepor
         }
         report.written.push(hook.to_owned());
     }
+    install_merge_drivers(repository)?;
     Ok(report)
 }
 
@@ -654,6 +701,13 @@ pub fn git_hook(session: &Session, name: &str) -> Result<Output, EnvError> {
                 ("reword", Value::bool(true)),
             ]),
         )),
+        "pre-commit" if is_merge_commit(session) => Ok(Output::plain(
+            "AKR OK (merge)\n",
+            Value::object(vec![
+                ("ok", Value::bool(true)),
+                ("merge", Value::bool(true)),
+            ]),
+        )),
         "pre-commit" => match prepare(session, false) {
             Ok(output) => Ok(Output::plain("AKR OK\n", output.result)),
             Err(error) => Ok(Output::plain(
@@ -671,6 +725,271 @@ pub fn git_hook(session: &Session, name: &str) -> Result<Output, EnvError> {
             format!("`{other}` is not a hook akr installs"),
         )),
     }
+}
+
+/// Whether this commit is a git merge commit (`MERGE_HEAD` exists) with no open change
+/// transaction. A merge joins already-governed branch histories rather than authoring a
+/// new tracked change, so `pre-commit` lets it land without forcing `--no-verify`.
+fn is_merge_commit(session: &Session) -> bool {
+    let Ok(repository) = repository(session) else {
+        return false;
+    };
+    if change::load(repository).ok().flatten().is_some() {
+        return false;
+    }
+    repository.is_merging()
+}
+
+/// `akr git merge-driver <base> <ours> <theirs> [--path <path>]` — git merge driver for
+/// `.akr/records/**/*.akr`.
+///
+/// Semantically merges the three files and writes the canonical result into `<ours>`
+/// (the path git expects the driver to overwrite). Exits 0 on success, or 1 if any side
+/// fails to parse so git falls back to manual conflict resolution.
+pub fn merge_driver(
+    base: &std::path::Path,
+    ours: &std::path::Path,
+    theirs: &std::path::Path,
+    path: Option<&str>,
+) -> Result<Output, EnvError> {
+    let read_file = |p: &std::path::Path| -> Result<String, EnvError> {
+        std::fs::read_to_string(p)
+            .map_err(|e| EnvError::new("AKR-C042", format!("cannot read {}: {e}", p.display())))
+    };
+    let base_text = read_file(base)?;
+    let ours_text = read_file(ours)?;
+    let theirs_text = read_file(theirs)?;
+
+    match akr_core::merge::merge_record_file(&base_text, &ours_text, &theirs_text) {
+        Ok(outcome) => {
+            std::fs::write(ours, &outcome.content).map_err(|e| {
+                EnvError::new("AKR-C042", format!("cannot write {}: {e}", ours.display()))
+            })?;
+            let mut text = String::new();
+            let label = path.unwrap_or("<record file>");
+            for item in &outcome.renumbered {
+                text.push_str(&format!(
+                    "akr merge-driver ({label}): auto-renumbered concurrent {}/{} -> {}/{} (supersedes {}/{})\n",
+                    item.key,
+                    item.from_revision,
+                    item.key,
+                    item.to_revision,
+                    item.key,
+                    item.supersedes_revision
+                ));
+            }
+            for id in &outcome.merged_traces {
+                text.push_str(&format!(
+                    "akr merge-driver ({label}): merged concurrent trace entries on @{id}\n"
+                ));
+            }
+            Ok(Output::plain(
+                text,
+                Value::object(vec![
+                    ("merged", Value::bool(true)),
+                    (
+                        "renumbered",
+                        Value::array(
+                            outcome
+                                .renumbered
+                                .iter()
+                                .map(|r| {
+                                    Value::object(vec![
+                                        ("key", Value::string(r.key.to_string())),
+                                        ("from_rev", Value::integer(i64::from(r.from_revision))),
+                                        ("to_rev", Value::integer(i64::from(r.to_revision))),
+                                        (
+                                            "supersedes_rev",
+                                            Value::integer(i64::from(r.supersedes_revision)),
+                                        ),
+                                    ])
+                                })
+                                .collect(),
+                        ),
+                    ),
+                ]),
+            ))
+        }
+        Err(error) => Ok(Output::plain(
+            format!("akr merge-driver: {error}\n"),
+            Value::object(vec![
+                ("merged", Value::bool(false)),
+                ("error", Value::string(error.to_string())),
+            ]),
+        )
+        .with_diagnostics(Vec::new(), Exit::Diagnostics)),
+    }
+}
+
+/// `akr git merge-rebuild <base> <ours> <theirs> [--path <path>]` — git merge driver for
+/// rebuildable AKR build outputs (`.akr/akr.lock` and `docs/generated/*.md`).
+///
+/// Keeps `<ours>` intact without conflict markers and exits 0; the caller (or
+/// `akr git merge`) then runs `akr build` to regenerate exact lock and views over the
+/// merged ledger.
+pub fn merge_rebuild(
+    _base: &std::path::Path,
+    _ours: &std::path::Path,
+    _theirs: &std::path::Path,
+    path: Option<&str>,
+) -> Result<Output, EnvError> {
+    let label = path.unwrap_or("output");
+    Ok(Output::plain(
+        format!("akr merge-rebuild ({label}): kept ours cleanly; run `akr build` to regenerate\n"),
+        Value::object(vec![
+            ("merged", Value::bool(true)),
+            ("rebuild_required", Value::bool(true)),
+        ]),
+    ))
+}
+
+/// `akr git merge <branch> [--no-ff] [--no-commit] [-m <message>]`.
+///
+/// Runs `git merge --no-commit`, regenerates `.akr/akr.lock` and generated views with
+/// `akr build`, stages the rebuilt outputs, validates with `akr check`, and completes the
+/// merge commit unless `--no-commit` was requested.
+pub fn merge_branch(
+    session: &Session,
+    branch: &str,
+    no_ff: bool,
+    no_commit: bool,
+    message: Option<&str>,
+) -> Result<Output, EnvError> {
+    let repository = repository(session)?;
+    let raw = repository
+        .merge_no_commit(branch, no_ff)
+        .map_err(|e| EnvError::new("AKR-G001", e.to_string()))?;
+    let git_stdout = String::from_utf8_lossy(&raw.stdout).into_owned();
+    let git_stderr = String::from_utf8_lossy(&raw.stderr).into_owned();
+    if !raw.status.success() {
+        let mut text = String::new();
+        if !git_stdout.is_empty() {
+            text.push_str(&git_stdout);
+            if !text.ends_with('\n') {
+                text.push('\n');
+            }
+        }
+        if !git_stderr.is_empty() {
+            text.push_str(&git_stderr);
+            if !text.ends_with('\n') {
+                text.push('\n');
+            }
+        }
+        text.push_str(
+            "merge stopped with conflicts; resolve them, then run `akr build && akr check` and commit the merge\n",
+        );
+        return Ok(Output::plain(
+            text,
+            Value::object(vec![
+                ("branch", Value::string(branch)),
+                ("merged", Value::bool(false)),
+            ]),
+        )
+        .with_diagnostics(Vec::new(), Exit::Diagnostics));
+    }
+
+    // Reopen the session on the merged working tree, rebuild lock + views, stage them,
+    // and verify the merged ledger passes `akr check`.
+    let mut fresh = Session::open_ledger(&session.global)?;
+    fresh.ensure_git_facts()?;
+    let build_out = crate::commands::build(&mut fresh, false)?;
+    if build_out.exit != Exit::Ok {
+        return Ok(Output::plain(
+            format!(
+                "merge applied, but `akr build` reported diagnostics (left uncommitted):\n{}",
+                build_out.text
+            ),
+            Value::object(vec![
+                ("branch", Value::string(branch)),
+                ("merged", Value::bool(false)),
+                ("committed", Value::bool(false)),
+            ]),
+        )
+        .with_diagnostics(build_out.diagnostics, build_out.exit));
+    }
+
+    // Stage the regenerated lock and views so they are part of the merge commit.
+    let mut to_stage: Vec<String> = Vec::new();
+    if fresh.root.join(".akr/akr.lock").is_file() {
+        to_stage.push(".akr/akr.lock".to_owned());
+    }
+    let view_dir = fresh.view_dir();
+    if view_dir.is_dir() {
+        let rel = view_dir
+            .strip_prefix(&fresh.root)
+            .unwrap_or(&view_dir)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if !rel.is_empty() {
+            to_stage.push(rel);
+        }
+    }
+    let stage_refs: Vec<&str> = to_stage.iter().map(String::as_str).collect();
+    if !stage_refs.is_empty() {
+        repository
+            .stage_paths(&stage_refs)
+            .map_err(|e| EnvError::new("AKR-G001", e.to_string()))?;
+    }
+
+    // Reopen once more so `check` sees the newly written lock & views.
+    let mut checked_session = Session::open_ledger(&session.global)?;
+    checked_session.ensure_git_facts()?;
+    let check_out = crate::commands::check(&mut checked_session, false, false, false, None, 0)?;
+    if check_out.exit != Exit::Ok {
+        return Ok(Output::plain(
+            format!(
+                "merge applied and rebuilt, but `akr check` reported diagnostics (left uncommitted):\n{}",
+                check_out.text
+            ),
+            Value::object(vec![
+                ("branch", Value::string(branch)),
+                ("merged", Value::bool(true)),
+                ("committed", Value::bool(false)),
+            ]),
+        )
+        .with_diagnostics(check_out.diagnostics, check_out.exit));
+    }
+
+    if no_commit {
+        return Ok(Output::plain(
+            format!(
+                "merged {branch}, rebuilt lock and views, and validated cleanly (--no-commit)\n"
+            ),
+            Value::object(vec![
+                ("branch", Value::string(branch)),
+                ("merged", Value::bool(true)),
+                ("committed", Value::bool(false)),
+            ]),
+        ));
+    }
+
+    if repository.is_merging() {
+        let commit = repository
+            .commit_merge(message)
+            .map_err(|e| EnvError::new("AKR-G001", e.to_string()))?;
+        return Ok(Output::plain(
+            format!(
+                "{} merged {branch} (rebuilt lock and views; akr check ok)\n",
+                short(commit.as_str())
+            ),
+            Value::object(vec![
+                ("branch", Value::string(branch)),
+                ("merged", Value::bool(true)),
+                ("committed", Value::bool(true)),
+                ("commit", Value::string(commit.as_str())),
+            ]),
+        ));
+    }
+
+    Ok(Output::plain(
+        format!("fast-forward merged {branch} (akr check ok)\n"),
+        Value::object(vec![
+            ("branch", Value::string(branch)),
+            ("merged", Value::bool(true)),
+            ("committed", Value::bool(true)),
+            ("fast_forward", Value::bool(true)),
+        ]),
+    ))
 }
 
 /// Whether this commit changes only the message: nothing is staged beyond `HEAD`.

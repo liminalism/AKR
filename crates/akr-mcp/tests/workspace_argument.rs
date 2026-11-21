@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use crate::support::{Example, mcp_rpc};
 use akr_core::json::Value;
-use akr_mcp::schema::{TOOLS, input_schema};
+use akr_mcp::schema::TOOLS;
 
 /// A fresh directory with no ledger above it, removed on drop.
 struct Parent(PathBuf);
@@ -205,9 +205,9 @@ fn a_malformed_workspace_is_a_usage_error() {
 }
 
 #[test]
-fn a_server_inside_a_workspace_keeps_its_schemas_and_still_honours_the_argument() {
-    // Schemas are a fixed cost in every session (D-034): a server whose root is a
-    // workspace must advertise byte-for-byte what it advertised before D-045.
+fn a_server_inside_a_workspace_also_advertises_and_honours_the_workspace_argument() {
+    // Worktree subagents connect to a server rooted at the main checkout and target their
+    // linked worktree via `workspace`, so every server advertises the optional property.
     let example = Example::materialise("workspace-argument-rooted");
     let other = Example::materialise("workspace-argument-other");
     let workspace = json_string(&other.root().to_string_lossy());
@@ -228,9 +228,11 @@ fn a_server_inside_a_workspace_keeps_its_schemas_and_still_honours_the_argument(
         .expect("tools");
     for tool in tools {
         let name = tool.get("name").and_then(Value::as_str).expect("name");
-        let advertised = tool.get("inputSchema").expect("schema");
-        let expected = input_schema(name).expect("a schema");
-        assert_eq!(advertised, &expected, "{name}");
+        let property = tool
+            .get("inputSchema")
+            .and_then(|s| s.get("properties"))
+            .and_then(|p| p.get("workspace"));
+        assert!(property.is_some(), "{name} lacks `workspace`");
     }
     assert!(!is_error(result(&responses, 2)));
 }

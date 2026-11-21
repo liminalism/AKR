@@ -82,7 +82,7 @@ This is the supported alternative to hand-editing `.akr/project.akr`.
 | `--dir <path>` | `.` | Where to start looking for the workspace. |
 | `--strict` | **on** | Warnings are errors. The default profile (D-013). |
 | `--lenient` | off | Warnings stay warnings. Intended for `akr import` on legacy material and nothing else. Combining it with `--strict` is `AKR-C005`. |
-| `--format text\|json` | `text` | Output form. `json` is a stable envelope (§5); `text` is for humans and may be reworded between versions. |
+| `--format text\|json` | `text` | Output form. `json` is a stable envelope (§5); `text` is for humans and may be reworded between versions. `--json` is shorthand for `--format json`. |
 | `--at <commit>` | `HEAD` | Resolve the build against this commit instead of HEAD. Changes staleness, acceptance descendancy, and the banner. Unknown commit is `AKR-G013`. Combining it with `--git-diff` is `AKR-C005`. |
 | `--today <date>` | the system date | The date used for `review_after` comparisons. Exists so that tests and the worked example are reproducible; it is the only clock input to the build. |
 | `--no-color` | auto | Disable ANSI colour. Also disabled when stdout is not a terminal. |
@@ -306,7 +306,8 @@ Exit 0 if clean, 1 if differences (with `--check`) or a parse error.
 ### `akr check`
 
 ```
-akr check [--review-clean] [--views-current] [--at <commit>] [--today <date>]
+akr check [--review-clean] [--views-current] [--limit <n>] [--offset <n>]
+          [--at <commit>] [--today <date>]
 akr validate [same flags]
 ```
 
@@ -322,6 +323,7 @@ behaviour with two names, both of which work, is the smaller wrong.
 | --- | --- |
 | `--review-clean` | Additionally fail if the review queue is non-empty: `AKR-G041`, exit 1. Opt-in, because staleness is a build fact and not a defect (D-024). |
 | `--views-current` | Additionally run stage F in memory and compare against the committed views: `AKR-E011` (differs), `AKR-E012` (missing), `AKR-E013` (bad banner), `AKR-E014` (unexpected file). This is the D-025 gate. |
+| `--limit <n>`, `--offset <n>` | Page the printed diagnostics, as `knowledge.validate`'s `limit` does. The exit status still reflects every diagnostic. |
 
 ```
 $ akr check
@@ -485,8 +487,13 @@ An empty query lists heads in key order and still applies `--kind` / `--state`:
 still return no hits. `--fts` retains its raw-expression contract.
 
 ```
-akr search <query> [--kind <kind> ...] [--state <state> ...] [--limit <n>]
+akr search <query> [--kind <kind> ...] [--state <state> ...] [--slot <name>] [--limit <n>]
 ```
+
+The query may be omitted when a `--kind`, `--state` or `--slot` filter is given; that is
+the empty-query listing. `--slot <name>` keeps records that carry the named slot, and with a
+query, those whose slot contains it — for finding the decision whose `context` quotes a
+given sentence.
 
 Full-text search over live revisions (`records_fts`), ranked by BM25 and then by key.
 Filters are applied *before* ranking.
@@ -550,7 +557,7 @@ words do not swamp more specific intake material.
 
 ```
 akr context <key> | --goal <key> [--paths <glob> ...] [--budget <tokens>]
-            [--format text|json]
+            [--section <name>] [--format text|json]
 ```
 
 Assembles the deterministic context bundle specified in
@@ -560,10 +567,14 @@ as `knowledge.context` names it; both at once is `AKR-C005` — must be a live
 `AKR-X002`, wrong kind is `AKR-X003`. A pin to the current head is normalized; an older
 pin is `AKR-X004`, and an anchored reference is `AKR-X005`, both with retrieval guidance.
 A malformed `--paths` glob is `AKR-X011`; one that
-matches nothing is `AKR-X012` (warning). A budget too small for the goal, plan,
-acceptance and contradictions is `AKR-X021`; prose truncation is `AKR-X022` (warning).
+matches nothing is `AKR-X012` (warning). Prose truncation is `AKR-X022` (warning).
 Over budget, prose is truncated and whole records are withheld by name, never the goal
-(`09-context-assembly.md` §6); `akr get <key>` reads any of them in full.
+(`09-context-assembly.md` §6); `akr get <key>` reads any of them in full. A budget too
+small even for the minimum — the goal, its containing milestone, its own acceptance and
+the contradictions — delivers that minimum with `budget_exceeded` and `required_tokens`
+rather than failing (D-051). `--section <name>` renders and budgets one section (`goal`,
+`milestone`, `work-items`, `plan-of-record`, `normative`, `dependencies`, `acceptance`,
+`observations`, `questions`, `contradictions`, `staleness`).
 
 This is the single most important command for agent use, and the one an agent should
 call first in any session. A full worked bundle is in `09-context-assembly.md` §7 and in
@@ -875,7 +886,7 @@ Exit 1, working tree untouched.
 ### `akr complete`
 
 ```
-akr complete <key> [--pass <id>[=<commit>] ...] [--check <id>=<evidence-ref> ...]
+akr complete <key> [--pass <id>[=<commit>] ...] [--check <id>=<evidence-ref> ...] [--partial]
 ```
 
 Moves a `milestone` or `work` record to `completed`. Every acceptance check must be
@@ -891,6 +902,10 @@ whose method is not `command` (`AKR-T013`).
 `observed_at` commit descends from the last commit that changed the record's content
 (D-016). Use it for a measurement, a captured artefact, or anything a later reader will
 want to read.
+
+`--partial` records the given `--pass` and `--check` results on the head and leaves the
+record in its state, so the checks that already passed on an unfinished milestone are kept
+while a manual check is still open (`knowledge.complete` takes `partial: true`).
 
 Completing a `work` record whose `trace` is empty succeeds with a note. Nothing requires a
 trace (D-047).

@@ -66,7 +66,17 @@ impl Output {
 ///
 /// # Errors
 /// Never; the signature matches [`run`] so `main` can treat them alike.
-pub fn run_standalone(command: &Command) -> Option<Result<Output, EnvError>> {
+pub fn run_standalone(
+    command: &Command,
+    dir: &std::path::Path,
+) -> Option<Result<Output, EnvError>> {
+    let resolve = |p: &std::path::Path| -> std::path::PathBuf {
+        if p.is_relative() && dir != std::path::Path::new(".") {
+            dir.join(p)
+        } else {
+            p.to_path_buf()
+        }
+    };
     match command {
         Command::Help => Some(Ok(Output::text(crate::args::help()))),
         Command::HelpFor { name } => Some(Ok(Output::text(
@@ -79,6 +89,28 @@ pub fn run_standalone(command: &Command) -> Option<Result<Output, EnvError>> {
             namespaces,
             no_hooks,
         } => Some(crate::init::run(project.as_deref(), namespaces, !*no_hooks)),
+        Command::GitMergeDriver {
+            base,
+            ours,
+            theirs,
+            path,
+        } => Some(crate::change::merge_driver(
+            &resolve(base),
+            &resolve(ours),
+            &resolve(theirs),
+            path.as_deref(),
+        )),
+        Command::GitMergeRebuild {
+            base,
+            ours,
+            theirs,
+            path,
+        } => Some(crate::change::merge_rebuild(
+            &resolve(base),
+            &resolve(ours),
+            &resolve(theirs),
+            path.as_deref(),
+        )),
         _ => None,
     }
 }
@@ -92,7 +124,7 @@ pub fn run(session: &mut Session, command: &Command) -> Result<Output, EnvError>
     // `dispatch`, so a caller that holds a session and routes one here used to reach an
     // `unreachable!` rather than the answer. Answering it is always correct: holding a
     // session does not change what `explain` or `--version` says.
-    if let Some(answer) = run_standalone(command) {
+    if let Some(answer) = run_standalone(command, &session.root) {
         return answer;
     }
     if command.needs_git_facts() {
@@ -188,7 +220,16 @@ fn dispatch(session: &mut Session, command: &Command) -> Result<Output, EnvError
             scratch_clean,
             review_clean,
             views_current,
-        } => check(session, *scratch_clean, *review_clean, *views_current),
+            limit,
+            offset,
+        } => check(
+            session,
+            *scratch_clean,
+            *review_clean,
+            *views_current,
+            *limit,
+            *offset,
+        ),
         Command::HandoffCapsule {
             refresh,
             boundaries,
@@ -244,9 +285,10 @@ fn dispatch(session: &mut Session, command: &Command) -> Result<Output, EnvError
             goal,
             paths,
             budget,
+            section,
         } => {
             let paths = normalize_query_paths(paths, &session.root)?;
-            context(session, goal, &paths, *budget)
+            context(session, goal, &paths, *budget, section.as_deref())
         }
         Command::Start {
             task,
@@ -261,8 +303,17 @@ fn dispatch(session: &mut Session, command: &Command) -> Result<Output, EnvError
             raw_fts,
             kinds,
             states,
+            slot,
             limit,
-        } => search(session, query, *raw_fts, kinds, states, *limit),
+        } => search(
+            session,
+            query,
+            *raw_fts,
+            kinds,
+            states,
+            slot.as_deref(),
+            *limit,
+        ),
         Command::Import {
             path,
             namespace,
@@ -402,6 +453,15 @@ fn dispatch(session: &mut Session, command: &Command) -> Result<Output, EnvError
         Command::GitCommit { message } => crate::change::commit(session, message.as_deref()),
         Command::GitLog { reference } => crate::change::log(session, reference),
         Command::GitInstallHooks => crate::change::install_hooks(session),
+        Command::GitMerge {
+            branch,
+            no_ff,
+            no_commit,
+            message,
+        } => crate::change::merge_branch(session, branch, *no_ff, *no_commit, message.as_deref()),
+        Command::GitMergeDriver { .. } | Command::GitMergeRebuild { .. } => {
+            unreachable!("merge drivers are dispatched in run_standalone")
+        }
         Command::GitHook { name } => crate::change::git_hook(session, name),
         Command::SourceVerify => crate::source::verify(session),
         Command::SourceSupersede {
@@ -957,11 +1017,13 @@ fn scratch_keep(
     ))
 }
 
-fn check(
+pub(crate) fn check(
     session: &mut Session,
     scratch_clean: bool,
     review_clean: bool,
     views_current: bool,
+    limit: Option<usize>,
+    offset: usize,
 ) -> Result<Output, EnvError> {
     crate::secrets::ensure_untracked(session)?;
     session.attach_lock();
@@ -1093,11 +1155,11 @@ fn check(
 
     diagnostics.extend(view_diagnostics);
 
-    // V-105: a recorded command that names a test which no longer exists (AKR-G024).
-    // Warning only — see `akr_core::gate` for why this is decay rather than carelessness.
-    if let (Some(repository), Some(head)) =
-        (session.repository.as_ref(), session.inputs.commit.as_ref())
-    {
+    // V-105: a recorded command that names a test which no longer exists (AKR-G024) or
+    // whose exit status cannot be trusted (AKR-G025). Always run against HEAD
+    // (`session.commit`) even when `.akr/` has uncommitted edits so V-105 is never
+    // silently skipped mid-session.
+    if let (Some(repository), Some(head)) = (session.repository.as_ref(), session.commit.as_ref()) {
         let cache = akr_core::cache::FactCache::new(&session.akr_dir);
         match akr_core::gate::phantom_command_tokens(
             &session.ledger,
@@ -1143,6 +1205,7 @@ fn check(
     }
 
     diagnostics.sort_by_key(Diagnostic::sort_key);
+    let total_diagnostics = diagnostics.len();
     let fatal = diagnostics
         .iter()
         .filter(|d| is_fatal(d, session.global.profile))
@@ -1153,16 +1216,35 @@ fn check(
         Exit::Ok
     };
 
+    let paged: Vec<Diagnostic> = match limit {
+        Some(n) => diagnostics.iter().skip(offset).take(n).cloned().collect(),
+        None if offset > 0 => diagnostics.iter().skip(offset).cloned().collect(),
+        None => diagnostics.clone(),
+    };
+    let returned = paged.len();
+    let next_offset = offset.saturating_add(returned);
+    let has_more = next_offset < total_diagnostics;
+
     text.push('\n');
-    if diagnostics.is_empty() {
+    if total_diagnostics == 0 {
         text.push_str("no diagnostics\n");
     } else {
-        let (rendered, _) = report(&diagnostics, &session.sources, session.global.profile);
+        let (rendered, _) = report(&paged, &session.sources, session.global.profile);
         text.push_str(&rendered);
+        if limit.is_some() || offset > 0 {
+            text.push_str(&format!(
+                "showing {returned} of {total_diagnostics} diagnostic(s) (offset {offset}{})\n",
+                if has_more {
+                    format!(", next: --offset {next_offset}")
+                } else {
+                    String::new()
+                }
+            ));
+        }
     }
 
     let counts = counts_of(session, &model);
-    let result = Value::object(vec![
+    let mut result_fields = vec![
         ("records", Value::integer(counts.records as i64)),
         ("revisions", Value::integer(counts.revisions as i64)),
         ("files", Value::integer(counts.files as i64)),
@@ -1177,11 +1259,29 @@ fn check(
         ),
         ("stale", Value::integer(queue.stale.len() as i64)),
         ("at_risk", Value::integer(queue.at_risk.len() as i64)),
-    ]);
+    ];
+    if limit.is_some() || offset > 0 {
+        result_fields.push((
+            "diagnostics_total",
+            Value::integer(total_diagnostics as i64),
+        ));
+        result_fields.push(("diagnostics_returned", Value::integer(returned as i64)));
+        result_fields.push(("diagnostics_offset", Value::integer(offset as i64)));
+        result_fields.push(("has_more", Value::bool(has_more)));
+        result_fields.push((
+            "next_offset",
+            if has_more {
+                Value::integer(next_offset as i64)
+            } else {
+                Value::Null
+            },
+        ));
+    }
+    let result = Value::object(result_fields);
 
     Ok(Output::text(text)
         .with_result(result)
-        .with_diagnostics(diagnostics, exit))
+        .with_diagnostics(paged, exit))
 }
 
 struct Counts {
@@ -1419,7 +1519,7 @@ fn days_from_civil(date: Date) -> i64 {
 // build
 // -------------------------------------------------------------------------------------
 
-fn build(session: &mut Session, check: bool) -> Result<Output, EnvError> {
+pub(crate) fn build(session: &mut Session, check: bool) -> Result<Output, EnvError> {
     crate::secrets::ensure_untracked(session)?;
     session.attach_lock();
     let model = session.resolve();
@@ -3151,19 +3251,42 @@ fn search(
     raw_fts: bool,
     kinds: &[String],
     states: &[String],
+    slot: Option<&str>,
     limit: Option<usize>,
 ) -> Result<Output, EnvError> {
+    let effective_query = if !raw_fts && query.trim() == "*" {
+        ""
+    } else {
+        query
+    };
+    let fetch_limit = if slot.is_some() { Some(100) } else { limit };
     let request = akr_core::store::Request {
-        query: query.to_owned(),
+        query: effective_query.to_owned(),
         raw_fts,
         kinds: kinds.to_vec(),
         states: states.to_vec(),
-        limit,
+        limit: fetch_limit,
     };
     let path = akr_core::store::cache_path(&session.akr_dir);
     ensure_search_index(session, &path)?;
-    let hits = akr_core::store::search(&path, &request)
+    let mut hits = akr_core::store::search(&path, &request)
         .map_err(|error| EnvError::new(error.code.as_str(), error.message))?;
+    if let Some(slot_name) = slot {
+        let needle = effective_query.trim().to_ascii_lowercase();
+        let wanted_slot = akr_core::model::ContentSlot::from_name(slot_name);
+        hits.retain(|hit| {
+            let Ok(key) = akr_core::model::LogicalKey::parse(&hit.key) else {
+                return false;
+            };
+            let Some(record) = session.ledger.get(&RevisionId::new(key, hit.rev)) else {
+                return false;
+            };
+            slot_matches(record, slot_name, wanted_slot, &needle)
+        });
+        if let Some(max) = limit {
+            hits.truncate(max);
+        }
+    }
 
     // Columns are padded to the widest cell, as `docs/07-cli.md` §6 shows them. Results are
     // read down the page rather than across, and ragged columns make that work.
@@ -3243,6 +3366,7 @@ fn start(
             false,
             &["milestone".into(), "work".into(), "track".into()],
             &[],
+            None,
             None,
         )?
     };
@@ -3714,11 +3838,69 @@ fn search(
     .help("use `akr get` for a known key, or `akr context` for a whole bundle"))
 }
 
+#[cfg(feature = "fts5")]
+fn slot_matches(
+    record: &akr_core::model::Record,
+    slot_name: &str,
+    content_slot: Option<akr_core::model::ContentSlot>,
+    needle: &str,
+) -> bool {
+    let contains = |text: &str| {
+        if needle.is_empty() {
+            return !text.trim().is_empty();
+        }
+        let lower = text.to_ascii_lowercase();
+        needle.split_whitespace().any(|word| lower.contains(word))
+    };
+    if let Some(slot) = content_slot {
+        return match record.get(slot) {
+            Some(
+                akr_core::model::ContentValue::Prose(t) | akr_core::model::ContentValue::Text(t),
+            ) => contains(t),
+            Some(akr_core::model::ContentValue::Strings(items)) => {
+                items.iter().any(|s| contains(s))
+            }
+            Some(akr_core::model::ContentValue::Globs(items)) => {
+                items.iter().any(|g| contains(g.as_str()))
+            }
+            Some(akr_core::model::ContentValue::Refs(items)) => {
+                items.iter().any(|r| contains(&r.to_string()))
+            }
+            Some(akr_core::model::ContentValue::Commit(c)) => contains(c.as_str()),
+            Some(akr_core::model::ContentValue::Date(d)) => contains(&d.to_string()),
+            Some(akr_core::model::ContentValue::Enum(e)) => contains(e.as_str()),
+            None => false,
+        };
+    }
+    match slot_name {
+        "title" => contains(&record.title),
+        "topic" => record.topic.as_ref().is_some_and(|t| contains(t.as_str())),
+        "scope" => record
+            .scope
+            .iter()
+            .any(|term| contains(&format!("{term:?}"))),
+        "acceptance" => record.acceptance.as_ref().is_some_and(|a| {
+            a.checks.iter().any(|c| {
+                contains(c.id.as_str())
+                    || contains(&c.statement)
+                    || c.command.as_deref().is_some_and(contains)
+            })
+        }),
+        "claims" | "claim" => record
+            .claims
+            .iter()
+            .any(|c| contains(c.anchor.as_str()) || contains(&c.text)),
+        other => akr_core::model::Relation::from_name(other)
+            .is_some_and(|rel| record.targets(rel).iter().any(|r| contains(&r.to_string()))),
+    }
+}
+
 fn context(
     session: &Session,
     goal: &str,
     paths: &[akr_core::model::Glob],
     budget: Option<usize>,
+    section: Option<&str>,
 ) -> Result<Output, EnvError> {
     if session.ledger.records().is_empty() {
         return Err(EnvError::new(
@@ -3727,6 +3909,22 @@ fn context(
         )
         .help("create the first planning record with `knowledge.propose`, then use its key as the context goal"));
     }
+    let section_filter = match section {
+        Some(name) => Some(akr_core::context::Section::from_id(name).ok_or_else(|| {
+            EnvError::new(
+                "AKR-C004",
+                format!(
+                    "--section: {name:?} is not a context section; valid sections are {}",
+                    akr_core::context::Section::ALL
+                        .iter()
+                        .map(|s| s.id())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            )
+        })?),
+        None => None,
+    };
     let model = session.resolve();
     let queue = session.review_queue();
     let freshness = session.freshness(&queue);
@@ -3734,6 +3932,7 @@ fn context(
     let mut request = Request::new(goal);
     request.paths = paths.to_vec();
     request.budget = budget;
+    request.section = section_filter;
 
     let bundle = assemble(&model, &freshness, &request).map_err(|error| {
         let code = match &error {
@@ -3828,15 +4027,20 @@ fn with_budget_accounting(
             ),
         ));
     }
-    if delivered > requested {
+    if delivered > requested || bundle.budget_exceeded {
+        accounting.push(("budget_exceeded", Value::bool(true)));
+        if let Some(req) = bundle.required_tokens {
+            accounting.push((
+                "required_tokens",
+                Value::integer(i64::try_from(req).unwrap_or(i64::MAX)),
+            ));
+        }
         accounting.push((
             "note",
             Value::string(
-                "the bundle's mandatory content — the goal, the plan of record, acceptance \
-                 verdicts, contradictions, staleness and the key of every selected record — \
-                 is never reduced (V-123), so it does not fit the requested budget. Narrow \
-                 `paths` to the files this work touches; lowering the budget cannot reduce \
-                 it further.",
+                "the bundle's mandatory content — the goal, its immediate parent milestone/track, \
+                 the goal's own acceptance verdicts, and contradictions — exceeds the requested \
+                 budget. Raise `budget_tokens` or request one section via `section` / `--section`.",
             ),
         ));
     }
@@ -3882,6 +4086,15 @@ fn explain(subject: &str) -> Output {
             ]),
         );
     }
+    if subject.eq_ignore_ascii_case("claim") || subject.eq_ignore_ascii_case("claims") {
+        return Output::plain(
+            "claim — addressable normative statements inside a record (D-011)\n\nclaim stable-anchor {\n    text \"\"\"\n        One self-contained normative statement that other records can cite.\n    \"\"\"\n    supported_by [ @project.obs.measurement/1 ]\n}\n\nretired_claims [ old-anchor ]\n\nAnchors are lowercase segments (letters, digits, hyphens) cited as @key#anchor or @key/rev#anchor.\nRetiring a claim removes its block and records its anchor in retired_claims so historical citations stay explicable.\nReference: docs/02-data-model.md, docs/DECISIONS.md (D-011).\n",
+            Value::object(vec![
+                ("subject", Value::string("claim")),
+                ("decision", Value::string("D-011")),
+            ]),
+        );
+    }
     if subject.eq_ignore_ascii_case("acceptance") {
         return Output::plain(
             "acceptance — checks on milestone/work records\n\nacceptance {\n    check smoke {\n        statement \"The command passes on the implementation.\"\n        method command\n        command \"cargo test -p my-crate smoke\"\n        verified_by [ @project.evidence.smoke/1 ]\n    }\n}\n\nMethods: manual, command, observation. A command check requires command.\nverified_by cites passing evidence; evidence describes observations, not what it verifies.\ncomplete --check smoke=@project.evidence.smoke/1 can attach evidence at completion.\nA revise acceptance overlay replaces the entire check set; include all checks to retain.\nReference: docs/02-data-model.md, docs/07-cli.md.\n",
@@ -3900,10 +4113,14 @@ fn explain(subject: &str) -> Output {
         );
     }
     let wanted = subject.to_uppercase();
+    let code_cell = format!("`{wanted}`");
     for registry in [CODES_LANG, CODES_RUNTIME] {
         for line in registry.lines() {
-            if line.starts_with('|') && line.contains(&format!("`{wanted}`")) {
+            if line.starts_with('|') {
                 let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+                if cells.get(1) != Some(&code_cell.as_str()) {
+                    continue;
+                }
                 let mut text = format!("{wanted}\n");
                 for (label, cell) in ["title", "severity", "rule", "message", "cause"]
                     .iter()

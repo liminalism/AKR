@@ -237,11 +237,18 @@ impl Ctx {
                         record.content.insert(content, value);
                     }
                 } else {
-                    self.error(
+                    let legal = kind
+                        .content_slots()
+                        .iter()
+                        .map(|spec| format!("{} ({})", spec.slot, spec.slot.value_type()))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    self.error_with_help(
                         c::T002,
                         slot.name_span,
                         format!("{kind} has no slot `{name}`"),
                         None,
+                        format!("valid {kind} slots: {legal}"),
                     );
                 }
             }

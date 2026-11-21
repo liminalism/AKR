@@ -62,14 +62,15 @@ finished work. Everything in it is there because something connects it to the go
 ## 3. Request
 
 ```
-akr context --goal <key> [--paths <glob> ...] [--budget <tokens>] [--format text|json]
+akr context --goal <key> [--paths <glob> ...] [--budget <tokens>] [--section <name>] [--format text|json]
 ```
 
 | Parameter | Required | Meaning |
 | --- | --- | --- |
 | `--goal` | yes | The anchor. Bare keys, `@key`, and a pin to the current head are accepted. Historical pins (`AKR-X004`), anchors (`AKR-X005`), terminal records (`AKR-X002`), and non-planning kinds (`AKR-X003`) remain retrieval-only and return a ready-made next command. |
 | `--paths` | no | Repeatable. Repo-root-relative globs, D-008 subset. Malformed is `AKR-X011`; matching nothing at HEAD is `AKR-X012` (warning). These are the files the caller expects to touch. |
-| `--budget` | no | Approximate token budget. §6. Too small is `AKR-X021`. |
+| `--budget` | no | Approximate token budget. §6. Too small delivers the minimum, flagged `budget_exceeded` (D-051). |
+| `--section` | no | Render and budget one section only, by name (`goal`, `milestone`, `work-items`, `plan-of-record`, `normative`, `dependencies`, `acceptance`, `observations`, `questions`, `contradictions`, `staleness`). |
 | `--format` | no | `text` (default) or `json`. Anything else is `AKR-X041`. |
 
 The goal must be a planning record because a bundle is organised around *intent*. Asking
@@ -358,27 +359,34 @@ with `akr get` / `knowledge.get`. The result reports `budget.requested_tokens` a
 `budget.delivered_tokens`, and when anything was reduced, `budget.withheld_records`,
 `budget.truncated_records` and `budget.continue`, which says how to get the rest.
 
+Since 0.8 (D-051) the sequence opens with one more step: at-risk staleness entries at
+depth two or more collapse into a single summary line (`omitted_deeper_staleness`), keeping
+the depth-1 entries. After dependencies, the acceptance checks of records other than the
+goal are withheld (`withheld_acceptance`), and the plan of record and ancestors above the
+immediate milestone become reducible like work items.
+
 **What never reduces (V-123):**
 
 - The goal, in full. Its body is the intent the whole bundle serves; the JSON form carries
   it as `goal.body`.
-- The containing milestone, the plan of record, and its `disposition` blocks.
+- The goal's immediate containing milestone or track (depth 1).
 - Any relation of a record that is shown. Every edge shown is shown in full, with its
   target key and revision. A truncated relation set is a lie about the graph; a withheld
   record, named as withheld, is not.
-- Any acceptance check, or any check's verdict.
+- The goal's own acceptance checks and their verdicts.
 - Any contradiction.
-- Any staleness or at-risk warning, including one about a withheld record.
-- The key and revision of every selected record, shown or withheld.
+- The key and revision of every selected record, shown or withheld, and the count of every
+  collapsed or withheld entry.
 
-If the goal, milestone, plan, acceptance and contradictions alone exceed the budget, the
-command fails with `AKR-X021`. When everything reducible has been reduced and the bundle
-is still over — a large staleness section, say — it is delivered anyway and
-`budget.note` says so: the fix is a narrower `--paths`. Truncation that did occur is
+If that minimum alone exceeds the budget, it is delivered anyway with `budget_exceeded:
+true` and `required_tokens`, so the first call tells the caller the floor (D-051; this was
+`AKR-X021`, a refusal, until 0.8). When everything reducible has been reduced and the
+bundle is still over — a large staleness section, say — it is delivered the same way: the
+fix is a narrower `--paths`. Truncation that did occur is
 reported as `AKR-X022` (a warning) and listed in `truncated_prose`.
 
 Every reduction point is deterministic — a fixed sequence over the sections' own sort
-orders, not a model. Ranking sections by relevance is future work; summarising a record to
+orders, not a model. Ranking sections by relevance beyond that fixed order is future work; summarising a record to
 fit is a job for the *consumer* of the bundle, above the LLM boundary (D-020).
 
 ## 7. Bundle format
@@ -485,7 +493,7 @@ The exclusion summary for this request:
 | --- | --- | --- |
 | **V-121** | Every `contradicts` edge with an endpoint among the selected records appears in the contradictions section, including when an endpoint is terminal or archived, and including when `acknowledged true`. | `AKR-X051` |
 | **V-122** | No non-head revision, terminal record, or archived record appears in a bundle outside the contradictions section. | `AKR-X052` |
-| **V-123** | Budgeting truncates prose and withholds whole records by name, never anything else. The goal, the plan of record, the relations of every record shown, acceptance verdicts, contradictions, staleness warnings, and the key and revision of every selected record are never reduced; if the goal, plan, acceptance and contradictions alone exceed the budget, the request fails. | `AKR-X021`, `AKR-X022` |
+| **V-123** | Budgeting truncates prose, collapses distant staleness to a count, and withholds whole records by name, never anything else. The goal, its immediate milestone, the relations of every record shown, the goal's own acceptance verdicts, contradictions, and the key and revision of every selected record are never reduced; if those alone exceed the budget, they are delivered flagged `budget_exceeded` (D-051). | `AKR-X022` |
 
 V-121 and V-122 are internal invariants: they fire only on a defect in the assembler, not
 on anything a ledger author can write. They are stated as rules, and checked, because

@@ -52,6 +52,12 @@ fn missing_commit(session: &Session, suggest_flag: bool) -> EnvError {
             "an empirical record is anchored to a commit and this repository has none; \
              `git commit --allow-empty -m root` makes one, then retry",
         )
+    } else if let Some(reason) = &session.git_unavailable {
+        EnvError::new(
+            "AKR-G002",
+            format!("no commit to record: git could not be used: {reason}"),
+        )
+        .help(hint)
     } else {
         EnvError::new(
             "AKR-G001",
@@ -205,7 +211,8 @@ pub fn run(session: &Session, command: &Command) -> Result<Output, EnvError> {
             key,
             checks,
             passes,
-        } => complete(session, &context, key, checks, passes),
+            partial,
+        } => complete(session, &context, key, checks, passes, *partial),
         Command::Trace { key, entries } => trace(session, &context, key, entries),
         Command::Abandon {
             key,
@@ -671,6 +678,7 @@ fn complete(
     key: &str,
     checks: &[String],
     passes: &[String],
+    partial: bool,
 ) -> Result<Output, EnvError> {
     let key = parse_key(key)?;
     let checks = parse_checks(checks)?;
@@ -679,7 +687,7 @@ fn complete(
     ensure_commits_exist(session, &commits)?;
     render(
         session,
-        akr_core::ops::complete_with(context, &key, &checks, &passes),
+        akr_core::ops::complete_with_options(context, &key, &checks, &passes, partial),
     )
 }
 
@@ -922,23 +930,39 @@ pub fn propose_many(
         note_unmatched_watches(session, &mut result, &record.id.key, Some(record));
     }
     render(session, result).map(|mut output| {
-        output
-            .text
-            .push_str(&format!("{count} records written in one pass\n"));
+        if output.exit == Exit::Ok {
+            output
+                .text
+                .push_str(&format!("{count} records written in one pass\n"));
+        }
         output
     })
 }
 
 /// Reads a file of arbitrary records for `akr propose-many --from`.
 ///
+/// Accepts both AKR record syntax (`record <key>/1 : <kind> { ... }`) and the MCP JSON
+/// payload shape (a JSON array of record objects, or `{"records": [...]}`).
+///
 /// # Errors
 /// [`EnvError`] when the file cannot be read, does not parse, or holds no records.
 pub fn propose_records_from_file(session: &Session, path: &Path) -> Result<Vec<Record>, EnvError> {
-    records_from_file(
+    let resolved = resolve_in_session(session, path);
+    let raw = read_input_text(&resolved)?;
+    let looks_json = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+        || matches!(raw.trim_start().as_bytes().first(), Some(b'{' | b'['));
+    if looks_json {
+        return json_records_from_text(session, path, &raw);
+    }
+    records_from_text(
         session,
         path,
+        &raw,
         "records",
-        "the file holds one or more `record <key>/1 : <kind> { ... }` blocks",
+        "the file holds one or more `record <key>/1 : <kind> { ... }` blocks (or a JSON array / `{\"records\": [...]}`)",
     )
 }
 
@@ -977,9 +1001,11 @@ pub fn evidence_add_many(
     ensure_commits_exist(session, &commits)?;
     let count = records.len();
     render(session, akr_core::ops::propose_many(context, records)).map(|mut output| {
-        output
-            .text
-            .push_str(&format!("{count} evidence records written in one pass\n"));
+        if output.exit == Exit::Ok {
+            output
+                .text
+                .push_str(&format!("{count} evidence records written in one pass\n"));
+        }
         output
     })
 }
@@ -1024,6 +1050,21 @@ fn resolve_in_session(session: &Session, path: &Path) -> std::path::PathBuf {
     }
 }
 
+/// Reads a user-supplied `--from` input file, stripping any leading UTF-8 BOM and
+/// normalising Windows CRLF line endings to LF so overlay files authored in Windows
+/// editors or PowerShell do not trip `AKR-P003`. Committed `.akr` files in the ledger
+/// continue to enforce LF strictly in the lexer.
+fn read_input_text(resolved: &Path) -> Result<String, EnvError> {
+    let raw = std::fs::read_to_string(resolved).map_err(|e| {
+        EnvError::new(
+            "AKR-C042",
+            format!("cannot read {}: {e}", resolved.display()),
+        )
+    })?;
+    let stripped = raw.strip_prefix('\u{feff}').unwrap_or(&raw);
+    Ok(stripped.replace("\r\n", "\n").replace('\r', "\n"))
+}
+
 fn records_from_file(
     session: &Session,
     path: &Path,
@@ -1031,13 +1072,18 @@ fn records_from_file(
     help: &str,
 ) -> Result<Vec<Record>, EnvError> {
     let resolved = resolve_in_session(session, path);
-    let text = std::fs::read_to_string(&resolved).map_err(|e| {
-        EnvError::new(
-            "AKR-C042",
-            format!("cannot read {}: {e}", resolved.display()),
-        )
-    })?;
-    let text = with_header(&text, session);
+    let raw = read_input_text(&resolved)?;
+    records_from_text(session, path, &raw, expected, help)
+}
+
+fn records_from_text(
+    session: &Session,
+    path: &Path,
+    raw: &str,
+    expected: &str,
+    help: &str,
+) -> Result<Vec<Record>, EnvError> {
+    let text = with_header(raw, session);
 
     let mut sources = akr_core::diagnostics::SourceMap::new();
     let display_path = path.to_string_lossy().into_owned();
@@ -1075,6 +1121,323 @@ fn records_from_file(
         ));
     }
     Ok(records)
+}
+
+/// Converts a JSON batch (`[ { ... } ]` or `{"records": [ { ... } ]}`) into `Record`s
+/// by rendering each object into canonical AKR syntax and running it through the parser.
+fn json_records_from_text(
+    session: &Session,
+    path: &Path,
+    raw: &str,
+) -> Result<Vec<Record>, EnvError> {
+    let value = akr_core::json::parse(raw).map_err(|e| {
+        EnvError::new(
+            "AKR-C031",
+            format!("{} is not valid JSON: {e}", path.display()),
+        )
+    })?;
+    let items = match &value {
+        Value::Array(items) => items.as_slice(),
+        Value::Object(_) => value
+            .get("records")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                EnvError::new(
+                    "AKR-C031",
+                    format!(
+                        "{}: JSON object must hold a `records` array (or pass a top-level array)",
+                        path.display()
+                    ),
+                )
+            })?,
+        _ => {
+            return Err(EnvError::new(
+                "AKR-C031",
+                format!(
+                    "{}: expected a JSON array of records or `{{\"records\": [...]}}`",
+                    path.display()
+                ),
+            ));
+        }
+    };
+    if items.is_empty() {
+        return Err(EnvError::new(
+            "AKR-C031",
+            format!("{} holds no records", path.display()),
+        ));
+    }
+
+    let mut combined = format!(
+        "akr {}\nproject {}\n\n",
+        crate::session::GRAMMAR_VERSION,
+        session.ledger.project.name
+    );
+    for (idx, item) in items.iter().enumerate() {
+        combined.push_str(&json_record_to_akr(item, idx)?);
+        combined.push('\n');
+    }
+    records_from_text(
+        session,
+        path,
+        &combined,
+        "records",
+        "check each JSON record's `key`, `kind`, `title`, `slots`, `scope`, and `relations` fields",
+    )
+}
+
+fn json_record_to_akr(item: &Value, index: usize) -> Result<String, EnvError> {
+    let key_str = item.get("key").and_then(Value::as_str).ok_or_else(|| {
+        EnvError::new(
+            "AKR-C031",
+            format!("record[{index}] is missing string `key`"),
+        )
+    })?;
+    let kind_str = item.get("kind").and_then(Value::as_str).ok_or_else(|| {
+        EnvError::new(
+            "AKR-C031",
+            format!("record[{index}] ({key_str}) is missing string `kind`"),
+        )
+    })?;
+    let kind = Kind::from_name(kind_str).ok_or_else(|| {
+        EnvError::new(
+            "AKR-C004",
+            format!("record[{index}] ({key_str}): `{kind_str}` is not a record kind"),
+        )
+    })?;
+    let title = item.get("title").and_then(Value::as_str).ok_or_else(|| {
+        EnvError::new(
+            "AKR-C031",
+            format!("record[{index}] ({key_str}) is missing string `title`"),
+        )
+    })?;
+    let state = item
+        .get("state")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| kind.class().initial()[0].name());
+
+    let mut out = format!("record {key_str}/1 : {} {{\n", kind.name());
+    out.push_str(&format!(
+        "    title \"{}\"\n",
+        akr_core::syntax::cst::escape(title)
+    ));
+    out.push_str(&format!("    state {state}\n"));
+    if let Some(Value::Array(terms)) = item.get("scope") {
+        let mut rendered = Vec::new();
+        for term in terms {
+            if let Some(s) = term.as_str() {
+                if s == "all" {
+                    rendered.push("all".to_owned());
+                } else if let Some(rest) = s.strip_prefix("ref ") {
+                    rendered.push(format!("ref {rest}"));
+                } else if let Some(rest) = s.strip_prefix("path ") {
+                    let unquoted = rest.trim().trim_matches('"');
+                    rendered.push(format!(
+                        "path \"{}\"",
+                        akr_core::syntax::cst::escape(unquoted)
+                    ));
+                } else if s.starts_with('@') {
+                    rendered.push(format!("ref {s}"));
+                } else {
+                    rendered.push(format!("path \"{}\"", akr_core::syntax::cst::escape(s)));
+                }
+            }
+        }
+        if !rendered.is_empty() {
+            out.push_str(&format!("    scope [ {} ]\n", rendered.join(", ")));
+        }
+    }
+    if let Some(topic) = item.get("topic").and_then(Value::as_str) {
+        out.push_str(&format!("    topic {topic}\n"));
+    }
+    if let Some(Value::Object(slots)) = item.get("slots") {
+        for (name, val) in slots {
+            let Some(slot) = ContentSlot::from_name(name) else {
+                let legal = kind
+                    .content_slots()
+                    .iter()
+                    .map(|spec| format!("{} ({})", spec.slot, spec.slot.value_type()))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(EnvError::new(
+                    "AKR-T002",
+                    format!(
+                        "record[{index}] ({key_str}): {kind} has no slot `{name}` (valid {kind} slots: {legal})"
+                    ),
+                ));
+            };
+            match val {
+                Value::String(s) => match slot {
+                    ContentSlot::Intent
+                    | ContentSlot::Statement
+                    | ContentSlot::Rule
+                    | ContentSlot::Decision
+                    | ContentSlot::Definition
+                    | ContentSlot::Question
+                    | ContentSlot::Context
+                    | ContentSlot::Consequences
+                    | ContentSlot::Note => {
+                        out.push_str(&format!("    {name} \"\"\"\n"));
+                        for line in s.lines() {
+                            if line.is_empty() {
+                                out.push('\n');
+                            } else {
+                                out.push_str(&format!("        {line}\n"));
+                            }
+                        }
+                        out.push_str("        \"\"\"\n");
+                    }
+                    ContentSlot::ObservedAt => {
+                        let c = if s.starts_with("git:") {
+                            s.clone()
+                        } else {
+                            format!("git:{s}")
+                        };
+                        out.push_str(&format!("    {name} {c}\n"));
+                    }
+                    ContentSlot::ReviewAfter
+                    | ContentSlot::Target
+                    | ContentSlot::ClosedAt
+                    | ContentSlot::Method
+                    | ContentSlot::Result => {
+                        out.push_str(&format!("    {name} {s}\n"));
+                    }
+                    _ => {
+                        out.push_str(&format!(
+                            "    {name} \"{}\"\n",
+                            akr_core::syntax::cst::escape(s)
+                        ));
+                    }
+                },
+                Value::Array(arr) => {
+                    let parts: Vec<String> = arr
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(|s| {
+                            if slot == ContentSlot::Exceptions {
+                                if s.starts_with('@') {
+                                    s.to_owned()
+                                } else {
+                                    format!("@{s}")
+                                }
+                            } else {
+                                format!("\"{}\"", akr_core::syntax::cst::escape(s))
+                            }
+                        })
+                        .collect();
+                    out.push_str(&format!("    {name} [ {} ]\n", parts.join(", ")));
+                }
+                _ => {}
+            }
+        }
+    }
+    if let Some(Value::Object(rels)) = item.get("relations") {
+        for (name, val) in rels {
+            if let Value::Array(targets) = val {
+                let parts: Vec<String> = targets
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(|s| {
+                        if s.starts_with('@') {
+                            s.to_owned()
+                        } else {
+                            format!("@{s}")
+                        }
+                    })
+                    .collect();
+                if !parts.is_empty() {
+                    out.push_str(&format!("    {name} [ {} ]\n", parts.join(", ")));
+                }
+            }
+        }
+    }
+    if let Some(Value::Array(checks)) = item.get("acceptance")
+        && !checks.is_empty()
+    {
+        out.push_str("    acceptance {\n");
+        for check in checks {
+            let cid = check.get("id").and_then(Value::as_str).unwrap_or("check");
+            let stmt = check
+                .get("statement")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let method = check
+                .get("method")
+                .and_then(Value::as_str)
+                .unwrap_or("manual");
+            out.push_str(&format!("        check {cid} {{\n"));
+            out.push_str(&format!(
+                "            statement \"{}\"\n",
+                akr_core::syntax::cst::escape(stmt)
+            ));
+            out.push_str(&format!("            method {method}\n"));
+            if let Some(cmd) = check.get("command").and_then(Value::as_str) {
+                out.push_str(&format!(
+                    "            command \"{}\"\n",
+                    akr_core::syntax::cst::escape(cmd)
+                ));
+            }
+            if let Some(Value::Array(vrefs)) = check.get("verified_by")
+                && !vrefs.is_empty()
+            {
+                let parts: Vec<String> = vrefs
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(|s| {
+                        if s.starts_with('@') {
+                            s.to_owned()
+                        } else {
+                            format!("@{s}")
+                        }
+                    })
+                    .collect();
+                out.push_str(&format!(
+                    "            verified_by [ {} ]\n",
+                    parts.join(", ")
+                ));
+            }
+            out.push_str("        }\n");
+        }
+        out.push_str("    }\n");
+    }
+    if let Some(Value::Array(claims)) = item.get("claims") {
+        for claim in claims {
+            let anchor = claim
+                .get("anchor")
+                .and_then(Value::as_str)
+                .unwrap_or("claim");
+            let text = claim
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            out.push_str(&format!("    claim {anchor} {{\n"));
+            out.push_str(&format!(
+                "        text \"{}\"\n",
+                akr_core::syntax::cst::escape(text)
+            ));
+            if let Some(Value::Array(srefs)) = claim.get("supported_by")
+                && !srefs.is_empty()
+            {
+                let parts: Vec<String> = srefs
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(|s| {
+                        if s.starts_with('@') {
+                            s.to_owned()
+                        } else {
+                            format!("@{s}")
+                        }
+                    })
+                    .collect();
+                out.push_str(&format!("        supported_by [ {} ]\n", parts.join(", ")));
+            }
+            out.push_str("    }\n");
+        }
+    }
+    if item.get("acknowledged").and_then(Value::as_bool) == Some(true) {
+        out.push_str("    acknowledged true\n");
+    }
+    out.push_str("}\n");
+    Ok(out)
 }
 
 /// The `akr`/`project` header a bare fragment is missing, so a caller need not repeat it.
@@ -1549,12 +1912,7 @@ fn body_from(
         return Ok(None);
     };
     let resolved = resolve_in_session(session, path);
-    let text = std::fs::read_to_string(&resolved).map_err(|e| {
-        EnvError::new(
-            "AKR-C042",
-            format!("cannot read {}: {e}", resolved.display()),
-        )
-    })?;
+    let text = read_input_text(&resolved)?;
     // The command already knows the project, the key and the kind — it is being told them
     // on the command line — so demanding that the file repeat all three was ceremony that
     // sent people to `akr fmt` to find out what a file header looks like. A file that
@@ -1601,13 +1959,18 @@ fn body_from(
     {
         return Err(refuse(fatal.message.clone()));
     }
-    let record = ledger
+    let mut record = ledger
         .records()
         .iter()
         .find(|r| r.id.key == *key)
         .or_else(|| ledger.records().first())
         .cloned()
         .ok_or_else(|| EnvError::new("AKR-C031", format!("{} holds no record", path.display())))?;
+    // If the fragment omitted `state`, default to the kind's initial state so bare slot
+    // lists work while an explicit illegal `state` is left intact for V-007 (AKR-T011).
+    if !mentioned.contains("state") {
+        record.state = record.kind.class().initial()[0];
+    }
     Ok(Some(FromBody { record, mentioned }))
 }
 
@@ -1625,12 +1988,7 @@ fn kind_from_file(session: &Session, from: Option<&Path>) -> Result<Kind, EnvErr
             .help("or pass --from <file> with a record that declares one"));
     };
     let resolved = resolve_in_session(session, path);
-    let text = std::fs::read_to_string(&resolved).map_err(|e| {
-        EnvError::new(
-            "AKR-C042",
-            format!("cannot read {}: {e}", resolved.display()),
-        )
-    })?;
+    let text = read_input_text(&resolved)?;
     let first = text
         .lines()
         .map(str::trim)

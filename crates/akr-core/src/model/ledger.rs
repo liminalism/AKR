@@ -97,19 +97,49 @@ pub struct SealFact {
     pub computed: Option<ContentHash>,
 }
 
-/// Commit ancestry, as a child-to-parent map. Filled by P5 from git.
+/// Commit ancestry, as a child-to-parents DAG. Filled by P5 from git.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Ancestry {
-    parents: BTreeMap<Commit, Commit>,
+    parents: BTreeMap<Commit, Vec<Commit>>,
+    known: BTreeSet<Commit>,
 }
 
 impl Ancestry {
     /// Builds an ancestry from child-to-parent pairs.
     #[must_use]
     pub fn from_pairs(pairs: impl IntoIterator<Item = (Commit, Commit)>) -> Self {
-        Self {
-            parents: pairs.into_iter().collect(),
+        let mut parents: BTreeMap<Commit, Vec<Commit>> = BTreeMap::new();
+        let mut known = BTreeSet::new();
+        for (child, parent) in pairs {
+            known.insert(child.clone());
+            known.insert(parent.clone());
+            let entry = parents.entry(child).or_default();
+            if !entry.contains(&parent) {
+                entry.push(parent);
+            }
         }
+        Self { parents, known }
+    }
+
+    /// Builds a multi-parent commit DAG from `(commit, parents)` entries.
+    ///
+    /// Root commits with an empty parent list are still recorded as known so
+    /// containment checks (`knows`) recognise single-commit and merged histories.
+    #[must_use]
+    pub fn from_dag(entries: impl IntoIterator<Item = (Commit, Vec<Commit>)>) -> Self {
+        let mut parents: BTreeMap<Commit, Vec<Commit>> = BTreeMap::new();
+        let mut known = BTreeSet::new();
+        for (commit, commit_parents) in entries {
+            known.insert(commit.clone());
+            let entry = parents.entry(commit).or_default();
+            for parent in commit_parents {
+                known.insert(parent.clone());
+                if !entry.contains(&parent) {
+                    entry.push(parent);
+                }
+            }
+        }
+        Self { parents, known }
     }
 
     /// Whether `descendant` is `ancestor` or is reachable from it.
@@ -125,16 +155,20 @@ impl Ancestry {
         if !self.knows(descendant) || !self.knows(ancestor) {
             return None;
         }
-        let mut cursor = descendant;
-        let mut guard = 0usize;
-        while let Some(parent) = self.parents.get(cursor) {
-            if parent == ancestor {
-                return Some(true);
-            }
-            cursor = parent;
-            guard += 1;
-            if guard > self.parents.len() {
-                return Some(false);
+        let mut stack = vec![descendant];
+        let mut visited = BTreeSet::new();
+        visited.insert(descendant);
+        while let Some(cursor) = stack.pop() {
+            let Some(commit_parents) = self.parents.get(cursor) else {
+                continue;
+            };
+            for parent in commit_parents {
+                if parent == ancestor {
+                    return Some(true);
+                }
+                if visited.insert(parent) {
+                    stack.push(parent);
+                }
             }
         }
         Some(false)
@@ -147,7 +181,7 @@ impl Ancestry {
     /// descendant-commit comparison itself is waived.
     #[must_use]
     pub(crate) fn knows(&self, c: &Commit) -> bool {
-        self.parents.contains_key(c) || self.parents.values().any(|p| p == c)
+        self.known.contains(c)
     }
 
     /// Whether this ancestry carries no facts at all — P1's no-git case, or a build with
@@ -155,7 +189,7 @@ impl Ancestry {
     /// particular commit isn't one it knows".
     #[must_use]
     pub(crate) fn has_facts(&self) -> bool {
-        !self.parents.is_empty()
+        !self.known.is_empty()
     }
 }
 

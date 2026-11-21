@@ -47,6 +47,16 @@ pub(crate) const GITIGNORE_ENTRIES: &[&str] = &[
     ".akr/secrets/",
 ];
 
+/// Git attributes AKR scaffolds so `.akr` merges use the semantic merge driver, build
+/// outputs merge cleanly for rebuild, and registered `sources/` bytes stay untouched by
+/// line-ending conversion.
+pub(crate) const GITATTRIBUTES_ENTRIES: &[&str] = &[
+    ".akr/records/**/*.akr merge=akr",
+    ".akr/akr.lock merge=akr-rebuild",
+    "docs/generated/*.md merge=akr-rebuild",
+    "sources/** -text",
+];
+
 /// The entries `init` would write that `root`'s `.gitignore` does not have.
 ///
 /// This list is project setup AKR authors on the project's behalf, and it is written once
@@ -201,6 +211,28 @@ pub fn run_in(
         }
         write(&gitignore, &merged)?;
         created.push(format!(".gitignore ({} entries)", missing.len()));
+    }
+
+    let gitattributes = root.join(".gitattributes");
+    let existing_attrs = std::fs::read_to_string(&gitattributes).unwrap_or_default();
+    let missing_attrs: Vec<&str> = GITATTRIBUTES_ENTRIES
+        .iter()
+        .copied()
+        .filter(|entry| !existing_attrs.lines().any(|line| line.trim() == *entry))
+        .collect();
+    if !missing_attrs.is_empty() {
+        let mut merged = existing_attrs;
+        if !merged.is_empty() && !merged.ends_with('\n') {
+            merged.push('\n');
+        }
+        merged.push_str(
+            "\n# AKR: semantic record merge driver, rebuildable outputs, and immutable sources.\n",
+        );
+        for entry in &missing_attrs {
+            merged.push_str(&format!("{entry}\n"));
+        }
+        write(&gitattributes, &merged)?;
+        created.push(format!(".gitattributes ({} entries)", missing_attrs.len()));
     }
 
     // D-049: the hooks that notice a commit made outside the change protocol. Absent

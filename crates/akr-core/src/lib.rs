@@ -44,6 +44,7 @@ pub mod import;
 pub mod ingest;
 pub mod json;
 pub mod lock;
+pub mod merge;
 pub mod model;
 pub mod ops;
 pub mod papercut;

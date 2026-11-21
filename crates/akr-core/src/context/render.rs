@@ -53,9 +53,13 @@ pub fn render_text(bundle: &Bundle, model: &ResolvedModel<'_>, freshness: &Fresh
         bundle.source_graph
     ));
 
-    for &section in Section::ALL {
+    let active_sections: Vec<Section> = match bundle.section_filter {
+        Some(only) => vec![only],
+        None => Section::ALL.to_vec(),
+    };
+    for section in &active_sections {
         out.push('\n');
-        out.push_str(&heading(section));
+        out.push_str(&heading(*section));
         out.push('\n');
         let body = match section {
             Section::Goal => render_goal(bundle, model, freshness),
@@ -63,7 +67,7 @@ pub fn render_text(bundle: &Bundle, model: &ResolvedModel<'_>, freshness: &Fresh
             Section::Acceptance => render_acceptance(bundle, model),
             Section::Contradictions => render_contradictions(bundle, model),
             Section::Staleness => render_staleness(bundle, freshness),
-            _ => render_records(bundle, model, freshness, section),
+            _ => render_records(bundle, model, freshness, *section),
         };
         if body.trim().is_empty() {
             out.push_str("(none)\n");
@@ -95,7 +99,7 @@ pub fn render_text(bundle: &Bundle, model: &ResolvedModel<'_>, freshness: &Fresh
     out.push_str(&format!(
         "{} records, {} sections, ~{} tokens. {}\n",
         bundle.len(),
-        Section::ALL.len(),
+        active_sections.len(),
         bundle.estimated_tokens,
         if bundle.truncated.is_empty() {
             "No prose truncated.".to_owned()
@@ -103,6 +107,19 @@ pub fn render_text(bundle: &Bundle, model: &ResolvedModel<'_>, freshness: &Fresh
             format!("Prose truncated in {} records.", bundle.truncated.len())
         }
     ));
+    if bundle.budget_exceeded {
+        let req = bundle.required_tokens.unwrap_or(bundle.estimated_tokens);
+        let asked = bundle.requested_budget.unwrap_or(0);
+        out.push_str(&wrap(
+            &format!(
+                "NOTE: mandatory bundle (~{req} tokens) exceeded requested budget ({asked} tokens); \
+                 delivered minimal mandatory sections. Raise --budget / budget_tokens or narrow \
+                 with --section / --paths."
+            ),
+            "",
+            0,
+        ));
+    }
     let withheld = bundle.withheld_count();
     if withheld > 0 || !bundle.truncated.is_empty() {
         out.push_str(&wrap(
@@ -119,24 +136,52 @@ pub fn render_text(bundle: &Bundle, model: &ResolvedModel<'_>, freshness: &Fresh
     out
 }
 
-/// What no budget reduces, rendered: the goal, the milestone, the plan of record,
-/// acceptance and contradictions. The budget's floor is measured on this.
+/// What no budget reduces, rendered: the goal, its immediate parent milestone/track
+/// (depth <= 1), the goal's own acceptance verdicts, and contradictions.
 pub(super) fn mandatory_text(
     bundle: &Bundle,
     model: &ResolvedModel<'_>,
     freshness: &Freshness,
 ) -> String {
+    if let Some(only) = bundle.section_filter {
+        return match only {
+            Section::Goal => render_goal(bundle, model, freshness),
+            Section::Milestone => render_immediate_milestone(bundle, model),
+            Section::Acceptance => render_goal_acceptance(bundle, model),
+            Section::Contradictions => render_contradictions(bundle, model),
+            _ => String::new(),
+        };
+    }
     let mut out = render_goal(bundle, model, freshness);
-    out.push_str(&render_milestone(bundle, model));
-    out.push_str(&render_records(
-        bundle,
-        model,
-        freshness,
-        Section::PlanOfRecord,
-    ));
-    out.push_str(&render_acceptance(bundle, model));
+    out.push_str(&render_immediate_milestone(bundle, model));
+    out.push_str(&render_goal_acceptance(bundle, model));
     out.push_str(&render_contradictions(bundle, model));
     out
+}
+
+fn render_immediate_milestone(bundle: &Bundle, model: &ResolvedModel<'_>) -> String {
+    let mut out = String::new();
+    for entry in bundle.section(Section::Milestone) {
+        let Entry::Record { id, depth, .. } = entry;
+        if *depth > 1 {
+            continue;
+        }
+        let Some(record) = model.ledger().get(id) else {
+            continue;
+        };
+        out.push_str(&format!("\n{}\n", header_line(record, None, None)));
+        if let Some(body) = body_of(record) {
+            out.push_str(&indent(body, 2));
+        }
+    }
+    out
+}
+
+fn render_goal_acceptance(bundle: &Bundle, model: &ResolvedModel<'_>) -> String {
+    let mut goal_only = bundle.clone();
+    goal_only.acceptance.retain(|v| v.owner == bundle.goal);
+    goal_only.withheld_acceptance = 0;
+    render_acceptance(&goal_only, model)
 }
 
 /// The records a section's budget withheld, by key, and how to read them.
@@ -647,6 +692,13 @@ fn render_acceptance(bundle: &Bundle, model: &ResolvedModel<'_>) -> String {
         }
         out.push_str(&format!("      {}\n", verdict_text(&verdict.verdict)));
     }
+    if bundle.withheld_acceptance > 0 {
+        out.push_str(&format!(
+            "\n  WITHHELD ({}) non-goal acceptance check(s) to fit the budget; `akr get <key>` \
+             or `--section acceptance` reads them in full.\n",
+            bundle.withheld_acceptance
+        ));
+    }
     out
 }
 
@@ -769,8 +821,14 @@ fn render_staleness(bundle: &Bundle, freshness: &Freshness) -> String {
             }
         }
     }
-    if at_risk.is_empty() {
+    if at_risk.is_empty() && bundle.omitted_deeper_staleness == 0 {
         out.push_str("  (none)\n");
+    }
+    if bundle.omitted_deeper_staleness > 0 {
+        out.push_str(&format!(
+            "  +{} deeper at-risk record(s) (depth 2\u{2013}{}); run `akr review-queue` for full list\n",
+            bundle.omitted_deeper_staleness, bundle.omitted_max_staleness_depth
+        ));
     }
     out.push_str(
         "\n  These are warnings, not diagnostics. No record above has been changed and\n  \
@@ -823,7 +881,11 @@ pub fn render_json(bundle: &Bundle, model: &ResolvedModel<'_>) -> crate::json::V
         .get(&bundle.goal)
         .map_or_else(String::new, |r| r.title.clone());
 
-    let sections: Vec<Value> = Section::ALL
+    let active_sections: Vec<Section> = match bundle.section_filter {
+        Some(only) => vec![only],
+        None => Section::ALL.to_vec(),
+    };
+    let sections: Vec<Value> = active_sections
         .iter()
         .map(|section| {
             let records: Vec<Value> = bundle
@@ -885,7 +947,7 @@ pub fn render_json(bundle: &Bundle, model: &ResolvedModel<'_>) -> crate::json::V
         })
         .collect();
 
-    Value::object(vec![
+    let mut top_fields = vec![
         (
             "goal",
             Value::object(vec![
@@ -979,5 +1041,24 @@ pub fn render_json(bundle: &Bundle, model: &ResolvedModel<'_>) -> crate::json::V
             "estimated_tokens",
             Value::integer(bundle.estimated_tokens as i64),
         ),
-    ])
+    ];
+    if bundle.budget_exceeded {
+        top_fields.push(("budget_exceeded", Value::bool(true)));
+        if let Some(req) = bundle.required_tokens {
+            top_fields.push(("required_tokens", Value::integer(req as i64)));
+        }
+    }
+    if bundle.withheld_acceptance > 0 {
+        top_fields.push((
+            "withheld_acceptance",
+            Value::integer(bundle.withheld_acceptance as i64),
+        ));
+    }
+    if bundle.omitted_deeper_staleness > 0 {
+        top_fields.push((
+            "omitted_deeper_staleness",
+            Value::integer(bundle.omitted_deeper_staleness as i64),
+        ));
+    }
+    Value::object(top_fields)
 }

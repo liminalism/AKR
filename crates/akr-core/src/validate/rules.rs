@@ -1220,7 +1220,10 @@ pub fn v017_disposition_complete(ledger: &Ledger) -> Vec<Diagnostic> {
                 }
                 out.push(diagnostic);
             }
-            let child_keys: BTreeSet<&LogicalKey> = children.iter().map(|c| &c.id.key).collect();
+            let child_keys: BTreeSet<&LogicalKey> = all_children_of(ledger, &superseded.id)
+                .into_iter()
+                .map(|c| &c.id.key)
+                .collect();
             for disposition in &record.dispositions {
                 if !child_keys.contains(&disposition.target.key) {
                     out.push(Diagnostic::error(
@@ -1250,6 +1253,24 @@ fn children_of<'a>(ledger: &'a Ledger, parent: &RevisionId) -> Vec<&'a Record> {
                     t.key == parent.key
                         && t.revision
                             .is_some_and(|revision| revision == parent.revision)
+                })
+        })
+        .collect()
+}
+
+/// Any planning revision (live or terminal) whose `part_of` named `parent` (pinned to its
+/// revision or floating to its key). Used by `AKR-R016` so that completing, abandoning, or
+/// re-parenting a dispositioned child never invalidates the historical disposition block
+/// on the superseding parent.
+fn all_children_of<'a>(ledger: &'a Ledger, parent: &RevisionId) -> Vec<&'a Record> {
+    ordered(ledger)
+        .into_iter()
+        .filter(|candidate| {
+            candidate.kind.class() == Class::Planning
+                && candidate.targets(Relation::PartOf).iter().any(|t| {
+                    t.key == parent.key
+                        && t.revision
+                            .is_none_or(|revision| revision == parent.revision)
                 })
         })
         .collect()

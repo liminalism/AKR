@@ -1951,3 +1951,288 @@ fn a_definition_introduced_on_a_merged_branch_is_not_read_as_uncommitted() {
     assert!(!merged.contains("uncommitted"), "{merged}");
     assert_eq!(merged, on_branch);
 }
+
+#[test]
+fn divergent_branches_completing_work_in_the_same_file_merge_and_validate_cleanly() {
+    let example = Example::materialise("write-dag-merge-v020");
+    let commit_at = |message: &str, date: &str| {
+        let _ = std::fs::remove_file(example.root().join("w.akr"));
+        example.git(&["add", "-A"]);
+        let status = std::process::Command::new("git")
+            .args(["commit", "--quiet", "--no-verify", "-m", message])
+            .env("GIT_AUTHOR_DATE", date)
+            .env("GIT_COMMITTER_DATE", date)
+            .current_dir(example.root())
+            .status()
+            .expect("git runs");
+        assert!(status.success(), "commit {message}");
+    };
+    example.write_file(".gitignore", ".akr/cache/\n");
+    example.git(&[
+        "rm",
+        "-r",
+        "--cached",
+        "--quiet",
+        "--ignore-unmatch",
+        ".akr/cache",
+    ]);
+    commit_at("ignore cache", "2029-12-30T00:00:00Z");
+
+    // Branch A (side): propose and complete a work item with --pass, and also revise an
+    // existing work item to test concurrent same-key revision auto-renumbering.
+    example.git(&["checkout", "--quiet", "-b", "side"]);
+    example.write_file(
+        "w.akr",
+        "state active\nintent \"Colony ship lane.\"\nacceptance {\n    check smoke {\n        statement \"Smoke passes.\"\n        method command\n        command \"cargo test\"\n    }\n}\n",
+    );
+    assert_eq!(
+        example
+            .run(&[
+                "propose",
+                "sys.work.colony-ship",
+                "--kind",
+                "work",
+                "--title",
+                "Colony ship",
+                "--from",
+                "w.akr",
+            ])
+            .code,
+        0
+    );
+    commit_at("propose colony ship", "2030-01-01T00:00:00Z");
+    assert_eq!(
+        example
+            .run(&["complete", "sys.work.colony-ship", "--pass", "smoke"])
+            .code,
+        0
+    );
+    commit_at("complete colony ship", "2030-01-02T00:00:00Z");
+
+    // Branch B (main): propose and complete a different work item in the SAME `.akr` file
+    // (`records/sys/planning.akr`).
+    example.git(&["checkout", "--quiet", "main"]);
+    example.write_file(
+        "w.akr",
+        "state active\nintent \"Regional SAR lane.\"\nacceptance {\n    check smoke {\n        statement \"SAR passes.\"\n        method command\n        command \"cargo test\"\n    }\n}\n",
+    );
+    assert_eq!(
+        example
+            .run(&[
+                "propose",
+                "sys.work.regional-sar",
+                "--kind",
+                "work",
+                "--title",
+                "Regional SAR",
+                "--from",
+                "w.akr",
+            ])
+            .code,
+        0
+    );
+    commit_at("propose regional sar", "2030-01-03T00:00:00Z");
+    assert_eq!(
+        example
+            .run(&["complete", "sys.work.regional-sar", "--pass", "smoke"])
+            .code,
+        0
+    );
+    commit_at("complete regional sar", "2030-01-04T00:00:00Z");
+
+    // Merge the two `.akr` file versions via `akr git merge-driver` and commit the merge.
+    let git_out = |args: &[&str]| -> String {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(example.root())
+            .output()
+            .expect("git output");
+        assert!(
+            out.status.success(),
+            "{:?}: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).expect("utf8")
+    };
+    let base_rev = git_out(&["merge-base", "main", "side"]);
+    let base_akr = git_out(&[
+        "show",
+        &format!("{}:.akr/records/sys/work.akr", base_rev.trim()),
+    ]);
+    let their_akr = git_out(&["show", "side:.akr/records/sys/work.akr"]);
+    example.write_file("base.tmp", &base_akr);
+    example.write_file("theirs.tmp", &their_akr);
+    let drv = example.run(&[
+        "git",
+        "merge-driver",
+        "base.tmp",
+        ".akr/records/sys/work.akr",
+        "theirs.tmp",
+        "--path",
+        ".akr/records/sys/work.akr",
+    ]);
+    assert_eq!(drv.code, 0, "{}", drv.output());
+    let _ = std::fs::remove_file(example.root().join("base.tmp"));
+    let _ = std::fs::remove_file(example.root().join("theirs.tmp"));
+
+    // Create the real two-parent git merge commit.
+    let merged_planning =
+        std::fs::read_to_string(example.root().join(".akr/records/sys/work.akr")).unwrap();
+    let _ = std::process::Command::new("git")
+        .args(["merge", "--no-commit", "--no-ff", "side"])
+        .current_dir(example.root())
+        .output();
+    example.write_file(".akr/records/sys/work.akr", &merged_planning);
+    assert_eq!(example.run(&["build"]).code, 0);
+    commit_at("merge side into main", "2030-01-05T00:00:00Z");
+
+    // Both completed work records from both branches must satisfy V-020 (no AKR-R022 or
+    // AKR-G011), and both `passed_at` checks must report satisfied.
+    let colony = example.run(&["get", "@sys.work.colony-ship"]);
+    assert_eq!(colony.code, 0, "{}", colony.output());
+    assert!(
+        colony.stdout.contains("satisfied — passed at"),
+        "{}",
+        colony.stdout
+    );
+    let sar = example.run(&["get", "@sys.work.regional-sar"]);
+    assert_eq!(sar.code, 0, "{}", sar.output());
+    assert!(
+        sar.stdout.contains("satisfied — passed at"),
+        "{}",
+        sar.stdout
+    );
+}
+
+#[test]
+fn complete_partial_stamps_in_place_and_trace_refuses_superseded_with_successor_hint() {
+    let example = Example::materialise("write-partial-and-trace");
+    example.write_file(
+        "w.akr",
+        "state active\nintent \"Two checks.\"\nacceptance {\n    check first {\n        statement \"First command.\"\n        method command\n        command \"cargo test\"\n    }\n    check second {\n        statement \"Second manual.\"\n        method manual\n    }\n}\n",
+    );
+    assert_eq!(
+        example
+            .run(&[
+                "propose",
+                "sys.work.two-step",
+                "--kind",
+                "work",
+                "--title",
+                "Two step",
+                "--from",
+                "w.akr",
+            ])
+            .code,
+        0
+    );
+
+    // Partial complete stamps `first` without requiring `second` or moving state to completed.
+    let partial = example.run(&[
+        "complete",
+        "sys.work.two-step",
+        "--partial",
+        "--pass",
+        "first",
+    ]);
+    assert_eq!(partial.code, 0, "{}", partial.output());
+    let got = example.run(&["get", "@sys.work.two-step"]);
+    assert!(got.stdout.contains("state active"), "{}", got.stdout);
+    assert!(
+        got.stdout.contains("satisfied — passed at"),
+        "{}",
+        got.stdout
+    );
+
+    // Supersede `sys.work.two-step` onto `sys.work.two-step-v2`, then verify `akr trace`
+    // refuses the superseded key and names `sys.work.two-step-v2` in help.
+    let sup = example.run(&[
+        "supersede",
+        "sys.work.two-step",
+        "--with",
+        "sys.work.two-step-v2",
+        "--from",
+        "w.akr",
+        "--title",
+        "Two step v2",
+    ]);
+    assert_eq!(sup.code, 0, "{}", sup.output());
+
+    let refused_trace = example.run(&["trace", "sys.work.two-step", "tried old key"]);
+    assert_ne!(refused_trace.code, 0);
+    assert!(
+        refused_trace.output().contains("AKR-C032"),
+        "{}",
+        refused_trace.output()
+    );
+    assert!(
+        refused_trace.output().contains("sys.work.two-step-v2"),
+        "expected successor hint: {}",
+        refused_trace.output()
+    );
+}
+
+#[test]
+fn propose_many_accepts_json_and_bom_crlf_and_rejects_illegal_observation_state() {
+    let example = Example::materialise("write-propose-many-json");
+    let head = {
+        let out = std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(example.root())
+            .output()
+            .expect("rev-parse");
+        String::from_utf8(out.stdout)
+            .expect("utf8")
+            .trim()
+            .to_owned()
+    };
+
+    // 1. UTF-8 BOM + CRLF on `--from` overlay works cleanly.
+    let bom_crlf =
+        "\u{feff}state active\r\nintent \"\"\"\r\n    BOM and CRLF overlay.\r\n\"\"\"\r\n";
+    example.write_file("bom.akr", bom_crlf);
+    let ok = example.run(&[
+        "propose",
+        "sys.work.bom-check",
+        "--kind",
+        "work",
+        "--title",
+        "BOM check",
+        "--from",
+        "bom.akr",
+    ]);
+    assert_eq!(ok.code, 0, "{}", ok.output());
+
+    // 2. MCP JSON format in `propose-many --from batch.json`.
+    let json_batch = format!(
+        r#"{{"records":[{{"key":"sys.work.json-one","kind":"work","title":"JSON One","slots":{{"intent":"First via JSON."}}}},{{"key":"sys.obs.json-two","kind":"observation","title":"JSON Two","slots":{{"statement":"Observed via JSON.","method":"manual","observed_at":"{head}"}}}}]}}"#
+    );
+    example.write_file("batch.json", &json_batch);
+    let batch_ok = example.run(&["propose-many", "--from", "batch.json"]);
+    assert_eq!(batch_ok.code, 0, "{}", batch_ok.output());
+    assert!(
+        batch_ok.stdout.contains("2 records written in one pass"),
+        "{}",
+        batch_ok.stdout
+    );
+
+    // 3. Explicit `state proposed` on an observation in propose-many is rejected with
+    // AKR-T011 and MUST NOT print "records written in one pass".
+    let bad_obs = format!(
+        "record sys.obs.bad-state/1 : observation {{\n    title \"Bad state\"\n    state proposed\n    statement \"Should fail.\"\n    method manual\n    observed_at git:{head}\n}}\n"
+    );
+    example.write_file("bad.akr", &bad_obs);
+    let refused = example.run(&["propose-many", "--from", "bad.akr"]);
+    assert_ne!(refused.code, 0);
+    assert!(
+        refused.output().contains("AKR-T011"),
+        "{}",
+        refused.output()
+    );
+    assert!(
+        !refused.output().contains("records written in one pass"),
+        "refused batch must not claim records were written: {}",
+        refused.output()
+    );
+}

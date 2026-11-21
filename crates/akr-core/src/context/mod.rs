@@ -120,6 +120,8 @@ pub struct Request {
     pub budget: Option<usize>,
     /// How far step 6 follows dependencies.
     pub depth: usize,
+    /// Optional single-section filter (renders and budgets only this section).
+    pub section: Option<Section>,
 }
 
 impl Request {
@@ -131,6 +133,7 @@ impl Request {
             paths: Vec::new(),
             budget: None,
             depth: DEFAULT_DEPTH,
+            section: None,
         }
     }
 
@@ -148,6 +151,13 @@ impl Request {
     #[must_use]
     pub fn budget(mut self, budget: usize) -> Self {
         self.budget = Some(budget);
+        self
+    }
+
+    /// Restricts delivery to one section.
+    #[must_use]
+    pub fn section(mut self, section: Section) -> Self {
+        self.section = Some(section);
         self
     }
 
@@ -236,6 +246,25 @@ impl Section {
         }
     }
 
+    /// Parses a section identifier (accepting both kebab-case and snake_case).
+    #[must_use]
+    pub fn from_id(name: &str) -> Option<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "goal" => Some(Self::Goal),
+            "milestone" => Some(Self::Milestone),
+            "work-items" | "work_items" | "work" => Some(Self::WorkItems),
+            "plan-of-record" | "plan_of_record" | "plan" => Some(Self::PlanOfRecord),
+            "normative" => Some(Self::Normative),
+            "dependencies" | "deps" => Some(Self::Dependencies),
+            "acceptance" => Some(Self::Acceptance),
+            "observations" => Some(Self::Observations),
+            "questions" => Some(Self::Questions),
+            "contradictions" => Some(Self::Contradictions),
+            "staleness" => Some(Self::Staleness),
+            _ => None,
+        }
+    }
+
     /// The 1-based number the text form prints.
     #[must_use]
     pub fn number(self) -> usize {
@@ -320,6 +349,20 @@ pub struct Bundle {
     /// list in that section's order. The selection reached them; only their entries were
     /// left out, and the bundle names every one so the reader can fetch it.
     pub withheld: BTreeMap<Section, Vec<RevisionId>>,
+    /// Number of non-goal acceptance verdicts withheld to fit the budget.
+    pub withheld_acceptance: usize,
+    /// Number of deeper (`depth >= 2`) at-risk staleness entries collapsed to a summary line.
+    pub omitted_deeper_staleness: usize,
+    /// Deepest at-risk hop among the collapsed staleness entries.
+    pub omitted_max_staleness_depth: usize,
+    /// Optional single-section filter requested by the caller.
+    pub section_filter: Option<Section>,
+    /// True when even the minimal mandatory bundle exceeded the requested budget.
+    pub budget_exceeded: bool,
+    /// The budget requested by the caller, when set.
+    pub requested_budget: Option<usize>,
+    /// Tokens needed for the delivered minimal bundle when `budget_exceeded` is true.
+    pub required_tokens: Option<usize>,
     /// The approximate token count of the delivered bundle, both forms
     /// ([`delivered_tokens`]).
     pub estimated_tokens: usize,
@@ -798,6 +841,13 @@ pub fn assemble(
         excluded,
         truncated: Vec::new(),
         withheld: BTreeMap::new(),
+        withheld_acceptance: 0,
+        omitted_deeper_staleness: 0,
+        omitted_max_staleness_depth: 0,
+        section_filter: request.section,
+        budget_exceeded: false,
+        requested_budget: request.budget,
+        required_tokens: None,
         estimated_tokens: 0,
     };
 
@@ -847,11 +897,15 @@ pub fn delivered_tokens(
 /// One step of reduction, in the order the budget spends them.
 #[derive(Debug, Clone)]
 enum Reduction {
+    /// Collapse at-risk staleness entries at `depth >= 2` into a single summary count.
+    CollapseDeeperStaleness,
     /// Drop a record's prose, keeping its header, scope and relations.
     Truncate(RevisionId),
     /// Withhold a record's entry from a section whole, naming it in the section's
     /// `withheld` list so the reader can fetch it.
     Withhold(Section, RevisionId),
+    /// Withhold acceptance checks belonging to records other than the goal itself.
+    WithholdNonGoalAcceptance,
 }
 
 /// Applies the token budget.
@@ -866,15 +920,16 @@ enum Reduction {
 /// 1. prose of observations, normative records, dependencies and questions;
 /// 2. observations beyond the ten that lead the section, withheld whole;
 /// 3. normative records, then dependencies (deepest first, blockers last), withheld whole;
-/// 4. prose of work items;
-/// 5. questions, the leading observations, and work items, withheld whole.
+/// 4. non-goal acceptance checks withheld (goal's own checks stay mandatory);
+/// 5. prose of work items and plan of record;
+/// 6. questions, leading observations, work items, plan of record, and deeper ancestors
+///    (`depth > 1`), withheld whole.
 ///
-/// The bundle takes the shortest prefix of that sequence that fits. What never reduces:
-/// the goal — its body is the intent the whole bundle serves — the milestone, the plan of
-/// record and its dispositions, acceptance verdicts, contradictions, staleness warnings,
-/// and the key and revision of every record the selection reached. A withheld record is
-/// named in its section, so the graph the reader is shown is incomplete in a way it says,
-/// never in a way it hides (V-123).
+/// What never reduces: the goal in full, the immediate parent milestone/track (`depth <= 1`),
+/// the goal's own acceptance checks, contradictions, and the key and revision of every
+/// record the selection reached. When even that minimal mandatory bundle exceeds the
+/// requested budget, AKR delivers the minimal bundle with `budget_exceeded: true` and
+/// `required_tokens` rather than hard-failing.
 fn apply_budget(
     bundle: &mut Bundle,
     model: &ResolvedModel<'_>,
@@ -886,30 +941,32 @@ fn apply_budget(
         return Ok(());
     };
     let mandatory = mandatory_tokens(bundle, model, freshness);
-    if mandatory > budget {
-        return Err(ContextError::BudgetTooSmall {
-            budget,
-            required: mandatory,
-        });
-    }
-    let target = budget.saturating_sub(BUDGET_RESERVE).max(mandatory);
+    let target = budget.saturating_sub(BUDGET_RESERVE);
 
     let base = bundle.clone();
     let measure = |reduced: &Bundle| delivered_tokens(reduced, model, freshness);
     let initial = measure(&base);
-    if initial <= target {
+    if initial <= target && mandatory <= budget {
         bundle.estimated_tokens = initial;
         return Ok(());
     }
 
     let reductions = reductions_for(&base);
-    let full = reduce(&base, &reductions);
+    let mut full = reduce(&base, &reductions);
     let full_cost = measure(&full);
-    if full_cost > target {
-        // Irreducible above the request. Deliver the smallest honest bundle; the command
-        // reports both figures.
+    if full_cost > budget || mandatory > budget {
+        // Irreducible above the request. Deliver the minimal mandatory bundle and flag
+        // `budget_exceeded` + `required_tokens` instead of failing with AKR-X021.
+        full.budget_exceeded = true;
+        full.requested_budget = Some(budget);
+        full.required_tokens = Some(full_cost.max(mandatory));
+        full.estimated_tokens = full_cost;
         *bundle = full;
-        bundle.estimated_tokens = full_cost;
+        return Ok(());
+    }
+    if full_cost > target {
+        full.estimated_tokens = full_cost;
+        *bundle = full;
         return Ok(());
     }
 
@@ -936,9 +993,19 @@ fn apply_budget(
 
 /// The reduction sequence for a bundle, in spending order.
 fn reductions_for(bundle: &Bundle) -> Vec<Reduction> {
+    // Only the goal and its immediate parent milestone/track (depth <= 1) are protected
+    // from reduction; plan of record and deeper ancestors may be reduced under tight
+    // budgets.
     let protected: BTreeSet<&RevisionId> = std::iter::once(&bundle.goal)
-        .chain(bundle.section(Section::Milestone).iter().map(Entry::id))
-        .chain(bundle.section(Section::PlanOfRecord).iter().map(Entry::id))
+        .chain(
+            bundle
+                .section(Section::Milestone)
+                .iter()
+                .filter_map(|entry| match entry {
+                    Entry::Record { id, depth, .. } if *depth <= 1 => Some(id),
+                    _ => None,
+                }),
+        )
         .collect();
     let tail = |section: Section, skip: usize| -> Vec<RevisionId> {
         bundle
@@ -964,6 +1031,13 @@ fn reductions_for(bundle: &Bundle) -> Vec<Reduction> {
     };
 
     let mut out = Vec::new();
+    if bundle
+        .section(Section::Staleness)
+        .iter()
+        .any(|entry| matches!(entry, Entry::Record { depth, .. } if *depth >= 2))
+    {
+        out.push(Reduction::CollapseDeeperStaleness);
+    }
     let mut truncated: BTreeSet<RevisionId> = BTreeSet::new();
     let mut truncate = |out: &mut Vec<Reduction>, ids: Vec<RevisionId>| {
         for id in ids {
@@ -995,7 +1069,11 @@ fn reductions_for(bundle: &Bundle) -> Vec<Reduction> {
         Section::Dependencies,
         tail(Section::Dependencies, 0),
     );
+    if bundle.acceptance.iter().any(|v| v.owner != bundle.goal) {
+        out.push(Reduction::WithholdNonGoalAcceptance);
+    }
     truncate(&mut out, tail(Section::WorkItems, 0));
+    truncate(&mut out, tail(Section::PlanOfRecord, 0));
     withhold(&mut out, Section::Questions, tail(Section::Questions, 0));
     withhold(
         &mut out,
@@ -1003,6 +1081,12 @@ fn reductions_for(bundle: &Bundle) -> Vec<Reduction> {
         head(Section::Observations, KEPT_OBSERVATIONS),
     );
     withhold(&mut out, Section::WorkItems, tail(Section::WorkItems, 0));
+    withhold(
+        &mut out,
+        Section::PlanOfRecord,
+        tail(Section::PlanOfRecord, 0),
+    );
+    withhold(&mut out, Section::Milestone, tail(Section::Milestone, 0));
     out
 }
 
@@ -1011,15 +1095,44 @@ fn reduce(bundle: &Bundle, reductions: &[Reduction]) -> Bundle {
     let mut out = bundle.clone();
     let mut truncated: BTreeSet<RevisionId> = bundle.truncated.iter().cloned().collect();
     let mut withheld: BTreeMap<Section, BTreeSet<RevisionId>> = BTreeMap::new();
+    let mut drop_non_goal_acceptance = false;
+    let mut collapse_deeper_staleness = false;
     for reduction in reductions {
         match reduction {
+            Reduction::CollapseDeeperStaleness => {
+                collapse_deeper_staleness = true;
+            }
             Reduction::Truncate(id) => {
                 truncated.insert(id.clone());
             }
             Reduction::Withhold(section, id) => {
                 withheld.entry(*section).or_default().insert(id.clone());
             }
+            Reduction::WithholdNonGoalAcceptance => {
+                drop_non_goal_acceptance = true;
+            }
         }
+    }
+    if collapse_deeper_staleness && let Some(entries) = out.sections.get_mut(&Section::Staleness) {
+        let mut omitted = 0usize;
+        let mut max_depth = 0usize;
+        entries.retain(|entry| {
+            let Entry::Record { depth, .. } = entry;
+            if *depth >= 2 {
+                omitted += 1;
+                max_depth = max_depth.max(*depth);
+                false
+            } else {
+                true
+            }
+        });
+        out.omitted_deeper_staleness = omitted;
+        out.omitted_max_staleness_depth = max_depth;
+    }
+    if drop_non_goal_acceptance {
+        let before = out.acceptance.len();
+        out.acceptance.retain(|v| v.owner == out.goal);
+        out.withheld_acceptance = before.saturating_sub(out.acceptance.len());
     }
     for (section, ids) in &withheld {
         let Some(entries) = out.sections.get_mut(section) else {
