@@ -484,6 +484,61 @@ fn an_explicit_commit_message_replaces_prose_and_keeps_generated_trailers() {
 }
 
 #[test]
+fn an_added_trailer_joins_the_generated_trailer_block() {
+    let example = Example::materialise("change-commit-extra-trailer");
+    stage_code(&example);
+    example.run(&[
+        "change",
+        "begin",
+        "--kind",
+        "fix",
+        "--summary",
+        "gate chroma",
+        "--primary",
+        "@sys.work.m3-plan/2",
+    ]);
+    assert_eq!(example.run(&["change", "prepare", "--staged"]).code, 0);
+
+    // Hand-written AKR trailers would link work no transaction checked.
+    let forged = example.run(&["git", "commit", "--trailer", "AKR-Work: @sys.work.other"]);
+    assert_eq!(forged.code, 2, "{}", forged.output());
+    assert!(forged.output().contains("generated"), "{}", forged.output());
+
+    let commit = example.run(&[
+        "git",
+        "commit",
+        "--trailer",
+        "Signed-off-by: A Tester <tester@example.invalid>",
+    ]);
+    assert_eq!(commit.code, 0, "{}", commit.output());
+
+    // git reads only the last paragraph as trailers, so the added one must share it
+    // with the generated ones rather than open a paragraph of its own.
+    let parsed = std::process::Command::new("git")
+        .args(["log", "-1", "--format=%(trailers:only,unfold)"])
+        .current_dir(example.root())
+        .output()
+        .expect("git log runs");
+    let trailers = String::from_utf8_lossy(&parsed.stdout);
+    assert!(trailers.contains("AKR-Change: chg-"), "{trailers}");
+    assert!(
+        trailers
+            .trim_end()
+            .ends_with("Signed-off-by: A Tester <tester@example.invalid>"),
+        "{trailers}"
+    );
+}
+
+#[test]
+fn a_malformed_trailer_is_a_usage_error() {
+    let example = Example::materialise("change-commit-bad-trailer");
+    for bad in ["no colon here", "Two words: value", "Token:"] {
+        let run = example.run(&["git", "commit", "--trailer", bad]);
+        assert_eq!(run.code, 2, "{bad:?}: {}", run.output());
+    }
+}
+
+#[test]
 fn evidence_and_completed_work_can_land_in_the_same_commit() {
     let example = Example::materialise("change-co-committed-evidence");
     baseline(&example);

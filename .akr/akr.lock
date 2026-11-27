@@ -5,7 +5,7 @@ build {
     tool "akr 0.8.0"
     grammar "0.1"
     vocabulary "0.3"
-    source_graph "sha256:f3b63d4fa25934128cd09857e80ef035227a01931585e48d4fad36adb0d70fad"
+    source_graph "sha256:5f9b3eb06acaefdd298b5186d9592195c0fdde46c26df89337104adeff7acfac"
 }
 
 source ".akr/project.akr" {
@@ -49,8 +49,8 @@ source ".akr/records/akr/requirements.akr" {
 }
 
 source ".akr/records/akr/work.akr" {
-    hash "sha256:1e81d1913653771057d7f15842043ccf2fe5e849f9b35e4a5b6c989d6e5a834b"
-    records 84
+    hash "sha256:5968f18bcac6caf94228a7529d8d84219b7b2c3668f8c49ae06e659cc217b2fa"
+    records 85
 }
 
 resolution @akr.assessment.papercut-reconciliation-2026-08-27/1 {
@@ -195,6 +195,12 @@ resolution @akr.work.explain-registry-acceptance-parity/1 {
     slot derived_from
     to @akr.papercut.collated-17-papercuts-from-legeos/1
     hash "sha256:3d3af0bfa943787957abbb0ba86115a6039328edc230f149b0e83f94c3f92c27"
+}
+
+resolution @akr.work.git-commit-takes-trailers/1 {
+    slot implements
+    to @akr.decision.change-transaction-not-commit-kind/3
+    hash "sha256:90173e16902d08905e8b504eef0f25fe1f968b6b60457f3f496e76ffd5992175"
 }
 
 resolution @akr.work.incremental-build-cache/1 {
@@ -2105,6 +2111,11 @@ seal @akr.work.explain-registry-acceptance-parity/1 {
 seal @akr.work.four-guidance-gaps-answered/1 {
     state completed
     hash "sha256:19170fdce15a9adf423448803bc9176863e8f0e6fce8fc02052fc4c531c9db7e"
+}
+
+seal @akr.work.git-commit-takes-trailers/1 {
+    state completed
+    hash "sha256:4367e917bd9ea60537bb43cf89c36a1d8a25909b1f76b1a44c3a18ebfe9953bb"
 }
 
 seal @akr.work.handoff-context-transport/1 {

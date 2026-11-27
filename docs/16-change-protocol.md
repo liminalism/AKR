@@ -155,6 +155,12 @@ As with Git, repeated `-m` values form paragraphs. The explicit message replaces
 human subject and body; AKR still appends the canonical trailers for the prepared transaction
 and staged tree. Passing `-m` through the wrapper therefore cannot discard the durable link.
 
+`--trailer "Token: value"`, repeatable, appends the author's own trailers (`Signed-off-by`,
+`Refs`) to the end of that block. It joins the generated trailers rather than opening a new
+paragraph, because git reads only the last paragraph as trailers. An `AKR-` token is refused:
+those come from the prepared transaction, and a hand-written `AKR-Work` would link the commit
+to work nothing checked.
+
 ## 7. Trailers, not stored commit hashes
 
 `AKR-Change`, `AKR-Work`, `AKR-Why`, `AKR-Evidence`, `AKR-Decision`, `AKR-Graph`, `AKR-Tree`

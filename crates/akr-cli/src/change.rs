@@ -497,15 +497,25 @@ pub fn message(session: &Session) -> Result<Output, EnvError> {
 }
 
 /// `akr git commit` — generate the message and hand the index to git.
-pub fn commit(session: &Session, message_override: Option<&str>) -> Result<Output, EnvError> {
+pub fn commit(
+    session: &Session,
+    message_override: Option<&str>,
+    trailers: &[String],
+) -> Result<Output, EnvError> {
     let repository = repository(session)?;
     let (intent, delta, staged, tree) = prepared(session)?;
     let graph = session.resolve().source_graph.to_string();
     let generated =
         akr_core::change::commit_message(&intent, &delta, Some(&staged), Some(&tree), Some(&graph));
-    let message = message_override.map_or(generated.clone(), |prose| {
+    let mut message = message_override.map_or(generated.clone(), |prose| {
         replace_generated_prose(&generated, prose)
     });
+    // The generated message always ends in its trailer block, so these join it rather
+    // than opening a paragraph git would not read as trailers.
+    for trailer in trailers {
+        message.push_str(trailer);
+        message.push('\n');
+    }
     let commit = repository
         .commit(&message)
         .map_err(|e| EnvError::new("AKR-G001", e.to_string()))?;

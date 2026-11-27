@@ -471,10 +471,12 @@ pub enum Command {
     },
     /// `akr git message`.
     GitMessage,
-    /// `akr git commit [-m <message>]`.
+    /// `akr git commit [-m <message>] [--trailer <token: value>]`.
     GitCommit {
         /// Human-authored prose replacing the generated subject and body.
         message: Option<String>,
+        /// Trailers appended after the generated ones, each `Token: value`.
+        trailers: Vec<String>,
     },
     /// `akr git log <record>`.
     GitLog {
@@ -2598,6 +2600,42 @@ fn parse_handoff(
     })
 }
 
+/// One `akr git commit --trailer` value, normalised to `Token: value`.
+///
+/// The `AKR-` trailers are refused: they are generated from the prepared transaction, and
+/// a hand-written one would link the commit to work no transaction checked. Anything else
+/// — attribution, `Signed-off-by`, `Refs` — is the author's business, which is why
+/// amending the message afterwards was the only way to add it.
+fn commit_trailer(text: &str) -> Result<String, UsageError> {
+    let invalid = |why: &str| {
+        UsageError::new(
+            "AKR-C004",
+            format!("git commit --trailer {text:?} {why}; the form is \"Token: value\""),
+        )
+    };
+    let Some((token, value)) = text.split_once(':') else {
+        return Err(invalid("has no colon"));
+    };
+    let token = token.trim();
+    let value = value.trim();
+    if token.is_empty() || !token.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err(invalid("needs a token of letters, digits and hyphens"));
+    }
+    if value.is_empty() || value.contains(['\n', '\r']) {
+        return Err(invalid("needs a one-line value"));
+    }
+    if token.len() >= 4 && token[..4].eq_ignore_ascii_case("AKR-") {
+        return Err(UsageError::new(
+            "AKR-C004",
+            format!(
+                "git commit --trailer {token}: AKR trailers are generated from the prepared \
+                 change and cannot be written by hand"
+            ),
+        ));
+    }
+    Ok(format!("{token}: {value}"))
+}
+
 /// `akr git <subcommand>`.
 fn parse_git(name: &str, positional: &[&String], tail: &[String]) -> Result<Command, UsageError> {
     let sub = positional.first().map(|s| s.as_str()).ok_or_else(|| {
@@ -2611,7 +2649,7 @@ fn parse_git(name: &str, positional: &[&String], tail: &[String]) -> Result<Comm
         "commit" => {
             for arg in tail.iter().filter(|arg| arg.starts_with('-')) {
                 let base = arg.split('=').next().unwrap_or(arg);
-                if !matches!(base, "-m" | "--message") {
+                if !matches!(base, "-m" | "--message" | "--trailer") {
                     return Err(UsageError::new(
                         "AKR-C002",
                         format!("unknown flag {base:?} for command \"git commit\""),
@@ -2619,23 +2657,28 @@ fn parse_git(name: &str, positional: &[&String], tail: &[String]) -> Result<Comm
                 }
             }
             let mut messages = Vec::new();
+            let mut trailers = Vec::new();
             let mut index = 1;
             while index < tail.len() {
                 let argument = &tail[index];
-                if matches!(argument.as_str(), "-m" | "--message") {
-                    let Some(value) = tail.get(index + 1) else {
+                if matches!(argument.as_str(), "-m" | "--message" | "--trailer") {
+                    let flag = if argument == "--trailer" {
+                        "--trailer"
+                    } else {
+                        "-m/--message"
+                    };
+                    let Some(value) = tail.get(index + 1).filter(|value| !value.starts_with('-'))
+                    else {
                         return Err(UsageError::new(
                             "AKR-C003",
-                            "git commit -m/--message requires a value",
+                            format!("git commit {flag} requires a value"),
                         ));
                     };
-                    if value.starts_with('-') {
-                        return Err(UsageError::new(
-                            "AKR-C003",
-                            "git commit -m/--message requires a value",
-                        ));
+                    if argument == "--trailer" {
+                        trailers.push(commit_trailer(value)?);
+                    } else {
+                        messages.push(value.clone());
                     }
-                    messages.push(value.clone());
                     index += 2;
                     continue;
                 }
@@ -2644,6 +2687,9 @@ fn parse_git(name: &str, positional: &[&String], tail: &[String]) -> Result<Comm
                     .or_else(|| argument.strip_prefix("--message="))
                 {
                     messages.push(value.to_owned());
+                }
+                if let Some(value) = argument.strip_prefix("--trailer=") {
+                    trailers.push(commit_trailer(value)?);
                 }
                 index += 1;
             }
@@ -2655,6 +2701,7 @@ fn parse_git(name: &str, positional: &[&String], tail: &[String]) -> Result<Comm
             }
             Command::GitCommit {
                 message: (!messages.is_empty()).then(|| messages.join("\n\n")),
+                trailers,
             }
         }
         "install-hooks" => Command::GitInstallHooks,
@@ -3279,7 +3326,7 @@ pub fn help_for(name: &str) -> Option<String> {
         }
         "git" => {
             "akr git message\n\
-             akr git commit [-m <message>]\n\
+             akr git commit [-m <message>] [--trailer \"<Token>: <value>\"]\n\
              akr git log <record>\n\
              akr git install-hooks\n\
              \n\
@@ -3292,7 +3339,9 @@ pub fn help_for(name: &str) -> Option<String> {
              that land in the same prepared commit are current together; genuinely\n\
              older evidence remains too old. `commit -m/--message` replaces the human\n\
              subject and body while retaining those generated trailers; repeat `-m`\n\
-             to create separate paragraphs, as with Git.\n\
+             to create separate paragraphs, as with Git. `--trailer \"Token: value\"`,\n\
+             repeatable, appends a trailer after the generated ones -- attribution or\n\
+             Signed-off-by, say -- so no amend is needed; AKR-* tokens are refused.\n\
              \n\
              `install-hooks` writes two-line wrappers around `akr git-hook`, so the\n\
              checks stay in the binary rather than becoming a second implementation.\n\

@@ -1047,6 +1047,46 @@ record akr.work.four-guidance-gaps-answered/1 : work {
     }
 }
 
+record akr.work.git-commit-takes-trailers/1 : work {
+    title "akr git commit could not add a trailer, so attribution needed an amend"
+    state completed
+    scope [
+        path "crates/akr-cli/src/args.rs",
+        path "crates/akr-cli/src/change.rs",
+        path "crates/akr-cli/src/commands.rs",
+        path "crates/akr-cli/tests/change_protocol.rs",
+        path "docs/16-change-protocol.md"
+    ]
+    intent """
+        Let an author add their own trailers (Signed-off-by, Refs) when committing through akr git commit, instead of committing and then amending the message, which the salon session and this one both had to do.
+        """
+    trace [
+        "appended to the generated trailer block, not as a new paragraph: git parses only the last paragraph as trailers, so a separate one would be invisible to interpret-trailers",
+        "AKR-* tokens are refused: those are generated from the prepared change, and a hand-written AKR-Work would link work no transaction checked",
+        "validated at argument parsing, exit 2: a malformed trailer is a usage error and must fail before the commit exists"
+    ]
+    acceptance {
+        check lint {
+            statement """
+                Clippy reports nothing with warnings denied.
+                """
+            method command
+            command "cargo clippy --workspace --all-targets -- -D warnings"
+            passed_at git:a45c5b01b1c05963217425b04fc360ef6359b61c
+        }
+        check protocol {
+            statement """
+                An added trailer lands in the generated trailer block, and forged or malformed trailers are refused.
+                """
+            method command
+            command "cargo test -p akr-cli change_protocol"
+            passed_at git:a45c5b01b1c05963217425b04fc360ef6359b61c
+        }
+    }
+    implements [ @akr.decision.change-transaction-not-commit-kind ]
+    author "dk"
+}
+
 record akr.work.handoff-context-transport/1 : work {
     title "Generalise the advisor packet into an agent-to-agent context transport"
     state completed

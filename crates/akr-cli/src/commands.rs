@@ -450,7 +450,9 @@ fn dispatch(session: &mut Session, command: &Command) -> Result<Output, EnvError
         Command::ChangeAbort => crate::change::abort(session),
         Command::ChangePrepare { write } => crate::change::prepare(session, *write),
         Command::GitMessage => crate::change::message(session),
-        Command::GitCommit { message } => crate::change::commit(session, message.as_deref()),
+        Command::GitCommit { message, trailers } => {
+            crate::change::commit(session, message.as_deref(), trailers)
+        }
         Command::GitLog { reference } => crate::change::log(session, reference),
         Command::GitInstallHooks => crate::change::install_hooks(session),
         Command::GitMerge {
