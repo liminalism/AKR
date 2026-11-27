@@ -5,6 +5,10 @@ humans and AI agents. It gives project decisions, requirements, observations,
 evidence, questions, and work items stable identities, lifecycle states,
 scope, typed relations, freshness, and Git provenance.
 
+Version 0.8.1 stops `akr change prepare` from demanding a primary record when a commit
+records several decisions or observations, and lets `akr git commit --trailer` add the
+author's own trailers.
+
 Version 0.8.0 lets ledgers from separate worktrees join with an ordinary merge commit —
 history is read as the commit DAG and a git merge driver merges `.akr` files by record —
 and makes the first `knowledge.context` call succeed whatever its budget. Run
