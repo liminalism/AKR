@@ -5,7 +5,7 @@ build {
     tool "akr 0.8.0"
     grammar "0.1"
     vocabulary "0.3"
-    source_graph "sha256:c2332a24699dc91116ecf94e53cb037da145ceef43b9e7ccd434ce31f5cf833a"
+    source_graph "sha256:f3b63d4fa25934128cd09857e80ef035227a01931585e48d4fad36adb0d70fad"
 }
 
 source ".akr/project.akr" {
@@ -49,8 +49,8 @@ source ".akr/records/akr/requirements.akr" {
 }
 
 source ".akr/records/akr/work.akr" {
-    hash "sha256:86b4d45f178bb990831c1e4e6832e0c68f33d153e0dc4b7d0babea7910b1df6b"
-    records 83
+    hash "sha256:1e81d1913653771057d7f15842043ccf2fe5e849f9b35e4a5b6c989d6e5a834b"
+    records 84
 }
 
 resolution @akr.assessment.papercut-reconciliation-2026-08-27/1 {
@@ -327,6 +327,12 @@ resolution @akr.work.nested-scratch-keeps-v025/1 {
     slot derived_from
     to @akr.papercut.collated-35-papercuts-from-kitchen-concept-lege/1
     hash "sha256:c5c50b268132b65f88ddb379fbece2a5dd46776c503f755cd3c0a985d22c0999"
+}
+
+resolution @akr.work.non-work-transitions-never-demand-a-primary/1 {
+    slot implements
+    to @akr.decision.change-transaction-not-commit-kind/3
+    hash "sha256:90173e16902d08905e8b504eef0f25fe1f968b6b60457f3f496e76ffd5992175"
 }
 
 resolution @akr.work.p10-external-sources/1 {
@@ -2169,6 +2175,11 @@ seal @akr.work.mcp-workspace-per-call/1 {
 seal @akr.work.non-fts-start-parity/1 {
     state completed
     hash "sha256:4a94c35cb19698bdf1c41fa2b5b8c006d9788bc2a48fab5c94a7705963924570"
+}
+
+seal @akr.work.non-work-transitions-never-demand-a-primary/1 {
+    state completed
+    hash "sha256:d7e5bff8edff0b6ff4f89c45b2d3623bb734b5fab2cff8adf5c0db46229de62a"
 }
 
 seal @akr.work.p10-external-sources/1 {

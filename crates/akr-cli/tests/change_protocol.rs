@@ -228,6 +228,38 @@ fn an_explicit_exemption_lets_maintenance_through() {
 }
 
 #[test]
+fn records_that_are_not_work_never_demand_a_primary() {
+    // A commit that records two non-work records was told to name a primary, and
+    // `--primary` refuses anything but work: no spelling of the commit got through.
+    let example = Example::materialise("change-non-work-no-primary");
+    stage_code(&example);
+    for text in ["the first friction", "the second friction"] {
+        let papercut = example.run(&["papercut", "-m", "tester", text, "--namespace", "sys"]);
+        assert_eq!(papercut.code, 0, "{}", papercut.output());
+    }
+    example.git(&["add", ".akr"]);
+    let begin = example.run(&[
+        "change",
+        "begin",
+        "--kind",
+        "docs",
+        "--summary",
+        "record two frictions",
+        "--untracked-reason",
+        "records what was observed; no work advanced",
+    ]);
+    assert_eq!(begin.code, 0, "{}", begin.output());
+
+    let prepare = example.run(&["change", "prepare", "--staged"]);
+    assert_eq!(prepare.code, 0, "{}", prepare.output());
+    assert!(
+        prepare.stdout.contains("2 transitions"),
+        "{}",
+        prepare.output()
+    );
+}
+
+#[test]
 fn a_message_carries_the_trailers_that_are_the_durable_link() {
     let example = Example::materialise("change-message-trailers");
     stage_code(&example);

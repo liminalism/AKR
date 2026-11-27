@@ -94,7 +94,7 @@ are validated but excluded from the descriptive file summary.
 | --- | --- |
 | Nothing staged | There is no change to describe |
 | Code staged, no work reference and no `--untracked-reason` | This is the drift the protocol exists to catch |
-| Several work records moved, none named primary | The subject can only be about one; guessing misdescribes the commit |
+| Several work records moved, none named primary | The subject can only be about one; guessing misdescribes the commit. Only `work` counts: decisions, observations and papercuts the commit records cannot be primary, so they never demand one |
 | The staged tree moved after preparation | The message would describe a commit that is no longer the one being made |
 
 The exemption is explicit and cheap, so nobody invents a fake work record for a formatting

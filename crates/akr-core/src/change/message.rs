@@ -294,6 +294,7 @@ mod tests {
         let delta = SemanticDelta {
             transitions: vec![Transition {
                 id: id("raw.work.slice-6", 2),
+                kind: crate::model::Kind::Work,
                 title: "Slice 6".into(),
                 from: Some(State::Active),
                 to: State::Completed,

@@ -470,6 +470,8 @@ pub fn implementation_digest(entries: &[IndexEntry]) -> String {
 pub struct Transition {
     /// The record.
     pub id: RevisionId,
+    /// Its kind. Only `work` competes for `--primary`.
+    pub kind: crate::model::Kind,
     /// Its title, for the message body.
     pub title: String,
     /// The state it left, or `None` when the record is new.
@@ -519,9 +521,16 @@ impl SemanticDelta {
     }
 
     /// Work records whose state moved. The candidates for `--primary`.
+    ///
+    /// Only work: `--primary` refuses any other kind, so counting the decisions,
+    /// observations and papercuts a commit records here demanded a choice no answer
+    /// could satisfy.
     #[must_use]
     pub fn moved_work(&self) -> Vec<&Transition> {
-        self.transitions.iter().collect()
+        self.transitions
+            .iter()
+            .filter(|transition| transition.kind == crate::model::Kind::Work)
+            .collect()
     }
 }
 
@@ -574,6 +583,7 @@ pub fn delta(base: Option<&Ledger>, staged: &Ledger, changed: &[String]) -> Sema
         if was != Some(record.state) {
             out.transitions.push(Transition {
                 id: record.id.clone(),
+                kind: record.kind,
                 title: record.title.clone(),
                 from: was,
                 to: record.state,
@@ -770,6 +780,31 @@ mod tests {
         let one = vec![entry("src/a.rs", "aaa"), entry("src/b.rs", "bbb")];
         let two = vec![entry("src/b.rs", "bbb"), entry("src/a.rs", "aaa")];
         assert_eq!(implementation_digest(&one), implementation_digest(&two));
+    }
+
+    #[test]
+    fn only_work_competes_for_primary() {
+        let transition = |key: &str, kind: crate::model::Kind| Transition {
+            id: RevisionId::new(crate::model::LogicalKey::parse(key).expect("a key"), 1),
+            kind,
+            title: key.to_owned(),
+            from: None,
+            to: State::Proposed,
+        };
+        let delta = SemanticDelta {
+            transitions: vec![
+                transition("raw.decision.gate", crate::model::Kind::Decision),
+                transition("raw.observation.chroma", crate::model::Kind::Observation),
+                transition("raw.work.slice-6", crate::model::Kind::Work),
+            ],
+            ..SemanticDelta::default()
+        };
+        let moved: Vec<String> = delta
+            .moved_work()
+            .iter()
+            .map(|transition| transition.id.key.to_string())
+            .collect();
+        assert_eq!(moved, ["raw.work.slice-6"]);
     }
 
     #[test]

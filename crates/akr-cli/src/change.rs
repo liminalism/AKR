@@ -430,11 +430,13 @@ pub fn prepare(session: &Session, write: bool) -> Result<Output, EnvError> {
     check_work_references(&intent, &staged)?;
 
     // Several work records moved and none was chosen: the subject can only be about one
-    // of them, and guessing produces a message that misdescribes the commit.
-    if delta.transitions.len() > 1 && intent.primary_work.is_none() {
+    // of them, and guessing produces a message that misdescribes the commit. Decisions,
+    // observations and the like never count — `--primary` refuses them, so a commit
+    // recording two of them was refused whichever way it was begun.
+    let moved_work = delta.moved_work();
+    if moved_work.len() > 1 && intent.primary_work.is_none() {
         return Err(to_env(change::ChangeError::PrimaryRequired(
-            delta
-                .transitions
+            moved_work
                 .iter()
                 .map(|transition| transition.id.key.to_string())
                 .collect(),

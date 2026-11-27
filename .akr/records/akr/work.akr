@@ -1898,6 +1898,53 @@ record akr.work.non-fts-start-parity/1 : work {
     ]
 }
 
+record akr.work.non-work-transitions-never-demand-a-primary/1 : work {
+    title "A commit recording several decisions or observations is refused whichever way it is begun"
+    state completed
+    scope [
+        path "crates/akr-cli/src/change.rs",
+        path "crates/akr-cli/tests/change_protocol.rs",
+        path "crates/akr-core/src/change/**",
+        path "docs/16-change-protocol.md"
+    ]
+    intent """
+        Let a commit that records two or more non-work records (decisions, observations, papercuts) pass akr change prepare. It was told to name a primary, and --primary refuses every non-work kind, so agents fell back to plain git commit and the commit lost its AKR trailers.
+        """
+    trace [
+        "prepare counted every kind's state change for PrimaryRequired, then check_work_references refused the keys it listed; --untracked-reason could not help because the count ignored it",
+        "spec §5 already said several work records; moved_work() was documented as work-only but returned every transition, so the code drifted, not the spec",
+        "Transition now carries its kind rather than prepare re-resolving keys in the staged ledger: the delta already had the record in hand"
+    ]
+    acceptance {
+        check lint {
+            statement """
+                Clippy reports nothing with warnings denied.
+                """
+            method command
+            command "cargo clippy --workspace --all-targets -- -D warnings"
+            passed_at git:6d2171ca76a8e73721df5decb37d803dc05457e2
+        }
+        check regression {
+            statement """
+                Code plus two papercuts, begun with --untracked-reason, prepares without naming a primary.
+                """
+            method command
+            command "cargo test -p akr-cli change_protocol"
+            passed_at git:6d2171ca76a8e73721df5decb37d803dc05457e2
+        }
+        check unit {
+            statement """
+                moved_work keeps only work records.
+                """
+            method command
+            command "cargo test -p akr-core --lib change::"
+            passed_at git:6d2171ca76a8e73721df5decb37d803dc05457e2
+        }
+    }
+    implements [ @akr.decision.change-transaction-not-commit-kind ]
+    author "dk"
+}
+
 record akr.work.p10-external-sources/1 : work {
     title "P10 -- immutable source library, chunk index, citations"
     state completed
